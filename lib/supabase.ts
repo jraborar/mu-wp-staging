@@ -63,6 +63,24 @@ export async function finalizeStagingRecord(
   if (error) console.error('[supabase] finalizeStagingRecord:', error.message)
 }
 
+const STALE_GRACE_MINUTES = 5
+export async function cleanupStaleRunningRecords(activeJobIds: string[] = []): Promise<void> {
+  const db = getClient()
+  if (!db) return
+  const cutoff = new Date(Date.now() - STALE_GRACE_MINUTES * 60 * 1000).toISOString()
+  let query = db
+    .from('staging_history')
+    .update({ status: 'failed', completed_at: new Date().toISOString() })
+    .eq('status', 'running')
+    .is('completed_at', null)
+    .lt('started_at', cutoff)
+  if (activeJobIds.length > 0) {
+    query = query.not('id', 'in', `(${activeJobIds.join(',')})`)
+  }
+  const { error } = await query
+  if (error) console.error('[supabase] cleanupStaleRunningRecords:', error.message)
+}
+
 export async function listStagingHistory(limit = 30): Promise<Omit<StagingRecord, 'logs'>[]> {
   const db = getClient()
   if (!db) return []
