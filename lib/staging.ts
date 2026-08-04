@@ -71,10 +71,18 @@ async function runPluginOrThemeUpdates(
   const label = type === 'plugin' ? 'Plugin' : 'Theme'
   const log = (logType: Parameters<typeof appendLog>[1], m: string) => appendLog(job, logType, m)
 
+  // Force a fresh update check so the cache isn't stale after upstream apply
   log('status', `Checking for ${label.toLowerCase()} updates...`)
+  await run(wp(job, `${type} check-update 2>&1`))
+
   const listResult = await run(
-    wp(job, `${type} list --update=available --format=json --fields=name,title,version --context=admin`),
+    wp(job, `${type} list --update=available --format=json --context=admin`),
   )
+
+  // Log raw output (truncated) so it's visible in the Live console for diagnosis
+  const rawPreview = listResult.stdout.slice(0, 300).replace(/\n/g, ' ')
+  log('info', `${label} list raw: ${rawPreview || '(empty)'}`)
+
   const available = parseWpJson<{ name: string; title?: string; version?: string }>(
     cleanJson(listResult.stdout),
   )
