@@ -67,9 +67,20 @@ export function shellEscape(str: string): string {
 }
 
 export function cleanJson(raw: string): string {
-  return raw
+  const cleaned = raw
     .split('\n')
-    .filter((l) => !/^\s*(Deprecated|Warning|Notice|PHP):/i.test(l))
+    .filter((l) => {
+      const t = l.trim()
+      // Strip PHP/terminus deprecation and warning lines
+      if (/^\s*(Deprecated|Warning|Notice|PHP):/i.test(t)) return false
+      // Strip terminus metadata lines like [warning], [notice], [error]
+      if (/^\[(warning|notice|error|info)\]/i.test(t)) return false
+      return true
+    })
     .join('\n')
     .trim()
+
+  // Extract just the JSON array or object if surrounded by other text
+  const match = cleaned.match(/(\[[\s\S]*\]|\{[\s\S]*\})/)
+  return match ? match[0] : cleaned
 }
