@@ -3,12 +3,11 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import {
   Server, Terminal, Package, Layers, CheckCircle, AlertCircle,
-  ChevronDown, ChevronUp, RefreshCw, Clock, ArrowRight,
+  ChevronDown, ChevronUp, RefreshCw, Clock, ArrowRight, Radio,
 } from 'lucide-react'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-type JobStatus = 'idle' | 'running' | 'completed' | 'failed'
 type Tab = 'run' | 'history'
 
 interface LogEntry {
@@ -22,11 +21,13 @@ interface UpdatedItem { name: string; title: string; from: string; to: string }
 interface SkippedItem { name: string; title: string; reason: string }
 interface UpdateSummary { updated: UpdatedItem[]; skipped: SkippedItem[] }
 
-interface JobSnapshot {
-  plugins: UpdateSummary
-  themes: UpdateSummary
-  upstreamUpdated: boolean
-  upstreamConflict: boolean
+interface LiveJob {
+  id: string
+  site: string
+  site_name?: string
+  multidev: string
+  status: string
+  startedAt: number
 }
 
 interface HistoryItem {
@@ -140,12 +141,8 @@ function UpdateSection({ label, updated, skipped }: {
 function HistoryRow({ item }: { item: HistoryItem }) {
   const [open, setOpen] = useState(false)
   const startDate = new Date(item.started_at)
-  const dateStr = startDate.toLocaleDateString('en-PH', {
-    timeZone: 'Asia/Manila', month: 'short', day: 'numeric', year: 'numeric',
-  })
-  const timeStr = startDate.toLocaleTimeString('en-PH', {
-    timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit',
-  })
+  const dateStr   = startDate.toLocaleDateString('en-PH', { timeZone: 'Asia/Manila', month: 'short', day: 'numeric', year: 'numeric' })
+  const timeStr   = startDate.toLocaleTimeString('en-PH', { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit' })
   const updatedCount = item.plugins_updated.length + item.themes_updated.length
   const skippedCount = item.plugins_skipped.length + item.themes_skipped.length
 
@@ -156,35 +153,21 @@ function HistoryRow({ item }: { item: HistoryItem }) {
         onClick={() => setOpen((o) => !o)}
       >
         <StatusBadge status={item.status} />
-
         <div className="flex-1 min-w-0">
-          <span className="font-mono text-sm text-white truncate">
-            {item.site_name ?? item.site}
-          </span>
+          <span className="font-mono text-sm text-white truncate">{item.site_name ?? item.site}</span>
           <span className="text-slate-500 mx-2">·</span>
           <span className="font-mono text-xs text-[#FFDC28]">{item.multidev}</span>
         </div>
-
-        <div className="hidden sm:flex items-center gap-3 text-xs text-slate-400 shrink-0">
-          {item.upstream_updated && (
-            <span className="text-green-400 font-mono">upstream ✓</span>
-          )}
-          {updatedCount > 0 && (
-            <span className="text-green-400">{updatedCount} updated</span>
-          )}
-          {skippedCount > 0 && (
-            <span className="text-orange-400">{skippedCount} skipped</span>
-          )}
+        <div className="hidden sm:flex items-center gap-3 text-xs shrink-0">
+          {item.upstream_updated && <span className="text-green-400 font-mono">upstream ✓</span>}
+          {updatedCount > 0  && <span className="text-green-400">{updatedCount} updated</span>}
+          {skippedCount > 0  && <span className="text-orange-400">{skippedCount} skipped</span>}
         </div>
-
         <div className="flex items-center gap-1 text-slate-500 text-xs shrink-0">
           <Clock className="w-3 h-3" />
           <span>{dateStr} {timeStr} PHT</span>
         </div>
-
-        {open
-          ? <ChevronUp className="w-4 h-4 text-slate-400 shrink-0" />
-          : <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />}
+        {open ? <ChevronUp className="w-4 h-4 text-slate-400 shrink-0" /> : <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />}
       </button>
 
       {open && (
@@ -198,23 +181,142 @@ function HistoryRow({ item }: { item: HistoryItem }) {
           {item.upstream_skipped_reason && (
             <div className="flex items-center gap-2">
               <AlertCircle className="w-4 h-4 text-orange-400" />
-              <span className="text-sm text-orange-400 font-mono">
-                Upstream skipped — {item.upstream_skipped_reason}
-              </span>
+              <span className="text-sm text-orange-400 font-mono">Upstream skipped — {item.upstream_skipped_reason}</span>
             </div>
           )}
-          <UpdateSection
-            label="Plugins"
-            updated={item.plugins_updated}
-            skipped={item.plugins_skipped}
-          />
-          <UpdateSection
-            label="Themes"
-            updated={item.themes_updated}
-            skipped={item.themes_skipped}
-          />
+          <UpdateSection label="Plugins" updated={item.plugins_updated} skipped={item.plugins_skipped} />
+          <UpdateSection label="Themes"  updated={item.themes_updated}  skipped={item.themes_skipped} />
           {!item.upstream_updated && updatedCount === 0 && (
             <p className="text-xs text-slate-500 font-mono">Nothing was updated</p>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Live job card with SSE stream ─────────────────────────────────────────────
+
+function LiveJobCard({ job, onComplete }: { job: LiveJob; onComplete: () => void }) {
+  const [logs, setLogs]       = useState<LogEntry[]>([])
+  const [status, setStatus]   = useState<string>('running')
+  const [snapshot, setSnapshot] = useState<{ plugins: UpdateSummary; themes: UpdateSummary; upstreamUpdated: boolean; upstreamConflict: boolean } | null>(null)
+  const consoleRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (consoleRef.current) {
+      consoleRef.current.scrollTop = consoleRef.current.scrollHeight
+    }
+  }, [logs])
+
+  useEffect(() => {
+    let cancelled = false
+
+    const connect = async () => {
+      const res = await fetch(`/api/staging?jobId=${job.id}`)
+      if (!res.body || cancelled) return
+
+      const reader  = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer    = ''
+
+      const read = async (): Promise<void> => {
+        if (cancelled) return
+        const { done, value } = await reader.read()
+        if (done) return
+        buffer += decoder.decode(value, { stream: true })
+        const parts = buffer.split('\n\n')
+        buffer = parts.pop() ?? ''
+        for (const part of parts) {
+          const line = part.replace(/^data: /, '').trim()
+          if (!line) continue
+          try {
+            const ev = JSON.parse(line)
+            if (ev.type === 'log') {
+              setLogs((p) => [...p, ev as LogEntry])
+            } else if (ev.type === 'complete') {
+              setStatus(ev.status)
+              const r = await fetch(`/api/staging/${job.id}`)
+              if (r.ok) {
+                const j = await r.json()
+                setSnapshot({
+                  plugins:          j.plugins  ?? { updated: [], skipped: [] },
+                  themes:           j.themes   ?? { updated: [], skipped: [] },
+                  upstreamUpdated:  j.upstreamUpdated  ?? false,
+                  upstreamConflict: j.upstreamConflict ?? false,
+                })
+              }
+              onComplete()
+              return
+            }
+          } catch {}
+        }
+        return read()
+      }
+
+      await read()
+    }
+
+    void connect()
+    return () => { cancelled = true }
+  }, [job.id, onComplete])
+
+  const label = job.site_name ?? job.site
+
+  return (
+    <div className="rounded-xl border border-yellow-500/30 bg-slate-800 overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center gap-3 px-5 py-3 border-b border-slate-700 bg-slate-800">
+        <Radio className="w-4 h-4 text-yellow-400 animate-pulse" />
+        <div className="flex-1 min-w-0">
+          <span className="font-mono text-sm text-white">{label}</span>
+          <span className="text-slate-500 mx-2">·</span>
+          <span className="font-mono text-xs text-[#FFDC28]">{job.multidev}</span>
+        </div>
+        <StatusBadge status={status} />
+      </div>
+
+      {/* Console */}
+      <div
+        ref={consoleRef}
+        className="h-64 overflow-y-auto bg-slate-900 p-4 space-y-0.5"
+      >
+        {logs.length === 0 && (
+          <p className="text-xs text-slate-600 font-mono">Connecting…</p>
+        )}
+        {logs.map((entry, i) => <LogLine key={i} entry={entry} />)}
+        {status === 'running' && (
+          <div className="flex gap-2 font-mono text-xs text-slate-600">
+            <span className="animate-pulse">▋</span>
+          </div>
+        )}
+      </div>
+
+      {/* Results */}
+      {snapshot && status !== 'running' && (
+        <div className="border-t border-slate-700 px-5 py-4 space-y-3">
+          {snapshot.upstreamUpdated && (
+            <div className="flex items-center gap-2 p-2.5 rounded-lg bg-green-900/20 border border-green-700/40">
+              <CheckCircle className="w-4 h-4 text-green-400" />
+              <span className="text-sm text-green-400 font-mono">Upstream updated</span>
+            </div>
+          )}
+          {snapshot.upstreamConflict && (
+            <div className="flex items-center gap-2 p-2.5 rounded-lg bg-orange-900/20 border border-orange-700/40">
+              <AlertCircle className="w-4 h-4 text-orange-400" />
+              <span className="text-sm text-orange-400 font-mono">Upstream skipped — merge conflict</span>
+            </div>
+          )}
+          <UpdateSection label="Plugins" updated={snapshot.plugins.updated} skipped={snapshot.plugins.skipped} />
+          <UpdateSection label="Themes"  updated={snapshot.themes.updated}  skipped={snapshot.themes.skipped} />
+          {!snapshot.upstreamUpdated && snapshot.plugins.updated.length === 0 && snapshot.themes.updated.length === 0 && (
+            <p className="text-sm text-slate-500 font-mono">Nothing was updated</p>
+          )}
+          {status === 'completed' && (
+            <div className="flex items-center gap-2 pt-2 border-t border-slate-700 text-xs text-slate-400">
+              <Clock className="w-3.5 h-3.5" />
+              <span>Deployment scheduled in mu-deployment — 2 business days · 9 AM PHT</span>
+            </div>
           )}
         </div>
       )}
@@ -225,22 +327,40 @@ function HistoryRow({ item }: { item: HistoryItem }) {
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function Page() {
-  const [tab, setTab]             = useState<Tab>('run')
-  const [site, setSite]           = useState('')
-  const [multidev, setMultidev]   = useState('')
-  const [jobStatus, setJobStatus] = useState<JobStatus>('idle')
-  const [jobId, setJobId]         = useState<string | null>(null)
-  const [logs, setLogs]           = useState<LogEntry[]>([])
-  const [snapshot, setSnapshot]   = useState<JobSnapshot | null>(null)
-  const [history, setHistory]     = useState<HistoryItem[]>([])
-  const [historyLoading, setHistoryLoading] = useState(false)
-  const consoleRef = useRef<HTMLDivElement>(null)
+  const [tab, setTab]           = useState<Tab>('run')
+  const [site, setSite]         = useState('')
+  const [multidev, setMultidev] = useState('')
+  const [submitting, setSubmitting] = useState(false)
 
+  const [liveJobs, setLiveJobs]       = useState<LiveJob[]>([])
+  const [completedIds, setCompletedIds] = useState<Set<string>>(new Set())
+  const seenJobIds = useRef<Set<string>>(new Set())
+
+  const [history, setHistory]             = useState<HistoryItem[]>([])
+  const [historyLoading, setHistoryLoading] = useState(false)
+
+  // Poll for running jobs — auto-switch to History when one appears
   useEffect(() => {
-    if (consoleRef.current) {
-      consoleRef.current.scrollTop = consoleRef.current.scrollHeight
+    const poll = async () => {
+      try {
+        const res = await fetch('/api/jobs')
+        if (!res.ok) return
+        const jobs: LiveJob[] = await res.json()
+
+        const newJobs = jobs.filter((j) => !seenJobIds.current.has(j.id))
+        if (newJobs.length > 0) {
+          newJobs.forEach((j) => seenJobIds.current.add(j.id))
+          setTab('history')
+        }
+
+        setLiveJobs(jobs)
+      } catch {}
     }
-  }, [logs])
+
+    poll()
+    const interval = setInterval(poll, 3000)
+    return () => clearInterval(interval)
+  }, [])
 
   const loadHistory = useCallback(async () => {
     setHistoryLoading(true)
@@ -256,67 +376,29 @@ export default function Page() {
     if (tab === 'history') void loadHistory()
   }, [tab, loadHistory])
 
+  const handleJobComplete = useCallback((id: string) => {
+    setCompletedIds((prev) => new Set([...prev, id]))
+    void loadHistory()
+  }, [loadHistory])
+
   const startJob = useCallback(async () => {
     if (!site.trim() || !multidev.trim()) return
-    setJobStatus('running')
-    setLogs([])
-    setSnapshot(null)
-    setJobId(null)
-
-    const res = await fetch('/api/staging', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ site: site.trim(), multidev: multidev.trim() }),
-    })
-
-    const jid = res.headers.get('X-Job-Id')
-    if (jid) setJobId(jid)
-
-    if (!res.body) { setJobStatus('failed'); return }
-
-    const reader  = res.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer    = ''
-
-    const read = async (): Promise<void> => {
-      const { done, value } = await reader.read()
-      if (done) return
-      buffer += decoder.decode(value, { stream: true })
-      const parts = buffer.split('\n\n')
-      buffer = parts.pop() ?? ''
-      for (const part of parts) {
-        const line = part.replace(/^data: /, '').trim()
-        if (!line) continue
-        try {
-          const ev = JSON.parse(line)
-          if (ev.type === 'log') {
-            setLogs((p) => [...p, ev as LogEntry])
-          } else if (ev.type === 'complete') {
-            setJobStatus(ev.status === 'completed' ? 'completed' : 'failed')
-            if (jid) {
-              const r = await fetch(`/api/staging/${jid}`)
-              if (r.ok) {
-                const j = await r.json()
-                setSnapshot({
-                  plugins: j.plugins ?? { updated: [], skipped: [] },
-                  themes:  j.themes  ?? { updated: [], skipped: [] },
-                  upstreamUpdated:  j.upstreamUpdated  ?? false,
-                  upstreamConflict: j.upstreamConflict ?? false,
-                })
-              }
-            }
-            return
-          }
-        } catch {}
-      }
-      return read()
+    setSubmitting(true)
+    try {
+      await fetch('/api/staging', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ site: site.trim(), multidev: multidev.trim() }),
+      })
+      setTab('history')
+    } finally {
+      setSubmitting(false)
     }
-
-    await read()
   }, [site, multidev])
 
-  const isRunning = jobStatus === 'running'
-  const envLabel  = site && multidev ? `${site}.${multidev}` : 'staging'
+  // Past jobs = history minus currently live
+  const liveIds  = new Set(liveJobs.map((j) => j.id))
+  const pastJobs = history.filter((h) => !liveIds.has(h.id))
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
@@ -340,178 +422,122 @@ export default function Page() {
               key={t}
               onClick={() => setTab(t)}
               className={[
-                'px-4 py-2 text-sm font-medium transition-colors capitalize',
+                'relative px-4 py-2 text-sm font-medium transition-colors capitalize',
                 tab === t
                   ? 'border-b-2 border-[#FFDC28] text-[#FFDC28]'
                   : 'text-slate-400 hover:text-slate-200',
               ].join(' ')}
             >
               {t}
+              {t === 'history' && liveJobs.length > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-yellow-400 animate-pulse" />
+              )}
             </button>
           ))}
         </div>
 
         {/* ── Run tab ── */}
         {tab === 'run' && (
-          <div className="space-y-5">
-
-            {/* Target form */}
-            <Card>
-              <CardHeader
-                icon={<Server className="w-5 h-5" />}
-                title="Target Environment"
-                description="Enter the Pantheon site ID and multidev name to update"
-              />
-              <div className="px-6 py-5 space-y-4">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <label className="text-xs text-slate-400 font-mono">Site ID</label>
-                    <input
-                      type="text"
-                      value={site}
-                      onChange={(e) => setSite(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && !isRunning && startJob()}
-                      placeholder="my-site-name"
-                      disabled={isRunning}
-                      className="w-full rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 font-mono text-sm text-white placeholder-slate-500 focus:border-[#FFDC28] focus:outline-none disabled:opacity-50"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-xs text-slate-400 font-mono">Multidev Name</label>
-                    <input
-                      type="text"
-                      value={multidev}
-                      onChange={(e) => setMultidev(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && !isRunning && startJob()}
-                      placeholder="mu-260805"
-                      disabled={isRunning}
-                      className="w-full rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 font-mono text-sm text-white placeholder-slate-500 focus:border-[#FFDC28] focus:outline-none disabled:opacity-50"
-                    />
-                  </div>
+          <Card>
+            <CardHeader
+              icon={<Server className="w-5 h-5" />}
+              title="Target Environment"
+              description="Enter the Pantheon site ID and multidev name to update"
+            />
+            <div className="px-6 py-5 space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-xs text-slate-400 font-mono">Site ID</label>
+                  <input
+                    type="text"
+                    value={site}
+                    onChange={(e) => setSite(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && !submitting && startJob()}
+                    placeholder="my-site-name"
+                    disabled={submitting}
+                    className="w-full rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 font-mono text-sm text-white placeholder-slate-500 focus:border-[#FFDC28] focus:outline-none disabled:opacity-50"
+                  />
                 </div>
-                <button
-                  onClick={startJob}
-                  disabled={isRunning || !site.trim() || !multidev.trim()}
-                  className="w-full rounded-lg bg-[#FFDC28] hover:bg-[#E6C625] px-4 py-2.5 text-sm font-semibold text-slate-900 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                  {isRunning ? (
-                    <span className="flex items-center justify-center gap-2">
-                      <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-900 border-t-transparent" />
-                      Running updates…
-                    </span>
-                  ) : 'Run Staging Updates'}
-                </button>
+                <div className="space-y-1.5">
+                  <label className="text-xs text-slate-400 font-mono">Multidev Name</label>
+                  <input
+                    type="text"
+                    value={multidev}
+                    onChange={(e) => setMultidev(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && !submitting && startJob()}
+                    placeholder="mu-260805"
+                    disabled={submitting}
+                    className="w-full rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 font-mono text-sm text-white placeholder-slate-500 focus:border-[#FFDC28] focus:outline-none disabled:opacity-50"
+                  />
+                </div>
               </div>
-            </Card>
-
-            {/* Live console */}
-            {logs.length > 0 && (
-              <Card>
-                <div className="flex items-center justify-between px-5 py-3 border-b border-slate-700">
-                  <div className="flex items-center gap-2 text-[#FFDC28]">
-                    <Terminal className="w-4 h-4" />
-                    <span className="font-mono text-xs text-slate-300">{envLabel}</span>
-                  </div>
-                  <StatusBadge status={isRunning ? 'running' : jobStatus} />
-                </div>
-                <div
-                  ref={consoleRef}
-                  className="h-72 overflow-y-auto bg-slate-900 rounded-b-xl p-4 space-y-0.5"
-                >
-                  {logs.map((entry, i) => <LogLine key={i} entry={entry} />)}
-                  {isRunning && (
-                    <div className="flex gap-2 font-mono text-xs text-slate-600">
-                      <span className="animate-pulse">▋</span>
-                    </div>
-                  )}
-                </div>
-              </Card>
-            )}
-
-            {/* Summary */}
-            {snapshot && jobStatus !== 'running' && (
-              <Card>
-                <CardHeader
-                  icon={<CheckCircle className="w-5 h-5" />}
-                  title="Results"
-                  description={`${envLabel} · ${jobStatus === 'completed' ? 'Completed successfully' : 'Completed with errors'}`}
-                />
-                <div className="px-6 py-5 space-y-4">
-                  {snapshot.upstreamUpdated && (
-                    <div className="flex items-center gap-2 p-3 rounded-lg bg-green-900/20 border border-green-700/40">
-                      <CheckCircle className="w-4 h-4 text-green-400" />
-                      <span className="text-sm text-green-400 font-mono">Upstream updated</span>
-                    </div>
-                  )}
-                  {snapshot.upstreamConflict && (
-                    <div className="flex items-center gap-2 p-3 rounded-lg bg-orange-900/20 border border-orange-700/40">
-                      <AlertCircle className="w-4 h-4 text-orange-400" />
-                      <span className="text-sm text-orange-400 font-mono">Upstream skipped — merge conflict</span>
-                    </div>
-                  )}
-                  <UpdateSection
-                    label="Plugins"
-                    updated={snapshot.plugins.updated}
-                    skipped={snapshot.plugins.skipped}
-                  />
-                  <UpdateSection
-                    label="Themes"
-                    updated={snapshot.themes.updated}
-                    skipped={snapshot.themes.skipped}
-                  />
-                  {!snapshot.upstreamUpdated &&
-                    snapshot.plugins.updated.length === 0 &&
-                    snapshot.themes.updated.length === 0 && (
-                    <p className="text-sm text-slate-500 font-mono">Nothing was updated</p>
-                  )}
-
-                  {jobStatus === 'completed' && (
-                    <div className="flex items-center gap-2 mt-2 pt-4 border-t border-slate-700 text-xs text-slate-400">
-                      <Clock className="w-3.5 h-3.5" />
-                      <span>Deployment scheduled automatically in mu-deployment (2 business days · 9 AM PHT)</span>
-                    </div>
-                  )}
-                </div>
-              </Card>
-            )}
-          </div>
+              <button
+                onClick={startJob}
+                disabled={submitting || !site.trim() || !multidev.trim()}
+                className="w-full rounded-lg bg-[#FFDC28] hover:bg-[#E6C625] px-4 py-2.5 text-sm font-semibold text-slate-900 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {submitting ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-900 border-t-transparent" />
+                    Starting…
+                  </span>
+                ) : 'Run Staging Updates'}
+              </button>
+            </div>
+          </Card>
         )}
 
         {/* ── History tab ── */}
         {tab === 'history' && (
-          <div className="space-y-4">
-            <Card>
-              <CardHeader
-                icon={<Layers className="w-5 h-5" />}
-                title="Staging History"
-                description="Recent staging runs — times shown in Philippine Time (PHT)"
-              />
-              <div className="px-5 py-4 space-y-3">
-                <div className="flex justify-end">
-                  <button
-                    onClick={loadHistory}
-                    disabled={historyLoading}
-                    className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-[#FFDC28] transition-colors disabled:opacity-40"
-                  >
-                    <RefreshCw className={`w-3.5 h-3.5 ${historyLoading ? 'animate-spin' : ''}`} />
-                    {historyLoading ? 'Loading…' : 'Refresh'}
-                  </button>
+          <div className="space-y-6">
+
+            {/* Live section */}
+            {liveJobs.length > 0 && (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <Radio className="w-4 h-4 text-yellow-400 animate-pulse" />
+                  <h3 className="text-sm font-semibold text-yellow-400 uppercase tracking-widest">Live</h3>
                 </div>
-
-                {historyLoading && history.length === 0 && (
-                  <p className="text-sm text-slate-500 font-mono text-center py-6">Loading…</p>
-                )}
-                {!historyLoading && history.length === 0 && (
-                  <div className="text-center py-8 space-y-2">
-                    <Package className="w-8 h-8 text-slate-600 mx-auto" />
-                    <p className="text-sm text-slate-500">No staging runs yet</p>
-                    <p className="text-xs text-slate-600">Supabase may not be configured, or no jobs have run</p>
-                  </div>
-                )}
-
-                {history.map((item) => <HistoryRow key={item.id} item={item} />)}
+                {liveJobs.map((job) => (
+                  <LiveJobCard
+                    key={job.id}
+                    job={job}
+                    onComplete={() => handleJobComplete(job.id)}
+                  />
+                ))}
               </div>
-            </Card>
+            )}
+
+            {/* Past section */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Layers className="w-4 h-4 text-slate-400" />
+                  <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-widest">Past</h3>
+                </div>
+                <button
+                  onClick={loadHistory}
+                  disabled={historyLoading}
+                  className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-[#FFDC28] transition-colors disabled:opacity-40"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${historyLoading ? 'animate-spin' : ''}`} />
+                  {historyLoading ? 'Loading…' : 'Refresh'}
+                </button>
+              </div>
+
+              {historyLoading && pastJobs.length === 0 && (
+                <p className="text-sm text-slate-500 font-mono text-center py-6">Loading…</p>
+              )}
+              {!historyLoading && pastJobs.length === 0 && liveJobs.length === 0 && (
+                <div className="text-center py-8 space-y-2">
+                  <Package className="w-8 h-8 text-slate-600 mx-auto" />
+                  <p className="text-sm text-slate-500">No staging runs yet</p>
+                </div>
+              )}
+
+              {pastJobs.map((item) => <HistoryRow key={item.id} item={item} />)}
+            </div>
+
           </div>
         )}
 
