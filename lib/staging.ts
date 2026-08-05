@@ -301,9 +301,24 @@ export async function executeJob(job: StagingJob): Promise<void> {
     if (sftpResult.code !== 0) throw new Error(`Failed to set SFTP mode: ${sftpResult.stderr}`)
     log('info', 'Connection mode: SFTP')
 
+    // ── 3C. Verify WordPress is ready (new multidevs need DB sync time) ───────
+    log('status', 'Verifying WordPress database is ready...')
+    let wpReady = false
+    for (let attempt = 1; attempt <= 6; attempt++) {
+      const check = await run(wp(job, 'core is-installed'))
+      if (check.code === 0) { wpReady = true; break }
+      if (attempt < 6) {
+        log('info', `WordPress not ready yet (attempt ${attempt}/6) — waiting 30s...`)
+        await new Promise((r) => setTimeout(r, 30000))
+      }
+    }
+    if (!wpReady) {
+      log('warn', 'WordPress not ready after 3 minutes — plugin/theme updates will be skipped')
+    }
+
     // ── 4–6. Plugin updates + commit ─────────────────────────────────────────
     step('Updating plugins')
-    const pluginSummary = await runPluginOrThemeUpdates(job, 'plugin')
+    const pluginSummary = wpReady ? await runPluginOrThemeUpdates(job, 'plugin') : { updated: [], skipped: [] }
     job.plugins = pluginSummary
 
     if (pluginSummary.updated.length > 0 || pluginSummary.skipped.length > 0) {
@@ -325,7 +340,7 @@ export async function executeJob(job: StagingJob): Promise<void> {
 
     // ── 7–8. Theme updates + commit ──────────────────────────────────────────
     step('Updating themes')
-    const themeSummary = await runPluginOrThemeUpdates(job, 'theme')
+    const themeSummary = wpReady ? await runPluginOrThemeUpdates(job, 'theme') : { updated: [], skipped: [] }
     job.themes = themeSummary
 
     if (themeSummary.updated.length > 0 || themeSummary.skipped.length > 0) {
@@ -411,7 +426,7 @@ export async function executeJob(job: StagingJob): Promise<void> {
     )
 
     finishJob(job, 'completed')
-    void scheduleDeployment(job)
+    await scheduleDeployment(job)
     await finalizeStagingRecord(job.id, {
       site_name: job.site_name,
       upstream: job.upstream,
