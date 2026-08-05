@@ -311,6 +311,17 @@ export async function executeJob(job: StagingJob): Promise<void> {
     await runStream(wp(job, 'cache flush'), (line) => log('info', line))
     log('success', 'Cache flushed')
 
+    // ── 11. Safety check — commit any remaining SFTP changes before switching to Git
+    const diffStat = await run(`terminus env:diffstat ${env(job)} --format=json 2>&1`)
+    try {
+      const pending = parseWpJson(cleanJson(diffStat.stdout))
+      if (pending.length > 0) {
+        log('warn', `${pending.length} uncommitted file(s) detected — committing before switching to Git...`)
+        await run(`terminus env:commit ${env(job)} --message='Staged updates (safety commit)' 2>&1`)
+        log('success', 'Safety commit completed')
+      }
+    } catch {}
+
     // ── 11. Switch to Git ────────────────────────────────────────────────────
     log('status', 'Setting connection mode to Git...')
     const gitResult = await run(`terminus connection:set ${env(job)} git 2>&1`)
