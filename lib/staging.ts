@@ -79,13 +79,12 @@ async function runPluginOrThemeUpdates(
     wp(job, `${type} list --update=available --format=json --context=admin`),
   )
 
-  // Log raw output (truncated) so it's visible in the Live console for diagnosis
-  const rawPreview = listResult.stdout.slice(0, 300).replace(/\n/g, ' ')
-  log('info', `${label} list raw: ${rawPreview || '(empty)'}`)
+  const cleaned = cleanJson(listResult.stdout)
+  const rawPreview = listResult.stdout.slice(0, 600).replace(/\n/g, ' ')
+  log('info', `${label} list raw (600): ${rawPreview || '(empty)'}`)
+  log('info', `${label} list cleaned: ${cleaned.slice(0, 300) || '(empty)'}`)
 
-  const available = parseWpJson<{ name: string; title?: string; version?: string }>(
-    cleanJson(listResult.stdout),
-  )
+  const available = parseWpJson<{ name: string; title?: string; version?: string }>(cleaned)
 
   if (available.length === 0) {
     log('info', `No ${label.toLowerCase()} updates available`)
