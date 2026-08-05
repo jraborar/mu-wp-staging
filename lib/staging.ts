@@ -161,16 +161,30 @@ export async function executeJob(job: StagingJob): Promise<void> {
       log('info', `Upstream: ${upstream}`)
     }
 
+    // ── 3. Ensure git mode before upstream operations ─────────────────────────
+    log('status', 'Setting connection mode to Git...')
+    await run(`terminus connection:set ${env(job)} git 2>&1`)
+    log('info', 'Connection mode: Git')
+
     // ── 3. Upstream updates ──────────────────────────────────────────────────
     if (isWordPress) {
       log('status', 'Checking for upstream updates...')
       const upstreamList = await run(
-        `terminus upstream:updates:list ${env(job)} --format=list 2>&1`,
+        `terminus upstream:updates:list ${env(job)} --format=json 2>&1`,
       )
-      const hasUpdates =
-        upstreamList.code === 0 &&
-        upstreamList.stdout.trim().length > 0 &&
-        !upstreamList.stdout.toLowerCase().includes('no upstream updates')
+      // Parse JSON — if it's a non-empty array, there are updates
+      let hasUpdates = false
+      try {
+        const entries = parseWpJson(cleanJson(upstreamList.stdout))
+        hasUpdates = entries.length > 0
+        log('info', hasUpdates
+          ? `${entries.length} upstream update(s) available`
+          : 'No upstream updates available'
+        )
+      } catch {
+        hasUpdates = false
+        log('info', 'No upstream updates available')
+      }
 
       if (!hasUpdates) {
         log('info', 'No upstream updates available')
