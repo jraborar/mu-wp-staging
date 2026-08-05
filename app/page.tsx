@@ -159,7 +159,11 @@ function HistoryRow({ item }: { item: HistoryItem }) {
           <span className="font-mono text-xs text-[#FFDC28]">{item.multidev}</span>
         </div>
         <div className="hidden sm:flex items-center gap-3 text-xs shrink-0">
-          {item.upstream_updated && <span className="text-green-400 font-mono">upstream ✓</span>}
+          {item.upstream_updated
+            ? <span className="text-green-400 font-mono">upstream ✓</span>
+            : !item.upstream_skipped_reason
+              ? <span className="text-green-400/60 font-mono">upstream — no updates</span>
+              : null}
           {updatedCount > 0  && <span className="text-green-400">{updatedCount} updated</span>}
           {skippedCount > 0  && <span className="text-orange-400">{skippedCount} skipped</span>}
         </div>
@@ -172,16 +176,20 @@ function HistoryRow({ item }: { item: HistoryItem }) {
 
       {open && (
         <div className="border-t border-slate-700 px-5 py-4 space-y-4 bg-slate-800/60">
-          {item.upstream_updated && (
+          {item.upstream_updated ? (
             <div className="flex items-center gap-2">
               <CheckCircle className="w-4 h-4 text-green-400" />
               <span className="text-sm text-green-400 font-mono">Upstream updated</span>
             </div>
-          )}
-          {item.upstream_skipped_reason && (
+          ) : item.upstream_skipped_reason ? (
             <div className="flex items-center gap-2">
               <AlertCircle className="w-4 h-4 text-orange-400" />
               <span className="text-sm text-orange-400 font-mono">Upstream skipped — {item.upstream_skipped_reason}</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <CheckCircle className="w-4 h-4 text-green-400/50" />
+              <span className="text-sm text-green-400/50 font-mono">Upstream — no updates</span>
             </div>
           )}
           <UpdateSection label="Plugins" updated={item.plugins_updated} skipped={item.plugins_skipped} />
