@@ -209,6 +209,8 @@ function LiveJobCard({ job, onComplete }: { job: LiveJob; onComplete: () => void
   const [logs, setLogs]       = useState<LogEntry[]>([])
   const [status, setStatus]   = useState<string>('running')
   const [snapshot, setSnapshot] = useState<{ plugins: UpdateSummary; themes: UpdateSummary; upstreamUpdated: boolean; upstreamConflict: boolean } | null>(null)
+  const [step, setStep]       = useState<{ name: string; index: number; total: number } | null>(null)
+  const [elapsed, setElapsed] = useState(0)
   const consoleRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -216,6 +218,12 @@ function LiveJobCard({ job, onComplete }: { job: LiveJob; onComplete: () => void
       consoleRef.current.scrollTop = consoleRef.current.scrollHeight
     }
   }, [logs])
+
+  // Elapsed timer — ticks every 30s
+  useEffect(() => {
+    const interval = setInterval(() => setElapsed((e) => e + 0.5), 30000)
+    return () => clearInterval(interval)
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -242,6 +250,8 @@ function LiveJobCard({ job, onComplete }: { job: LiveJob; onComplete: () => void
             const ev = JSON.parse(line)
             if (ev.type === 'log') {
               setLogs((p) => [...p, ev as LogEntry])
+            } else if (ev.type === 'step') {
+              setStep({ name: ev.name, index: ev.index, total: ev.total })
             } else if (ev.type === 'complete') {
               setStatus(ev.status)
               const r = await fetch(`/api/staging/${job.id}`)
@@ -269,7 +279,10 @@ function LiveJobCard({ job, onComplete }: { job: LiveJob; onComplete: () => void
     return () => { cancelled = true }
   }, [job.id, onComplete])
 
-  const label = job.site_name ?? job.site
+  const label        = job.site_name ?? job.site
+  const elapsedMins  = Math.floor((Date.now() - job.startedAt) / 60000)
+  const isLongRunning = elapsedMins >= 30 && status === 'running'
+  const pct          = step ? Math.round((step.index / step.total) * 100) : 0
 
   return (
     <div className="rounded-xl border border-yellow-500/30 bg-slate-800 overflow-hidden">
@@ -283,6 +296,32 @@ function LiveJobCard({ job, onComplete }: { job: LiveJob; onComplete: () => void
         </div>
         <StatusBadge status={status} />
       </div>
+
+      {/* Progress bar */}
+      {step && status === 'running' && (
+        <div className="px-5 pt-3 pb-1 space-y-1.5">
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-slate-300 font-mono">{step.name}</span>
+            <span className="text-slate-500">{step.index}/{step.total}</span>
+          </div>
+          <div className="h-1.5 w-full rounded-full bg-slate-700 overflow-hidden">
+            <div
+              className="h-full rounded-full bg-[#FFDC28] transition-all duration-500"
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Long-running warning */}
+      {isLongRunning && (
+        <div className="mx-5 mt-2 flex items-center gap-2 rounded-lg border border-orange-500/30 bg-orange-900/20 px-3 py-2">
+          <Clock className="w-3.5 h-3.5 text-orange-400 shrink-0" />
+          <span className="text-xs text-orange-400">
+            Staging is taking longer than usual — {elapsedMins} min elapsed
+          </span>
+        </div>
+      )}
 
       {/* Console */}
       <div
