@@ -1,18 +1,26 @@
 FROM node:22-bookworm-slim
 
-# Install PHP (required by Terminus), git, and SSH client
+# Add ondrej/php PPA for multi-version PHP support
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    php-cli \
-    php-curl \
-    php-mbstring \
-    php-xml \
-    php-zip \
-    curl \
+    ca-certificates curl gnupg lsb-release \
+    && curl -fsSL https://packages.sury.org/php/apt.gpg \
+       | gpg --dearmor -o /usr/share/keyrings/sury-php.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/sury-php.gpg] https://packages.sury.org/php/ bookworm main" \
+       > /etc/apt/sources.list.d/sury-php.list \
+    && apt-get update
+
+# Install PHP 8.1, 8.2, 8.3 so we can match whatever version the site uses
+RUN apt-get install -y --no-install-recommends \
+    php8.1-cli php8.1-curl php8.1-mbstring php8.1-xml php8.1-zip \
+    php8.2-cli php8.2-curl php8.2-mbstring php8.2-xml php8.2-zip \
+    php8.3-cli php8.3-curl php8.3-mbstring php8.3-xml php8.3-zip \
     git \
     openssh-client \
     unzip \
     && rm -rf /var/lib/apt/lists/*
+
+# Default to PHP 8.2 (most common on Pantheon)
+RUN update-alternatives --set php /usr/bin/php8.2
 
 # Install Terminus (pinned version — update ARG to upgrade)
 ARG TERMINUS_VERSION=4.3.2
