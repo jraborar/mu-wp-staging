@@ -23,9 +23,7 @@ export interface StagingJob {
   site: string
   site_name?: string
   multidev: string
-  // resolved after site:info
   upstream?: string
-  // results populated during execution
   upstreamUpdated: boolean
   upstreamConflict: boolean
   plugins: UpdateSummary
@@ -35,6 +33,10 @@ export interface StagingJob {
   startedAt: number
   lastActivity: number
   emitter: EventEmitter
+  // progress tracking
+  stepName: string
+  stepIndex: number
+  stepTotal: number
 }
 
 const MAX_JOBS = 20
@@ -59,6 +61,9 @@ export function createJob(site: string, multidev: string): StagingJob {
     startedAt: Date.now(),
     lastActivity: Date.now(),
     emitter: new EventEmitter(),
+    stepName: 'Starting',
+    stepIndex: 0,
+    stepTotal: 12,
   }
   job.emitter.setMaxListeners(20)
   store.set(job.id, job)
@@ -71,6 +76,14 @@ export function getJob(id: string): StagingJob | undefined {
 
 export function getAllJobs(): StagingJob[] {
   return [...store.values()]
+}
+
+export function setStep(job: StagingJob, name: string, index: number, total = job.stepTotal): void {
+  job.stepName = name
+  job.stepIndex = index
+  job.stepTotal = total
+  job.lastActivity = Date.now()
+  job.emitter.emit('event', { type: 'step', name, index, total })
 }
 
 export function appendLog(job: StagingJob, logType: LogType, message: string): void {

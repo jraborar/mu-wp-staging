@@ -1,4 +1,4 @@
-import { type StagingJob, appendLog, finishJob } from '@/lib/jobStore'
+import { type StagingJob, appendLog, finishJob, setStep } from '@/lib/jobStore'
 import { run, runStream, shellEscape, cleanJson } from '@/lib/terminus'
 import { scheduleDeployment } from '@/lib/schedule'
 import {
@@ -113,8 +113,24 @@ async function runPluginOrThemeUpdates(
   return summary
 }
 
+const STEPS = [
+  'Authenticating',
+  'Checking site info',
+  'Setting Git mode',
+  'Checking upstream',
+  'Applying upstream',
+  'Setting SFTP mode',
+  'Updating plugins',
+  'Committing plugins',
+  'Updating themes',
+  'Committing themes',
+  'Flushing cache',
+  'Clearing edge cache',
+]
+
 export async function executeJob(job: StagingJob): Promise<void> {
   const log = (logType: Parameters<typeof appendLog>[1], m: string) => appendLog(job, logType, m)
+  const step = (name: string) => setStep(job, name, STEPS.indexOf(name) + 1, STEPS.length)
 
   await createStagingRecord(job.id, {
     site: job.site,
@@ -123,8 +139,26 @@ export async function executeJob(job: StagingJob): Promise<void> {
     started_at: new Date(job.startedAt).toISOString(),
   })
 
+  // ── Long-running alerts ───────────────────────────────────────────────────
+  const startedAt = Date.now()
+  let longRunTimer: ReturnType<typeof setTimeout> | null = null
+  let longRunInterval: ReturnType<typeof setInterval> | null = null
+  const stopAlerts = () => {
+    if (longRunTimer)    clearTimeout(longRunTimer)
+    if (longRunInterval) clearInterval(longRunInterval)
+  }
+  longRunTimer = setTimeout(() => {
+    log('warn', '⏱ Staging is taking longer than usual (30+ min) — still running, please wait...')
+    longRunInterval = setInterval(() => {
+      if (job.status !== 'running') { stopAlerts(); return }
+      const elapsed = Math.round((Date.now() - startedAt) / 60000)
+      log('warn', `⏱ Still running — ${elapsed} minutes elapsed`)
+    }, 10 * 60 * 1000)
+  }, 30 * 60 * 1000)
+
   try {
     // ── 1. Auth ──────────────────────────────────────────────────────────────
+    step('Authenticating')
     log('status', 'Verifying Terminus authentication...')
     const token = process.env.TERMINUS_TOKEN
     if (token) await run(`terminus auth:login --machine-token="${token}" 2>&1`)
@@ -139,6 +173,7 @@ export async function executeJob(job: StagingJob): Promise<void> {
     }
 
     // ── 2. Site info + upstream check ────────────────────────────────────────
+    step('Checking site info')
     log('status', `Checking site info for ${job.site}...`)
     const siteInfo = await run(`terminus site:info ${job.site} --format=json 2>&1`)
     if (siteInfo.code !== 0) throw new Error(`Site "${job.site}" not found or inaccessible`)
@@ -182,6 +217,7 @@ export async function executeJob(job: StagingJob): Promise<void> {
     }
 
     // ── 3. Ensure git mode before upstream operations ─────────────────────────
+    step('Setting Git mode')
     log('status', 'Setting connection mode to Git...')
     await run(`terminus connection:set ${env(job)} git 2>&1`)
     log('info', 'Connection mode: Git')
@@ -209,6 +245,7 @@ export async function executeJob(job: StagingJob): Promise<void> {
       if (!hasUpdates) {
         log('info', 'No upstream updates available')
       } else {
+        step('Applying upstream')
         log('status', 'Applying upstream updates...')
 
         // Capture pre-apply hash for potential revert
@@ -247,16 +284,19 @@ export async function executeJob(job: StagingJob): Promise<void> {
     }
 
     // ── 3B. Switch to SFTP ───────────────────────────────────────────────────
+    step('Setting SFTP mode')
     log('status', 'Setting connection mode to SFTP...')
     const sftpResult = await run(`terminus connection:set ${env(job)} sftp 2>&1`)
     if (sftpResult.code !== 0) throw new Error(`Failed to set SFTP mode: ${sftpResult.stderr}`)
     log('info', 'Connection mode: SFTP')
 
     // ── 4–6. Plugin updates + commit ─────────────────────────────────────────
+    step('Updating plugins')
     const pluginSummary = await runPluginOrThemeUpdates(job, 'plugin')
     job.plugins = pluginSummary
 
     if (pluginSummary.updated.length > 0 || pluginSummary.skipped.length > 0) {
+      step('Committing plugins')
       const pluginMsg = buildCommitMessage(pluginSummary, { updated: [], skipped: [] })
       log('status', 'Committing plugin updates...')
       const { code: commitCode } = await runStream(
@@ -273,10 +313,12 @@ export async function executeJob(job: StagingJob): Promise<void> {
     }
 
     // ── 7–8. Theme updates + commit ──────────────────────────────────────────
+    step('Updating themes')
     const themeSummary = await runPluginOrThemeUpdates(job, 'theme')
     job.themes = themeSummary
 
     if (themeSummary.updated.length > 0 || themeSummary.skipped.length > 0) {
+      step('Committing themes')
       const themeMsg = buildCommitMessage({ updated: [], skipped: [] }, themeSummary)
       log('status', 'Committing theme updates...')
       const { code: themeCommitCode } = await runStream(
@@ -309,6 +351,7 @@ export async function executeJob(job: StagingJob): Promise<void> {
     }
 
     // ── 10. Cache flush ──────────────────────────────────────────────────────
+    step('Flushing cache')
     log('status', 'Flushing WordPress cache...')
     await runStream(wp(job, 'cache flush'), (line) => log('info', line))
     log('success', 'Cache flushed')
@@ -334,6 +377,7 @@ export async function executeJob(job: StagingJob): Promise<void> {
     }
 
     // ── 12. Clear Pantheon cache ─────────────────────────────────────────────
+    step('Clearing edge cache')
     log('status', 'Clearing Pantheon edge cache...')
     const clearResult = await run(`terminus env:clear-cache ${env(job)} 2>&1`)
     if (clearResult.code !== 0) {
@@ -386,5 +430,7 @@ export async function executeJob(job: StagingJob): Promise<void> {
       completed_at: new Date().toISOString(),
       logs: job.logs,
     })
+  } finally {
+    stopAlerts()
   }
 }
