@@ -73,16 +73,37 @@ export function cleanJson(raw: string): string {
       const t = l.trim()
       if (/^\s*(Deprecated|Warning|Notice|PHP):/i.test(t)) return false
       if (/^\[(warning|notice|error|info)\]/i.test(t)) return false
-      // Terminus appends a UTC timestamp line after notices, e.g. "2026-08-05 10:44:31 UTC[+0000]"
-      if (/^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}/.test(t)) return false
       return true
     })
-    // WP-CLI appends "[notice] Command: ..." on the same line as JSON output.
-    // Strip it so the greedy regex doesn't swallow [Exit: 0] as part of the match.
-    .map((l) => l.replace(/\s*\[(?:notice|warning|error|info)\]\s+Command:.*$/i, ''))
     .join('\n')
     .trim()
 
-  const match = cleaned.match(/(\[[\s\S]*\]|\{[\s\S]*\})/)
-  return match ? match[0] : cleaned
+  // Use balanced bracket matching — greedy regex fails when terminus appends
+  // "2026-08-05 10:44:31 UTC[+0000]" on the same line as the JSON output.
+  const start = Math.min(
+    cleaned.includes('[') ? cleaned.indexOf('[') : Infinity,
+    cleaned.includes('{') ? cleaned.indexOf('{') : Infinity,
+  )
+  if (start === Infinity) return cleaned
+
+  let depth = 0
+  let inString = false
+  let escape = false
+
+  for (let i = start; i < cleaned.length; i++) {
+    const c = cleaned[i]
+    if (escape)   { escape = false; continue }
+    if (inString) {
+      if (c === '\\') escape = true
+      else if (c === '"') inString = false
+      continue
+    }
+    if (c === '"') { inString = true; continue }
+    if (c === '[' || c === '{') depth++
+    else if (c === ']' || c === '}') {
+      depth--
+      if (depth === 0) return cleaned.slice(start, i + 1)
+    }
+  }
+  return cleaned.slice(start)
 }
