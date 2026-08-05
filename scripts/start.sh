@@ -18,8 +18,7 @@ fi
 if [ -n "$PANTHEON_SSH_KEY" ]; then
   echo "[startup] Configuring SSH key..."
   mkdir -p ~/.ssh
-
-  echo "$PANTHEON_SSH_KEY" > ~/.ssh/id_rsa
+  echo "$PANTHEON_SSH_KEY" | base64 -d > ~/.ssh/id_rsa
   chmod 600 ~/.ssh/id_rsa
 
   # Trust all Pantheon hosts (codeserver + appserver) without interactive prompts
