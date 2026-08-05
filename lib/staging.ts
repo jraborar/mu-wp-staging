@@ -154,6 +154,22 @@ export async function executeJob(job: StagingJob): Promise<void> {
     job.site_name = siteLabel !== job.site ? siteLabel : undefined
     job.upstream = upstream
 
+    // ── 2B. Match PHP version to the environment ─────────────────────────────
+    const envInfo = await run(`terminus env:info ${env(job)} --format=json 2>&1`)
+    let phpVersion = '8.2'
+    try {
+      const envData = JSON.parse(cleanJson(envInfo.stdout))
+      phpVersion = envData?.php_version ?? '8.2'
+    } catch {}
+    log('info', `Site PHP version: ${phpVersion} — switching terminus to match`)
+    const phpBin = `/usr/bin/php${phpVersion}`
+    const phpSwitch = await run(`update-alternatives --set php ${phpBin} 2>&1`)
+    if (phpSwitch.code !== 0) {
+      log('warn', `Could not switch to PHP ${phpVersion} — continuing with default`)
+    } else {
+      log('info', `PHP switched to ${phpVersion}`)
+    }
+
     const isWordPress = SUPPORTED_UPSTREAMS.some((u) => upstream.includes(u))
     if (!isWordPress) {
       log('warn', `Upstream "${upstream}" is not a supported WordPress upstream — skipping upstream update steps`)
