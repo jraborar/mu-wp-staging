@@ -76,7 +76,7 @@ async function runPluginOrThemeUpdates(
   await run(wp(job, `${type} check-update 2>&1`))
 
   const listResult = await run(
-    wp(job, `${type} list --update=available --format=json --context=admin`),
+    wp(job, `${type} list --update=available --format=json`),
   )
 
   const cleaned = cleanJson(listResult.stdout)
@@ -97,7 +97,7 @@ async function runPluginOrThemeUpdates(
   // --format=json suppresses progress output; WP-CLI outputs JSON array on completion
   interface WpUpdateEntry { name: string; old_version: string; new_version: string; status: string }
   const jsonResult = await run(
-    wp(job, `${type} update --all --context=admin --format=json`),
+    wp(job, `${type} update --all --format=json`),
   )
   const results = parseWpJson<WpUpdateEntry>(cleanJson(jsonResult.stdout))
 
