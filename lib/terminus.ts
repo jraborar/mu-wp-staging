@@ -71,16 +71,16 @@ export function cleanJson(raw: string): string {
     .split('\n')
     .filter((l) => {
       const t = l.trim()
-      // Strip PHP/terminus deprecation and warning lines
       if (/^\s*(Deprecated|Warning|Notice|PHP):/i.test(t)) return false
-      // Strip terminus metadata lines like [warning], [notice], [error]
       if (/^\[(warning|notice|error|info)\]/i.test(t)) return false
       return true
     })
+    // WP-CLI appends "[notice] Command: ..." on the same line as JSON output.
+    // Strip it so the greedy regex doesn't swallow [Exit: 0] as part of the match.
+    .map((l) => l.replace(/\s*\[(?:notice|warning|error|info)\]\s+Command:.*$/i, ''))
     .join('\n')
     .trim()
 
-  // Extract just the JSON array or object if surrounded by other text
   const match = cleaned.match(/(\[[\s\S]*\]|\{[\s\S]*\})/)
   return match ? match[0] : cleaned
 }
