@@ -73,6 +73,8 @@ export function cleanJson(raw: string): string {
       const t = l.trim()
       if (/^\s*(Deprecated|Warning|Notice|PHP):/i.test(t)) return false
       if (/^\[(warning|notice|error|info)\]/i.test(t)) return false
+      // Terminus appends a UTC timestamp line after notices, e.g. "2026-08-05 10:44:31 UTC[+0000]"
+      if (/^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}/.test(t)) return false
       return true
     })
     // WP-CLI appends "[notice] Command: ..." on the same line as JSON output.
