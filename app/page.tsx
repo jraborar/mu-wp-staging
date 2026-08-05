@@ -80,10 +80,13 @@ function StatusBadge({ status }: { status: string }) {
     completed: 'bg-green-400',
     failed:    'bg-red-400',
   }
+  const label: Record<string, string> = {
+    completed: 'staged',
+  }
   return (
     <span className={`inline-flex items-center gap-1.5 rounded border px-2 py-0.5 font-mono text-xs ${map[status] ?? 'border-slate-600 text-slate-400'}`}>
       {dot[status] && <span className={`h-1.5 w-1.5 rounded-full ${dot[status]}`} />}
-      {status}
+      {label[status] ?? status}
     </span>
   )
 }
@@ -161,9 +164,11 @@ function HistoryRow({ item }: { item: HistoryItem }) {
         <div className="hidden sm:flex items-center gap-3 text-xs shrink-0">
           {item.upstream_updated
             ? <span className="text-green-400 font-mono">upstream ✓</span>
-            : !item.upstream_skipped_reason
+            : item.upstream && !item.upstream_skipped_reason
               ? <span className="text-green-400/60 font-mono">upstream — no updates</span>
-              : null}
+              : item.upstream_skipped_reason
+                ? <span className="text-orange-400 font-mono">upstream — skipped</span>
+                : null}
           {updatedCount > 0  && <span className="text-green-400">{updatedCount} updated</span>}
           {skippedCount > 0  && <span className="text-orange-400">{skippedCount} skipped</span>}
         </div>
@@ -186,12 +191,12 @@ function HistoryRow({ item }: { item: HistoryItem }) {
               <AlertCircle className="w-4 h-4 text-orange-400" />
               <span className="text-sm text-orange-400 font-mono">Upstream skipped — {item.upstream_skipped_reason}</span>
             </div>
-          ) : (
+          ) : item.upstream ? (
             <div className="flex items-center gap-2">
               <CheckCircle className="w-4 h-4 text-green-400/50" />
               <span className="text-sm text-green-400/50 font-mono">Upstream — no updates</span>
             </div>
-          )}
+          ) : null}
           <UpdateSection label="Plugins" updated={item.plugins_updated} skipped={item.plugins_skipped} />
           <UpdateSection label="Themes"  updated={item.themes_updated}  skipped={item.themes_skipped} />
           {!item.upstream_updated && updatedCount === 0 && (
