@@ -75,13 +75,23 @@ async function runPluginOrThemeUpdates(
   log('status', `Checking for ${label.toLowerCase()} updates...`)
   await run(wp(job, `${type} check-update 2>&1`))
 
-  const listResult = await run(
-    wp(job, `${type} list --update=available --format=json`),
+  // Try with --context=admin first (needed to detect pro/premium plugins).
+  // Fall back without it if the site has a PHP fatal error in the admin context.
+  let listResult = await run(
+    wp(job, `${type} list --update=available --format=json --context=admin`),
   )
+  let adminContext = true
+  if (listResult.code !== 0 || listResult.stdout.toLowerCase().includes('fatal error')) {
+    log('warn', `${label} list failed with admin context — retrying without it (pro plugins may not be detected)`)
+    listResult = await run(wp(job, `${type} list --update=available --format=json`))
+    adminContext = false
+    if (listResult.code !== 0) {
+      log('error', `${label} list failed — skipping ${label.toLowerCase()} updates for this site`)
+      return { updated: [], skipped: [] }
+    }
+  }
 
   const cleaned = cleanJson(listResult.stdout)
-  const rawPreview = listResult.stdout.slice(0, 600).replace(/\n/g, ' ')
-  log('info', `${label} list raw (600): ${rawPreview || '(empty)'}`)
   log('info', `${label} list cleaned: ${cleaned.slice(0, 300) || '(empty)'}`)
 
   const available = parseWpJson<{ name: string; title?: string; version?: string }>(cleaned)
@@ -96,9 +106,10 @@ async function runPluginOrThemeUpdates(
 
   // --format=json suppresses progress output; WP-CLI outputs JSON array on completion
   interface WpUpdateEntry { name: string; old_version: string; new_version: string; status: string }
-  const jsonResult = await run(
-    wp(job, `${type} update --all --format=json`),
-  )
+  const updateCmd = adminContext
+    ? `${type} update --all --context=admin --format=json`
+    : `${type} update --all --format=json`
+  const jsonResult = await run(wp(job, updateCmd))
   const results = parseWpJson<WpUpdateEntry>(cleanJson(jsonResult.stdout))
 
   const summary = buildUpdateSummary(available, results)
