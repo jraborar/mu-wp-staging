@@ -13,16 +13,27 @@ else
   echo "[startup] WARNING: TERMINUS_TOKEN not set — jobs will fail"
 fi
 
-# Set up SSH key for Pantheon git access (needed for upstream conflict revert)
+# Set up SSH key — REQUIRED for all terminus wp (WP-CLI) commands.
+# Without this, plugin/theme updates and cache flush will fail with Permission denied.
 if [ -n "$PANTHEON_SSH_KEY" ]; then
   echo "[startup] Configuring SSH key..."
   mkdir -p ~/.ssh
+
   echo "$PANTHEON_SSH_KEY" > ~/.ssh/id_rsa
   chmod 600 ~/.ssh/id_rsa
-  ssh-keyscan -p 2222 codeserver.dev.drush.in >> ~/.ssh/known_hosts 2>/dev/null || true
-  echo "[startup] SSH key configured"
+
+  # Trust all Pantheon hosts (codeserver + appserver) without interactive prompts
+  cat >> ~/.ssh/config <<'EOF'
+Host *.drush.in
+  StrictHostKeyChecking no
+  UserKnownHostsFile /dev/null
+  Port 2222
+  IdentityFile ~/.ssh/id_rsa
+EOF
+
+  echo "[startup] SSH key configured for *.drush.in"
 else
-  echo "[startup] NOTE: PANTHEON_SSH_KEY not set — upstream conflict auto-revert will be skipped"
+  echo "[startup] WARNING: PANTHEON_SSH_KEY not set — WP-CLI commands (plugin/theme updates, cache flush) will fail"
 fi
 
 echo "[startup] Starting MU WP Staging..."

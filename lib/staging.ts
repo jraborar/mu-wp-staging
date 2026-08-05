@@ -134,6 +134,11 @@ export async function executeJob(job: StagingJob): Promise<void> {
     if (!identity) throw new Error('Terminus not authenticated — check TERMINUS_TOKEN')
     log('info', `Authenticated as: ${identity}`)
 
+    // Verify SSH key is present — required for all WP-CLI commands
+    if (!process.env.PANTHEON_SSH_KEY) {
+      throw new Error('PANTHEON_SSH_KEY is not set — required for terminus wp (plugin/theme updates). Add it in Railway environment variables.')
+    }
+
     // ── 2. Site info + upstream check ────────────────────────────────────────
     log('status', `Checking site info for ${job.site}...`)
     const siteInfo = await run(`terminus site:info ${job.site} --format=json 2>&1`)
