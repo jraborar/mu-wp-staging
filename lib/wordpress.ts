@@ -87,11 +87,11 @@ export function buildUpdateSummary(
 }
 
 function formatItem(item: UpdatedItem): string {
-  return `- ${item.title} (${item.from} to ${item.to})`
+  return `- ${item.title} (${item.from} → ${item.to})`
 }
 
 function formatSkipped(item: SkippedItem): string {
-  return `- ${item.title} - ${item.reason}`
+  return `- ${item.title} — ${item.reason}`
 }
 
 export function buildCommitMessage(
@@ -104,20 +104,26 @@ export function buildCommitMessage(
   const hasThemeWork  = themeSummary.updated.length > 0  || themeSummary.skipped.length > 0
 
   if (hasPluginWork) {
-    lines.push('##Plugin##')
-    for (const p of pluginSummary.updated) lines.push(formatItem(p))
+    if (pluginSummary.updated.length > 0) {
+      lines.push('**Plugins**')
+      for (const p of pluginSummary.updated) lines.push(formatItem(p))
+    }
     if (pluginSummary.skipped.length > 0) {
-      lines.push('##Skipped##')
+      if (lines.length > 0) lines.push('')
+      lines.push('**Skipped**')
       for (const p of pluginSummary.skipped) lines.push(formatSkipped(p))
     }
   }
 
   if (hasThemeWork) {
     if (lines.length > 0) lines.push('')
-    lines.push('##Theme##')
-    for (const t of themeSummary.updated) lines.push(formatItem(t))
+    if (themeSummary.updated.length > 0) {
+      lines.push('**Themes**')
+      for (const t of themeSummary.updated) lines.push(formatItem(t))
+    }
     if (themeSummary.skipped.length > 0) {
-      lines.push('##Skipped##')
+      if (lines.length > 0) lines.push('')
+      lines.push('**Skipped**')
       for (const t of themeSummary.skipped) lines.push(formatSkipped(t))
     }
   }

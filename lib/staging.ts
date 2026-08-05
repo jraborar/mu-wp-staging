@@ -259,11 +259,12 @@ export async function executeJob(job: StagingJob): Promise<void> {
     if (pluginSummary.updated.length > 0 || pluginSummary.skipped.length > 0) {
       const pluginMsg = buildCommitMessage(pluginSummary, { updated: [], skipped: [] })
       log('status', 'Committing plugin updates...')
-      const commitPlugin = await run(
+      const { code: commitCode } = await runStream(
         `terminus env:commit ${env(job)} --message=${shellEscape(pluginMsg)} 2>&1`,
+        (line) => log('info', line),
       )
-      if (commitPlugin.code !== 0) {
-        log('warn', `Plugin commit warning: ${commitPlugin.stderr || commitPlugin.stdout}`)
+      if (commitCode !== 0) {
+        log('warn', 'Plugin commit returned non-zero — changes may still be pending')
       } else {
         log('success', 'Plugin updates committed')
       }
@@ -278,11 +279,12 @@ export async function executeJob(job: StagingJob): Promise<void> {
     if (themeSummary.updated.length > 0 || themeSummary.skipped.length > 0) {
       const themeMsg = buildCommitMessage({ updated: [], skipped: [] }, themeSummary)
       log('status', 'Committing theme updates...')
-      const commitTheme = await run(
+      const { code: themeCommitCode } = await runStream(
         `terminus env:commit ${env(job)} --message=${shellEscape(themeMsg)} 2>&1`,
+        (line) => log('info', line),
       )
-      if (commitTheme.code !== 0) {
-        log('warn', `Theme commit warning: ${commitTheme.stderr || commitTheme.stdout}`)
+      if (themeCommitCode !== 0) {
+        log('warn', 'Theme commit returned non-zero — changes may still be pending')
       } else {
         log('success', 'Theme updates committed')
       }
