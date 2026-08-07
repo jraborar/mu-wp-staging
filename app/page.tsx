@@ -274,75 +274,120 @@ function LiveJobCard({ job, onComplete }: { job: LiveJob; onComplete: () => void
     plugins: UpdateSummary; themes: UpdateSummary
     upstreamUpdated: boolean; upstreamConflict: boolean
   } | null>(null)
-  const [step, setStep] = useState<{ name: string; index: number; total: number } | null>(null)
+  const [step, setStep]           = useState<{ name: string; index: number; total: number } | null>(null)
+  const [disconnected, setDisconnected] = useState(false)
+  const statusRef  = useRef(status)
+  const abortRef   = useRef<AbortController | null>(null)
   const consoleRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => { statusRef.current = status }, [status])
 
   useEffect(() => {
     if (consoleRef.current) consoleRef.current.scrollTop = consoleRef.current.scrollHeight
   }, [logs])
 
+  const readStream = useCallback(async (res: Response): Promise<'done' | 'dropped'> => {
+    if (!res.body) return 'dropped'
+    const reader  = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer    = ''
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) return 'dropped'
+      buffer += decoder.decode(value, { stream: true })
+      const parts = buffer.split('\n\n')
+      buffer = parts.pop() ?? ''
+      for (const part of parts) {
+        const line = part.replace(/^data: /, '').trim()
+        if (!line) continue
+        try {
+          const ev = JSON.parse(line)
+          if (ev.type === 'log') {
+            setLogs((p) => [...p, ev as LogEntry])
+          } else if (ev.type === 'step') {
+            setStep({ name: ev.name, index: ev.index, total: ev.total })
+          } else if (ev.type === 'awaiting-approval') {
+            setStatus('awaiting-approval')
+            setApproval({
+              approvalType: ev.approvalType,
+              message: ev.message,
+              approveLabel: ev.approveLabel,
+              rejectLabel: ev.rejectLabel,
+            })
+          } else if (ev.type === 'complete') {
+            setStatus(ev.status)
+            setApproval(null)
+            const r = await fetch(`/api/staging/${job.id}`)
+            if (r.ok) {
+              const j = await r.json()
+              setSnapshot({
+                plugins:          j.plugins  ?? { updated: [], skipped: [] },
+                themes:           j.themes   ?? { updated: [], skipped: [] },
+                upstreamUpdated:  j.upstreamUpdated  ?? false,
+                upstreamConflict: j.upstreamConflict ?? false,
+              })
+            }
+            onComplete()
+            return 'done'
+          }
+        } catch {}
+      }
+    }
+  }, [job.id, onComplete])
+
+  const streamWithAutoReconnect = useCallback(async (initialRes: Response) => {
+    let res = initialRes
+    let attempts = 0
+    const MAX = 8
+
+    while (attempts <= MAX) {
+      const result = await readStream(res)
+      if (result === 'done') { setDisconnected(false); return }
+      if (!['running', 'awaiting-approval'].includes(statusRef.current)) return
+      if (abortRef.current?.signal.aborted) return
+
+      attempts++
+      const delay = Math.min(1000 * 2 ** attempts, 30_000)
+      await new Promise(r => setTimeout(r, delay))
+      if (abortRef.current?.signal.aborted) return
+
+      try {
+        res = await fetch(`/api/staging?jobId=${job.id}`, { signal: abortRef.current?.signal })
+        if (!res.ok) break
+        setDisconnected(false)
+      } catch { break }
+    }
+
+    if (['running', 'awaiting-approval'].includes(statusRef.current)) setDisconnected(true)
+  }, [job.id, readStream])
+
   useEffect(() => {
-    let cancelled = false
+    abortRef.current = new AbortController()
+    const ctrl = abortRef.current
 
     const connect = async () => {
-      const res = await fetch(`/api/staging?jobId=${job.id}`)
-      if (!res.body || cancelled) return
-
-      const reader  = res.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer    = ''
-
-      const read = async (): Promise<void> => {
-        if (cancelled) return
-        const { done, value } = await reader.read()
-        if (done) return
-        buffer += decoder.decode(value, { stream: true })
-        const parts = buffer.split('\n\n')
-        buffer = parts.pop() ?? ''
-        for (const part of parts) {
-          const line = part.replace(/^data: /, '').trim()
-          if (!line) continue
-          try {
-            const ev = JSON.parse(line)
-            if (ev.type === 'log') {
-              setLogs((p) => [...p, ev as LogEntry])
-            } else if (ev.type === 'step') {
-              setStep({ name: ev.name, index: ev.index, total: ev.total })
-            } else if (ev.type === 'awaiting-approval') {
-              setStatus('awaiting-approval')
-              setApproval({
-                approvalType: ev.approvalType,
-                message: ev.message,
-                approveLabel: ev.approveLabel,
-                rejectLabel: ev.rejectLabel,
-              })
-            } else if (ev.type === 'complete') {
-              setStatus(ev.status)
-              setApproval(null)
-              const r = await fetch(`/api/staging/${job.id}`)
-              if (r.ok) {
-                const j = await r.json()
-                setSnapshot({
-                  plugins:          j.plugins  ?? { updated: [], skipped: [] },
-                  themes:           j.themes   ?? { updated: [], skipped: [] },
-                  upstreamUpdated:  j.upstreamUpdated  ?? false,
-                  upstreamConflict: j.upstreamConflict ?? false,
-                })
-              }
-              onComplete()
-              return
-            }
-          } catch {}
-        }
-        return read()
-      }
-
-      await read()
+      try {
+        const res = await fetch(`/api/staging?jobId=${job.id}`, { signal: ctrl.signal })
+        if (!res.ok || ctrl.signal.aborted) return
+        await streamWithAutoReconnect(res)
+      } catch {}
     }
 
     void connect()
-    return () => { cancelled = true }
-  }, [job.id, onComplete])
+    return () => ctrl.abort()
+  }, [job.id, streamWithAutoReconnect])
+
+  const manualReconnect = useCallback(async () => {
+    abortRef.current?.abort()
+    abortRef.current = new AbortController()
+    setDisconnected(false)
+    try {
+      const res = await fetch(`/api/staging?jobId=${job.id}`, { signal: abortRef.current.signal })
+      if (!res.ok) { setDisconnected(true); return }
+      await streamWithAutoReconnect(res)
+    } catch { setDisconnected(true) }
+  }, [job.id, streamWithAutoReconnect])
 
   const sendApproval = async (approved: boolean) => {
     setApproving(true)
@@ -436,6 +481,20 @@ function LiveJobCard({ job, onComplete }: { job: LiveJob; onComplete: () => void
               {approval.rejectLabel}
             </button>
           </div>
+        </div>
+      )}
+
+      {/* Reconnect banner */}
+      {disconnected && (
+        <div className="mx-5 mt-3 flex items-center justify-between gap-3 rounded-lg border border-slate-600 bg-slate-700/50 px-4 py-2.5">
+          <span className="text-xs text-slate-400">Stream disconnected — job may still be running</span>
+          <button
+            onClick={manualReconnect}
+            className="flex items-center gap-1.5 rounded-lg bg-[#FFDC28] hover:bg-[#E6C625] px-3 py-1 text-xs font-semibold text-slate-900 transition-colors"
+          >
+            <RefreshCw className="w-3 h-3" />
+            Reconnect
+          </button>
         </div>
       )}
 

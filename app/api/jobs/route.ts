@@ -4,7 +4,7 @@ export const runtime = 'nodejs'
 
 export async function GET() {
   const running = getAllJobs()
-    .filter((j) => j.status === 'running')
+    .filter((j) => ['running', 'awaiting-approval', 'paused'].includes(j.status))
     .map((j) => ({
       id:        j.id,
       site:      j.site,
