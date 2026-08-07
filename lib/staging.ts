@@ -253,7 +253,11 @@ export async function executeJob(job: StagingJob): Promise<void> {
     const token = process.env.TERMINUS_TOKEN
     if (token) await run(`terminus auth:login --machine-token="${token}" 2>&1`)
     const whoami = await run('terminus auth:whoami 2>&1')
-    const identity = whoami.stdout.split('\n').find((l) => l.includes('@'))?.trim()
+    const identity = whoami.stdout
+      .split('\n')
+      .filter(l => !/^\s*(Deprecated|Warning|Notice|PHP\s+(Deprecated|Warning|Notice)):/i.test(l))
+      .find(l => l.includes('@'))
+      ?.trim()
     if (!identity) throw new Error('Terminus not authenticated — check TERMINUS_TOKEN')
     log('info', `Authenticated as: ${identity}`)
 
