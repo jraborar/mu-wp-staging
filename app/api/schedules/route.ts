@@ -22,7 +22,7 @@ export async function POST(request: NextRequest) {
 
   const { site, cadence, day_of_week, week_of_month, biweekly_reference_date,
           bimonthly_ref_month, bimonthly_day_of_week, security_check_enabled,
-          skip_upstream, skip_plugins_themes } = body
+          skip_upstream, skip_plugins_themes, deploy_days } = body
 
   if (!site || typeof site !== 'string') {
     return Response.json({ error: 'site is required' }, { status: 400 })
@@ -39,7 +39,8 @@ export async function POST(request: NextRequest) {
     biweekly_reference_date: biweekly_reference_date ?? undefined,
     bimonthly_ref_month: bimonthly_ref_month ?? undefined,
     bimonthly_day_of_week: bimonthly_day_of_week ?? undefined,
-    security_check_enabled: security_check_enabled ?? cadence === 'bimonthly-week-of-15',
+    security_check_enabled: security_check_enabled ?? ['bimonthly-week-of-15', 'security-only'].includes(cadence),
+    deploy_days: deploy_days ?? undefined,
     skip_upstream: skip_upstream ?? false,
     skip_plugins_themes: skip_plugins_themes ?? false,
     active: true,

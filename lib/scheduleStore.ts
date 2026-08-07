@@ -23,6 +23,7 @@ export interface StagingSchedule {
   bimonthly_ref_month?: number  // 1–12: first "on" month
   bimonthly_day_of_week?: number
   security_check_enabled: boolean
+  deploy_days?: number
   // options
   skip_upstream: boolean
   skip_plugins_themes: boolean
@@ -128,7 +129,7 @@ export async function getSecurityCheckSites(stagedWithinDays = 14): Promise<Stag
     .from('staging_schedules')
     .select('*')
     .eq('active', true)
-    .eq('cadence', 'bimonthly-week-of-15')
+    .in('cadence', ['bimonthly-week-of-15', 'security-only'])
     .eq('security_check_enabled', true)
     .or(`last_staged_at.is.null,last_staged_at.lt.${cutoff}`)
   if (error) console.error('[supabase] getSecurityCheckSites:', error.message)

@@ -26,7 +26,7 @@ export async function scheduleDeployment(job: StagingJob): Promise<void> {
   }
 
   const destination  = process.env.MU_DEPLOY_DESTINATION ?? 'live'
-  const days         = parseInt(process.env.MU_DEPLOY_SCHEDULE_DAYS ?? '2', 10)
+  const days         = job.deployDays ?? parseInt(process.env.MU_DEPLOY_SCHEDULE_DAYS ?? '2', 10)
   const targetDate   = addBusinessDays(getManilaToday(), days)
   const scheduledFor = manilaNineAM(targetDate)
   const notes        = buildNotes(job)

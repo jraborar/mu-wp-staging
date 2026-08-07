@@ -9,7 +9,7 @@ import {
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-type Tab = 'run' | 'history' | 'schedule' | 'upcoming'
+type Tab = 'stage' | 'history' | 'schedule' | 'upcoming'
 
 type Cadence = 'weekly' | 'biweekly' | 'monthly' | 'bimonthly-week-of-15' | 'security-only'
 
@@ -510,6 +510,7 @@ function ScheduleTab() {
   const [bimonthlyDow, setBimonthlyDow] = useState(2) // Tuesday default
   const [skipUpstream, setSkipUpstream] = useState(false)
   const [skipPluginsThemes, setSkipPluginsThemes] = useState(false)
+  const [deployDays, setDeployDays] = useState(2)
 
   const loadSchedules = useCallback(async () => {
     setLoading(true)
@@ -530,6 +531,7 @@ function ScheduleTab() {
       const body: Record<string, unknown> = {
         site: site.trim(), cadence, skip_upstream: skipUpstream,
         skip_plugins_themes: skipPluginsThemes,
+        deploy_days: deployDays,
       }
       if (cadence === 'weekly') { body.day_of_week = dayOfWeek }
       if (cadence === 'biweekly') { body.day_of_week = dayOfWeek; body.biweekly_reference_date = biweeklyRef }
@@ -537,6 +539,9 @@ function ScheduleTab() {
       if (cadence === 'bimonthly-week-of-15') {
         body.bimonthly_ref_month = bimonthlyRefMonth
         body.bimonthly_day_of_week = bimonthlyDow
+        body.security_check_enabled = true
+      }
+      if (cadence === 'security-only') {
         body.security_check_enabled = true
       }
       const res = await fetch('/api/schedules', {
@@ -617,7 +622,12 @@ function ScheduleTab() {
               <label className="text-xs text-slate-400 font-mono">Cadence</label>
               <select
                 value={cadence}
-                onChange={(e) => setCadence(e.target.value as Cadence)}
+                onChange={(e) => {
+                  const c = e.target.value as Cadence
+                  setCadence(c)
+                  if (c === 'security-only') setDeployDays(1)
+                  else if (deployDays === 1) setDeployDays(2)
+                }}
                 className="w-full rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 text-sm text-white focus:border-[#FFDC28] focus:outline-none"
               >
                 {(Object.keys(CADENCE_LABELS) as Cadence[]).map(c => (
@@ -711,6 +721,21 @@ function ScheduleTab() {
                 />
                 Skip plugins &amp; themes
               </label>
+            </div>
+
+            {/* Deploy days */}
+            <div className="space-y-1.5 pt-1 border-t border-slate-700">
+              <label className="text-xs text-slate-400 font-mono pt-1">Schedule deployment after (business days)</label>
+              <select
+                value={deployDays}
+                onChange={(e) => setDeployDays(Number(e.target.value))}
+                className="w-full rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 text-sm text-white focus:border-[#FFDC28] focus:outline-none"
+              >
+                <option value={1}>1 business day (e.g. stage Friday → deploy Monday)</option>
+                <option value={2}>2 business days (default)</option>
+                <option value={3}>3 business days</option>
+                <option value={5}>5 business days (1 week)</option>
+              </select>
             </div>
 
             <div className="flex gap-2 pt-2">
@@ -871,7 +896,7 @@ function UpcomingTab() {
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function Page() {
-  const [tab, setTab]               = useState<Tab>('run')
+  const [tab, setTab]               = useState<Tab>('stage')
   const [site, setSite]             = useState('')
   const [skipUpstream, setSkipUpstream] = useState(false)
   const [skipPluginsThemes, setSkipPluginsThemes] = useState(false)
@@ -943,10 +968,10 @@ export default function Page() {
   const pastJobs = history.filter((h) => !liveIds.has(h.id))
 
   const TABS: { key: Tab; label: string }[] = [
-    { key: 'run',      label: 'Run' },
-    { key: 'history',  label: 'History' },
+    { key: 'stage',    label: 'Stage' },
     { key: 'schedule', label: 'Schedule' },
     { key: 'upcoming', label: 'Upcoming' },
+    { key: 'history',  label: 'History' },
   ]
 
   return (
@@ -986,7 +1011,7 @@ export default function Page() {
         </div>
 
         {/* ── Run tab ── */}
-        {tab === 'run' && (
+        {tab === 'stage' && (
           <Card>
             <CardHeader
               icon={<Server className="w-5 h-5" />}

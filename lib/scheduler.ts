@@ -192,6 +192,7 @@ async function runDueJobs(): Promise<void> {
         skipUpstream: sched.skip_upstream,
         skipPluginsThemes: sched.skip_plugins_themes,
         scheduleId: sched.id,
+        deployDays: sched.deploy_days,
       })
       void executeJob(job)
       const next = computeNextOccurrence(sched, new Date())
@@ -224,6 +225,7 @@ async function runSecurityCheck(): Promise<void> {
       const job = createJob(sched.site, multidev, {
         skipPluginsThemes: sched.skip_plugins_themes,
         scheduleId: sched.id,
+        deployDays: sched.deploy_days,
       })
       void executeJob(job)
       await updateScheduleAfterRun(sched.id, computeNextOccurrence(sched, new Date()))
