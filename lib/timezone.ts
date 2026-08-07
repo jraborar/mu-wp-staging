@@ -23,14 +23,18 @@ export function getPacificYYMMDD(): string {
   return `${get('year')}${get('month')}${get('day')}`
 }
 
-// Returns a date N business days (Mon–Fri) after `start`.
+// Returns a date N business days (Mon–Fri) after `start`, computed in Manila timezone.
+// Philippines has no DST so adding 24 * 60 * 60 * 1000 ms always advances exactly one Manila day.
 export function addBusinessDays(start: Date, days: number): Date {
-  const result = new Date(start)
+  const DAY = 24 * 60 * 60 * 1000
+  let result = new Date(start)
   let added = 0
   while (added < days) {
-    result.setDate(result.getDate() + 1)
-    const dow = result.getDay()
-    if (dow !== 0 && dow !== 6) added++
+    result = new Date(result.getTime() + DAY)
+    const weekday = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Manila', weekday: 'short',
+    }).format(result)
+    if (weekday !== 'Sat' && weekday !== 'Sun') added++
   }
   return result
 }
@@ -46,20 +50,16 @@ export function getManilaToday(): Date {
 
 // Returns an ISO 8601 string for the given date at 9:00 AM Manila time.
 export function manilaNineAM(date: Date): string {
-  const p = (n: number) => String(n).padStart(2, '0')
-  const y = date.getFullYear()
-  const m = p(date.getMonth() + 1)
-  const d = p(date.getDate())
-  return `${y}-${m}-${d}T09:00:00+08:00`
+  const dateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(date)
+  return `${dateStr}T09:00:00+08:00`
 }
 
 // Returns an ISO 8601 string for the given date at 3:00 PM (15:00) Manila time.
+// Uses Intl to extract the Manila calendar date, avoiding UTC-offset confusion on
+// servers running in UTC (where Date.getDate() returns the UTC day, not Manila day).
 export function manilaThreePM(date: Date): string {
-  const p = (n: number) => String(n).padStart(2, '0')
-  const y = date.getFullYear()
-  const m = p(date.getMonth() + 1)
-  const d = p(date.getDate())
-  return `${y}-${m}-${d}T15:00:00+08:00`
+  const dateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(date)
+  return `${dateStr}T15:00:00+08:00`
 }
 
 // Formats a Date as a Manila-timezone ISO 8601 string (HH:MM:SS+08:00).
