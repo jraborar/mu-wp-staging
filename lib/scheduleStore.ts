@@ -25,6 +25,7 @@ export interface StagingSchedule {
   security_check_enabled: boolean
   security_check_pending: boolean
   deploy_days?: number
+  deploy_destination?: string
   // options
   skip_upstream: boolean
   skip_plugins_themes: boolean

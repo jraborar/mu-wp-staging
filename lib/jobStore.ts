@@ -50,6 +50,7 @@ export interface StagingJob {
   scheduleId?: string
   multidevCreated: boolean
   deployDays?: number
+  deployDestination?: string
 }
 
 export interface CreateJobOptions {
@@ -57,6 +58,7 @@ export interface CreateJobOptions {
   skipPluginsThemes?: boolean
   scheduleId?: string
   deployDays?: number
+  deployDestination?: string
 }
 
 const MAX_JOBS = 20
@@ -91,6 +93,7 @@ export function createJob(site: string, multidev: string, opts: CreateJobOptions
     scheduleId: opts.scheduleId,
     multidevCreated: false,
     deployDays: opts.deployDays,
+    deployDestination: opts.deployDestination,
   }
   job.emitter.setMaxListeners(20)
   store.set(job.id, job)

@@ -58,7 +58,7 @@ export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => null)
   if (!body) return Response.json({ error: 'Invalid JSON' }, { status: 400 })
 
-  const { site, skipUpstream, skipPluginsThemes } = body as Record<string, unknown>
+  const { site, skipUpstream, skipPluginsThemes, deployDays, deployDestination } = body as Record<string, unknown>
 
   if (!site || typeof site !== 'string' || !SITE_RE.test(site)) {
     return Response.json({ error: 'Invalid or missing site ID' }, { status: 400 })
@@ -68,6 +68,8 @@ export async function POST(request: NextRequest) {
   const job = createJob(site, multidev, {
     skipUpstream: Boolean(skipUpstream),
     skipPluginsThemes: Boolean(skipPluginsThemes),
+    deployDays: typeof deployDays === 'number' ? deployDays : undefined,
+    deployDestination: typeof deployDestination === 'string' ? deployDestination : undefined,
   })
   void executeJob(job)
   return streamJob(job, request)

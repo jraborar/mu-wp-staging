@@ -52,3 +52,24 @@ export function manilaNineAM(date: Date): string {
   const d = p(date.getDate())
   return `${y}-${m}-${d}T09:00:00+08:00`
 }
+
+// Returns an ISO 8601 string for the given date at 3:00 PM (15:00) Manila time.
+export function manilaThreePM(date: Date): string {
+  const p = (n: number) => String(n).padStart(2, '0')
+  const y = date.getFullYear()
+  const m = p(date.getMonth() + 1)
+  const d = p(date.getDate())
+  return `${y}-${m}-${d}T15:00:00+08:00`
+}
+
+// Formats a Date as a Manila-timezone ISO 8601 string (HH:MM:SS+08:00).
+export function formatAsManilaISO(date: Date): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Manila',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false,
+  }).formatToParts(date)
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '00'
+  return `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}:${get('second')}+08:00`
+}
