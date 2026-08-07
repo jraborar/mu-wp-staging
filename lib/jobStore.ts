@@ -95,7 +95,7 @@ export function createJob(site: string, multidev: string, opts: CreateJobOptions
     deployDays: opts.deployDays,
     deployDestination: opts.deployDestination,
   }
-  job.emitter.setMaxListeners(20)
+  job.emitter.setMaxListeners(50)
   store.set(job.id, job)
   return job
 }
