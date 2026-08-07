@@ -1,3 +1,15 @@
+export function getManilaYYMMDD(): string {
+  const now = new Date()
+  const pt = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Manila',
+    year: '2-digit',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(now)
+  const get = (type: string) => pt.find((p) => p.type === type)?.value ?? '00'
+  return `${get('year')}${get('month')}${get('day')}`
+}
+
 export function getPacificYYMMDD(): string {
   const now = new Date()
   const pt = new Intl.DateTimeFormat('en-US', {

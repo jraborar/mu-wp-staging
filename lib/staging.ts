@@ -1,4 +1,4 @@
-import { type StagingJob, appendLog, finishJob, setStep } from '@/lib/jobStore'
+import { type StagingJob, appendLog, finishJob, setStep, waitForApproval } from '@/lib/jobStore'
 import { run, runStream, shellEscape, cleanJson } from '@/lib/terminus'
 import { scheduleDeployment } from '@/lib/schedule'
 import {
@@ -8,22 +8,52 @@ import {
   type UpdateSummary,
 } from '@/lib/wordpress'
 import { createStagingRecord, finalizeStagingRecord } from '@/lib/supabase'
+import {
+  startStagingThread,
+  postThreadStep,
+  postThreadBlocks,
+  broadcastMessage,
+  buildApprovalBlocks,
+  buildCompleteBlocks,
+  buildFailedBlocks,
+  buildPausedBlocks,
+  buildCancelledBlocks,
+  buildLongRunningBlocks,
+} from '@/lib/slack'
 
 const SUPPORTED_UPSTREAMS = ['wordpress', 'wordpress-multisite']
+
+class CancelledError extends Error {
+  constructor() { super('Staging cancelled by user') }
+}
+
+class PauseError extends Error {
+  constructor() { super('Staging paused by user') }
+}
 
 function env(job: StagingJob): string {
   return `${job.site}.${job.multidev}`
 }
 
-// Wraps a WP-CLI command via terminus wp
 function wp(job: StagingJob, args: string): string {
   return `terminus wp ${env(job)} -- ${args} 2>&1`
 }
 
-async function revertUpstreamConflict(
-  job: StagingJob,
-  preApplyHash: string,
-): Promise<boolean> {
+function checkCancelled(job: StagingJob): void {
+  if (job.cancelRequested) throw new CancelledError()
+}
+
+// Find a multidev whose name exactly matches prefix-YYMMDD
+function findByPrefix(list: string, prefix: string): string | null {
+  const re = new RegExp(`^${prefix}-\\d{6}$`)
+  for (const line of list.split('\n')) {
+    const trimmed = line.trim()
+    if (re.test(trimmed)) return trimmed
+  }
+  return null
+}
+
+async function revertUpstreamConflict(job: StagingJob, preApplyHash: string): Promise<boolean> {
   const log = (m: string) => appendLog(job, 'warn', m)
   log('Attempting to revert upstream conflict via git reset...')
 
@@ -43,7 +73,6 @@ async function revertUpstreamConflict(
       return false
     }
 
-    // Abort any in-progress merge, then reset to the pre-apply hash
     await run(`git -C "${tmpDir}" merge --abort 2>/dev/null || true`)
     const reset = await run(`git -C "${tmpDir}" reset --hard "${preApplyHash}" 2>&1`)
     if (reset.code !== 0) {
@@ -64,22 +93,14 @@ async function revertUpstreamConflict(
   }
 }
 
-async function runPluginOrThemeUpdates(
-  job: StagingJob,
-  type: 'plugin' | 'theme',
-): Promise<UpdateSummary> {
+async function runPluginOrThemeUpdates(job: StagingJob, type: 'plugin' | 'theme'): Promise<UpdateSummary> {
   const label = type === 'plugin' ? 'Plugin' : 'Theme'
   const log = (logType: Parameters<typeof appendLog>[1], m: string) => appendLog(job, logType, m)
 
-  // Force a fresh update check so the cache isn't stale after upstream apply
   log('status', `Checking for ${label.toLowerCase()} updates...`)
   await run(wp(job, `${type} check-update 2>&1`))
 
-  // Try with --context=admin first (needed to detect pro/premium plugins).
-  // Fall back without it if the site has a PHP fatal error in the admin context.
-  let listResult = await run(
-    wp(job, `${type} list --update=available --format=json --context=admin`),
-  )
+  let listResult = await run(wp(job, `${type} list --update=available --format=json --context=admin`))
   let adminContext = true
   if (listResult.code !== 0 || listResult.stdout.toLowerCase().includes('fatal error')) {
     log('warn', `${label} list failed with admin context — retrying without it (pro plugins may not be detected)`)
@@ -104,7 +125,6 @@ async function runPluginOrThemeUpdates(
   log('info', `Found ${available.length} ${label.toLowerCase()}(s) with available updates`)
   log('status', `Updating ${label.toLowerCase()}s...`)
 
-  // --format=json suppresses progress output; WP-CLI outputs JSON array on completion
   interface WpUpdateEntry { name: string; old_version: string; new_version: string; status: string }
   const updateCmd = adminContext
     ? `${type} update --all --context=admin --format=json`
@@ -114,18 +134,18 @@ async function runPluginOrThemeUpdates(
 
   const summary = buildUpdateSummary(available, results)
 
-  for (const u of summary.updated) {
-    log('success', `${label}: ${u.title} ${u.from} → ${u.to}`)
-  }
-  for (const s of summary.skipped) {
-    log('warn', `${label} skipped: ${s.title} — ${s.reason}`)
-  }
+  for (const u of summary.updated) log('success', `${label}: ${u.title} ${u.from} → ${u.to}`)
+  for (const s of summary.skipped) log('warn', `${label} skipped: ${s.title} — ${s.reason}`)
 
   return summary
 }
 
 const STEPS = [
   'Authenticating',
+  'Preflight: connection mode',
+  'Preflight: uncommitted changes',
+  'Checking multidev slots',
+  'Creating multidev',
   'Checking site info',
   'Setting Git mode',
   'Checking upstream',
@@ -140,7 +160,7 @@ const STEPS = [
 ]
 
 export async function executeJob(job: StagingJob): Promise<void> {
-  const log = (logType: Parameters<typeof appendLog>[1], m: string) => appendLog(job, logType, m)
+  const log  = (logType: Parameters<typeof appendLog>[1], m: string) => appendLog(job, logType, m)
   const step = (name: string) => setStep(job, name, STEPS.indexOf(name) + 1, STEPS.length)
 
   await createStagingRecord(job.id, {
@@ -150,7 +170,10 @@ export async function executeJob(job: StagingJob): Promise<void> {
     started_at: new Date(job.startedAt).toISOString(),
   })
 
-  // ── Long-running alerts ───────────────────────────────────────────────────
+  let slackThreadTs: string | null = null
+  let siteLabel = job.site
+  const postStep = (msg: string) => { void postThreadStep(slackThreadTs, msg) }
+
   const startedAt = Date.now()
   let longRunTimer: ReturnType<typeof setTimeout> | null = null
   let longRunInterval: ReturnType<typeof setInterval> | null = null
@@ -159,13 +182,59 @@ export async function executeJob(job: StagingJob): Promise<void> {
     if (longRunInterval) clearInterval(longRunInterval)
   }
   longRunTimer = setTimeout(() => {
-    log('warn', '⏱ Staging is taking longer than usual (30+ min) — still running, please wait...')
+    const blocks = buildLongRunningBlocks(siteLabel, job.multidev, 30, job.stepName, job.site !== siteLabel ? job.site : undefined)
+    void (slackThreadTs
+      ? postThreadBlocks(slackThreadTs, blocks, `Staging running 30+ min on ${siteLabel}`)
+      : Promise.resolve())
     longRunInterval = setInterval(() => {
-      if (job.status !== 'running') { stopAlerts(); return }
-      const elapsed = Math.round((Date.now() - startedAt) / 60000)
-      log('warn', `⏱ Still running — ${elapsed} minutes elapsed`)
+      if (job.status === 'running') {
+        const elapsed = Math.round((Date.now() - startedAt) / 60000)
+        log('warn', `⏱ Still running — ${elapsed} minutes elapsed`)
+      }
     }, 10 * 60 * 1000)
   }, 30 * 60 * 1000)
+
+  // Helper: prompt via UI (and Slack if configured), wait for decision, honour cancel
+  const prompt = async (
+    approvalType: string,
+    message: string,
+    approveLabel: string,
+    rejectLabel: string,
+  ): Promise<boolean> => {
+    void postThreadBlocks(
+      slackThreadTs,
+      buildApprovalBlocks(job.id, message, approveLabel, rejectLabel),
+      `Approval needed on ${siteLabel}: ${message}`,
+    )
+    const approved = await waitForApproval(job, { approvalType, message, approveLabel, rejectLabel })
+    job.status = 'running'
+    checkCancelled(job)
+    return approved
+  }
+
+  const pauseHere = async (reason: string, pausedAt: string) => {
+    job.status = 'paused'
+    log('warn', `Staging paused — ${reason}`)
+    finishJob(job, 'paused')
+    void postThreadBlocks(
+      slackThreadTs,
+      buildPausedBlocks(siteLabel, job.multidev, pausedAt, job.site !== siteLabel ? job.site : undefined),
+      `Staging paused on ${siteLabel} — ${reason}`,
+    )
+    await finalizeStagingRecord(job.id, {
+      site_name: job.site_name,
+      upstream: job.upstream,
+      upstream_updated: job.upstreamUpdated,
+      plugins_updated: job.plugins.updated,
+      plugins_skipped: job.plugins.skipped,
+      themes_updated: job.themes.updated,
+      themes_skipped: job.themes.skipped,
+      status: 'paused',
+      completed_at: new Date().toISOString(),
+      logs: job.logs,
+    })
+    throw new PauseError()
+  }
 
   try {
     // ── 1. Auth ──────────────────────────────────────────────────────────────
@@ -178,42 +247,155 @@ export async function executeJob(job: StagingJob): Promise<void> {
     if (!identity) throw new Error('Terminus not authenticated — check TERMINUS_TOKEN')
     log('info', `Authenticated as: ${identity}`)
 
-    // Verify SSH key is present — required for all WP-CLI commands
     if (!process.env.PANTHEON_SSH_KEY) {
-      throw new Error('PANTHEON_SSH_KEY is not set — required for terminus wp (plugin/theme updates). Add it in Railway environment variables.')
+      throw new Error('PANTHEON_SSH_KEY is not set — required for WP-CLI commands. Add it in Railway environment variables.')
     }
 
-    // ── 2. Site info + upstream check ────────────────────────────────────────
-    step('Checking site info')
-    log('status', `Checking site info for ${job.site}...`)
-    const siteInfo = await run(`terminus site:info ${job.site} --format=json 2>&1`)
-    if (siteInfo.code !== 0) throw new Error(`Site "${job.site}" not found or inaccessible`)
+    slackThreadTs = await startStagingThread(job.site, job.multidev)
+    postStep(`✓ Authenticated as ${identity}`)
 
-    let siteLabel = job.site
+    // ── 2. Preflight: SFTP check on dev ─────────────────────────────────────
+    checkCancelled(job)
+    step('Preflight: connection mode')
+    log('status', 'Checking dev connection mode...')
+    const connModeResult = await run(`terminus env:info ${job.site}.dev --field=connection_mode 2>/dev/null`)
+    const connMode = connModeResult.stdout.split('\n').map(l => l.trim()).find(l => /^(git|sftp)$/i.test(l))?.toLowerCase()
+    if (!connMode) {
+      log('warn', 'Could not determine dev connection mode — skipping check')
+    } else if (connMode === 'sftp') {
+      log('warn', 'Dev is in SFTP mode — prompting for decision')
+      const shouldSwitch = await prompt(
+        'alignment',
+        `Dev is in SFTP mode on \`${job.site}\`. Switch to git mode (uncommitted SFTP changes will be lost) or pause to commit first?`,
+        'Switch to git',
+        'Pause',
+      )
+      if (shouldSwitch) {
+        log('status', 'Switching dev to git mode...')
+        const r = await run(`terminus connection:set ${job.site}.dev git 2>&1`)
+        if (r.code !== 0) throw new Error(`Failed to switch dev to git mode: ${r.stdout.trim()}`)
+        log('success', 'Dev switched to git mode')
+        postStep('✓ Dev switched to git mode')
+      } else {
+        await pauseHere('dev is in SFTP mode — switch to git and commit before resuming', 'preflight')
+      }
+    }
+    log('info', `Dev connection mode: ${connMode ?? 'unknown'} ✓`)
+    postStep(`✓ Dev is in ${connMode ?? 'git'} mode`)
+
+    // ── 3. Preflight: uncommitted changes ────────────────────────────────────
+    checkCancelled(job)
+    step('Preflight: uncommitted changes')
+    log('status', 'Checking for uncommitted changes...')
+    for (const envName of ['dev', 'test']) {
+      log('info', `  Checking ${envName}...`)
+      const diff = await run(`terminus env:diffstat ${job.site}.${envName} --format=json 2>&1`)
+      let hasChanges = false
+      try {
+        const cleaned = diff.stdout.split('\n')
+          .filter(l => !/^\s*(Deprecated|Warning|Notice|PHP):/i.test(l))
+          .join('\n').trim()
+        const data = JSON.parse(cleaned)
+        hasChanges = Array.isArray(data) && data.length > 0
+      } catch {
+        hasChanges = diff.stdout.includes('files changed') || diff.stdout.includes('ahead')
+      }
+      if (hasChanges) {
+        log('warn', `Uncommitted changes detected in ${envName} — prompting`)
+        const shouldPause = await prompt(
+          'alignment',
+          `\`${envName}\` has uncommitted changes on \`${job.site}\`. Pause to commit and resolve, or stop the staging?`,
+          'Pause',
+          'Stop',
+        )
+        if (shouldPause) {
+          await pauseHere(`${envName} has uncommitted changes — commit and resume when ready`, `preflight (${envName})`)
+        } else {
+          throw new CancelledError()
+        }
+      }
+    }
+    log('info', 'No uncommitted changes detected ✓')
+    postStep('✓ No uncommitted changes in dev / test')
+
+    // ── 4. Multidev slot management ──────────────────────────────────────────
+    checkCancelled(job)
+    step('Checking multidev slots')
+    log('status', 'Checking multidev availability...')
+
+    const siteInfoRaw = await run(`terminus site:info ${job.site} --format=json 2>&1`)
+    let maxMultidevs = 10
+    try {
+      const siteData = JSON.parse(cleanJson(siteInfoRaw.stdout))
+      maxMultidevs = siteData?.max_num_cdes ?? siteData?.max_multidevs ?? 10
+      siteLabel = siteData?.label ?? siteData?.name ?? job.site
+      if (siteLabel !== job.site) job.site_name = siteLabel
+    } catch {}
+
+    const multidevListResult = await run(`terminus multidev:list ${job.site} --field=id 2>&1`)
+    const multidevList = multidevListResult.stdout
+    const currentMultidevs = multidevList.split('\n').map(l => l.trim()).filter(l => /^[a-z0-9][a-z0-9-]{0,10}$/.test(l))
+    const currentCount = currentMultidevs.length
+
+    const existingMu = findByPrefix(multidevList, 'mu')
+    const countAfterDelete = existingMu ? currentCount - 1 : currentCount
+
+    if (countAfterDelete >= maxMultidevs) {
+      log('warn', `Multidev slots full (${currentCount}/${maxMultidevs}) — prompting`)
+      const shouldPause = await prompt(
+        'alignment',
+        `All ${maxMultidevs} multidev slots are in use on \`${job.site}\`. Delete one manually and resume, or cancel staging?`,
+        'Pause',
+        'Cancel',
+      )
+      if (shouldPause) {
+        await pauseHere('multidev slots full — free a slot and resume', 'multidev slots')
+      } else {
+        throw new CancelledError()
+      }
+    }
+
+    // ── 5. Delete old mu-YYMMDD and create new one ───────────────────────────
+    step('Creating multidev')
+    if (existingMu) {
+      log('delete', `Removing existing multidev ${existingMu}...`)
+      postStep(`🗑 Removing old multidev \`${existingMu}\`...`)
+      await run(`terminus multidev:delete --yes ${job.site}.${existingMu} 2>&1`)
+      log('deleted', `Removed ${existingMu}`)
+      postStep(`✓ Removed \`${existingMu}\``)
+    }
+
+    log('create', `Creating multidev ${job.multidev}...`)
+    postStep(`◈ Creating multidev \`${job.multidev}\`... _(this step typically takes a few minutes)_`)
+    const createResult = await runStream(
+      `terminus multidev:create ${job.site}.dev ${job.multidev} 2>&1`,
+      (line) => log('info', line),
+    )
+    if (createResult.code !== 0) throw new Error(`Multidev creation failed`)
+    job.multidevCreated = true
+    log('success', `Multidev ${job.multidev} created`)
+    postStep(`✓ Multidev \`${job.multidev}\` created`)
+
+    // ── 6. Site info + upstream ───────────────────────────────────────────────
+    checkCancelled(job)
+    step('Checking site info')
+    log('status', `Checking upstream for ${job.site}...`)
+
     let upstream = 'unknown'
     try {
-      const cleaned = cleanJson(siteInfo.stdout)
-      const match = cleaned.match(/\{[\s\S]*\}/)
-      if (match) {
-        const data = JSON.parse(match[0])
-        siteLabel = data?.label ?? data?.name ?? job.site
-        upstream = (data?.upstream_product_label ?? data?.upstream ?? '').toLowerCase()
-      }
+      const data = JSON.parse(cleanJson(siteInfoRaw.stdout))
+      upstream = (data?.upstream_product_label ?? data?.upstream ?? '').toLowerCase()
     } catch {}
-
-    job.site_name = siteLabel !== job.site ? siteLabel : undefined
     job.upstream = upstream
 
-    // ── 2B. Match PHP version to the environment ─────────────────────────────
-    const envInfo = await run(`terminus env:info ${env(job)} --format=json 2>&1`)
+    const envInfoResult = await run(`terminus env:info ${env(job)} --format=json 2>&1`)
     let phpVersion = '8.2'
     try {
-      const envData = JSON.parse(cleanJson(envInfo.stdout))
+      const envData = JSON.parse(cleanJson(envInfoResult.stdout))
       phpVersion = envData?.php_version ?? '8.2'
     } catch {}
-    log('info', `Site PHP version: ${phpVersion} — switching terminus to match`)
-    const phpBin = `/usr/bin/php${phpVersion}`
-    const phpSwitch = await run(`update-alternatives --set php ${phpBin} 2>&1`)
+    log('info', `PHP version: ${phpVersion} — switching terminus to match`)
+    const phpSwitch = await run(`update-alternatives --set php /usr/bin/php${phpVersion} 2>&1`)
     if (phpSwitch.code !== 0) {
       log('warn', `Could not switch to PHP ${phpVersion} — continuing with default`)
     } else {
@@ -222,47 +404,36 @@ export async function executeJob(job: StagingJob): Promise<void> {
 
     const isWordPress = SUPPORTED_UPSTREAMS.some((u) => upstream.includes(u))
     if (!isWordPress) {
-      log('warn', `Upstream "${upstream}" is not a supported WordPress upstream — skipping upstream update steps`)
+      log('warn', `Upstream "${upstream}" is not a supported WordPress upstream — skipping upstream steps`)
     } else {
       log('info', `Upstream: ${upstream}`)
     }
 
-    // ── 3. Ensure git mode before upstream operations ─────────────────────────
+    // ── 7. Git mode ──────────────────────────────────────────────────────────
     step('Setting Git mode')
     log('status', 'Setting connection mode to Git...')
     await run(`terminus connection:set ${env(job)} git 2>&1`)
     log('info', 'Connection mode: Git')
 
-    // ── 3. Upstream updates ──────────────────────────────────────────────────
-    if (isWordPress) {
+    // ── 8–9. Upstream updates (skippable) ────────────────────────────────────
+    if (!job.skipUpstream && isWordPress) {
+      step('Checking upstream')
       log('status', 'Checking for upstream updates...')
-      const upstreamList = await run(
-        `terminus upstream:updates:list ${env(job)} --format=json 2>&1`,
-      )
-      // Parse JSON — if it's a non-empty array, there are updates
+      const upstreamList = await run(`terminus upstream:updates:list ${env(job)} --format=json 2>&1`)
       let hasUpdates = false
       try {
         const entries = parseWpJson(cleanJson(upstreamList.stdout))
         hasUpdates = entries.length > 0
-        log('info', hasUpdates
-          ? `${entries.length} upstream update(s) available`
-          : 'No upstream updates available'
-        )
+        log('info', hasUpdates ? `${entries.length} upstream update(s) available` : 'No upstream updates available')
       } catch {
-        hasUpdates = false
         log('info', 'No upstream updates available')
       }
 
-      if (!hasUpdates) {
-        log('info', 'No upstream updates available')
-      } else {
+      if (hasUpdates) {
         step('Applying upstream')
         log('status', 'Applying upstream updates...')
 
-        // Capture pre-apply hash for potential revert
-        const hashResult = await run(
-          `terminus env:code-log ${env(job)} --format=json 2>/dev/null`,
-        )
+        const hashResult = await run(`terminus env:code-log ${env(job)} --format=json 2>/dev/null`)
         let preApplyHash = ''
         try {
           const entries = JSON.parse(cleanJson(hashResult.stdout))
@@ -285,23 +456,26 @@ export async function executeJob(job: StagingJob): Promise<void> {
               log('error', 'Auto-revert failed — environment may be in a conflicted state. Proceeding, but review git status manually.')
             }
           } else {
-            log('warn', 'No pre-apply hash captured — skipping revert, proceeding with plugin/theme updates')
+            log('warn', 'No pre-apply hash captured — skipping revert')
           }
         } else {
           job.upstreamUpdated = true
           log('success', 'Upstream updates applied successfully')
+          postStep('✓ Upstream updates applied')
         }
       }
+    } else if (job.skipUpstream) {
+      log('info', 'Upstream updates skipped (user option)')
     }
 
-    // ── 3B. Switch to SFTP ───────────────────────────────────────────────────
+    // ── 10. SFTP mode ────────────────────────────────────────────────────────
     step('Setting SFTP mode')
     log('status', 'Setting connection mode to SFTP...')
     const sftpResult = await run(`terminus connection:set ${env(job)} sftp 2>&1`)
     if (sftpResult.code !== 0) throw new Error(`Failed to set SFTP mode: ${sftpResult.stderr}`)
     log('info', 'Connection mode: SFTP')
 
-    // ── 3C. Verify WordPress is ready (new multidevs need DB sync time) ───────
+    // WordPress readiness poll (new multidev needs DB sync time)
     log('status', 'Verifying WordPress database is ready...')
     let wpReady = false
     for (let attempt = 1; attempt <= 6; attempt++) {
@@ -316,73 +490,71 @@ export async function executeJob(job: StagingJob): Promise<void> {
       log('warn', 'WordPress not ready after 3 minutes — plugin/theme updates will be skipped')
     }
 
-    // ── 4–6. Plugin updates + commit ─────────────────────────────────────────
-    step('Updating plugins')
-    const pluginSummary = wpReady ? await runPluginOrThemeUpdates(job, 'plugin') : { updated: [], skipped: [] }
-    job.plugins = pluginSummary
+    // ── 11–14. Plugin + theme updates (skippable) ────────────────────────────
+    if (!job.skipPluginsThemes) {
+      step('Updating plugins')
+      const pluginSummary = wpReady ? await runPluginOrThemeUpdates(job, 'plugin') : { updated: [], skipped: [] }
+      job.plugins = pluginSummary
 
-    if (pluginSummary.updated.length > 0 || pluginSummary.skipped.length > 0) {
-      step('Committing plugins')
-      const pluginMsg = buildCommitMessage(pluginSummary, { updated: [], skipped: [] })
-      log('status', 'Committing plugin updates...')
-      const { code: commitCode } = await runStream(
-        `terminus env:commit ${env(job)} --message=${shellEscape(pluginMsg)} 2>&1`,
-        (line) => log('info', line),
-      )
-      if (commitCode !== 0) {
-        log('warn', 'Plugin commit returned non-zero — changes may still be pending')
+      if (pluginSummary.updated.length > 0 || pluginSummary.skipped.length > 0) {
+        step('Committing plugins')
+        const pluginMsg = buildCommitMessage(pluginSummary, { updated: [], skipped: [] })
+        log('status', 'Committing plugin updates...')
+        const { code: commitCode } = await runStream(
+          `terminus env:commit ${env(job)} --message=${shellEscape(pluginMsg)} 2>&1`,
+          (line) => log('info', line),
+        )
+        if (commitCode !== 0) {
+          log('warn', 'Plugin commit returned non-zero — changes may still be pending')
+        } else {
+          log('success', 'Plugin updates committed')
+        }
       } else {
-        log('success', 'Plugin updates committed')
+        log('info', 'No plugin changes to commit')
+      }
+
+      step('Updating themes')
+      const themeSummary = wpReady ? await runPluginOrThemeUpdates(job, 'theme') : { updated: [], skipped: [] }
+      job.themes = themeSummary
+
+      if (themeSummary.updated.length > 0 || themeSummary.skipped.length > 0) {
+        step('Committing themes')
+        const themeMsg = buildCommitMessage({ updated: [], skipped: [] }, themeSummary)
+        log('status', 'Committing theme updates...')
+        const { code: themeCommitCode } = await runStream(
+          `terminus env:commit ${env(job)} --message=${shellEscape(themeMsg)} 2>&1`,
+          (line) => log('info', line),
+        )
+        if (themeCommitCode !== 0) {
+          log('warn', 'Theme commit returned non-zero — changes may still be pending')
+        } else {
+          log('success', 'Theme updates committed')
+        }
+      } else {
+        log('info', 'No theme changes to commit')
       }
     } else {
-      log('info', 'No plugin changes to commit')
+      log('info', 'Plugin and theme updates skipped (user option)')
     }
 
-    // ── 7–8. Theme updates + commit ──────────────────────────────────────────
-    step('Updating themes')
-    const themeSummary = wpReady ? await runPluginOrThemeUpdates(job, 'theme') : { updated: [], skipped: [] }
-    job.themes = themeSummary
-
-    if (themeSummary.updated.length > 0 || themeSummary.skipped.length > 0) {
-      step('Committing themes')
-      const themeMsg = buildCommitMessage({ updated: [], skipped: [] }, themeSummary)
-      log('status', 'Committing theme updates...')
-      const { code: themeCommitCode } = await runStream(
-        `terminus env:commit ${env(job)} --message=${shellEscape(themeMsg)} 2>&1`,
-        (line) => log('info', line),
-      )
-      if (themeCommitCode !== 0) {
-        log('warn', 'Theme commit returned non-zero — changes may still be pending')
-      } else {
-        log('success', 'Theme updates committed')
-      }
-    } else {
-      log('info', 'No theme changes to commit')
-    }
-
-    // ── 9. DB update (only if upstream was applied) ──────────────────────────
+    // DB update if upstream was applied
     if (job.upstreamUpdated) {
       log('status', 'Running database update...')
-      const dbResult = await runStream(
-        wp(job, 'core update-db'),
-        (line) => log('info', line),
-      )
+      const dbResult = await runStream(wp(job, 'core update-db'), (line) => log('info', line))
       if (dbResult.code !== 0) {
         log('warn', 'Database update returned non-zero — check manually')
       } else {
         log('success', 'Database updated')
       }
-    } else {
-      log('info', 'Skipping wp core update-db (no upstream update applied)')
     }
 
-    // ── 10. Cache flush ──────────────────────────────────────────────────────
+    // ── 15. Cache flush ──────────────────────────────────────────────────────
     step('Flushing cache')
     log('status', 'Flushing WordPress cache...')
     await runStream(wp(job, 'cache flush'), (line) => log('info', line))
     log('success', 'Cache flushed')
 
-    // ── 11. Safety check — commit any remaining SFTP changes before switching to Git
+    // Safety commit + set Git mode
     const diffStat = await run(`terminus env:diffstat ${env(job)} --format=json 2>&1`)
     try {
       const pending = parseWpJson(cleanJson(diffStat.stdout))
@@ -393,7 +565,6 @@ export async function executeJob(job: StagingJob): Promise<void> {
       }
     } catch {}
 
-    // ── 11. Switch to Git ────────────────────────────────────────────────────
     log('status', 'Setting connection mode to Git...')
     const gitResult = await run(`terminus connection:set ${env(job)} git 2>&1`)
     if (gitResult.code !== 0) {
@@ -402,7 +573,7 @@ export async function executeJob(job: StagingJob): Promise<void> {
       log('info', 'Connection mode: Git')
     }
 
-    // ── 12. Clear Pantheon cache ─────────────────────────────────────────────
+    // ── 16. Clear edge cache ─────────────────────────────────────────────────
     step('Clearing edge cache')
     log('status', 'Clearing Pantheon edge cache...')
     const clearResult = await run(`terminus env:clear-cache ${env(job)} 2>&1`)
@@ -417,12 +588,26 @@ export async function executeJob(job: StagingJob): Promise<void> {
       ? 'upstream updated, '
       : job.upstreamConflict
         ? 'upstream conflict (skipped), '
-        : ''
+        : job.skipUpstream
+          ? 'upstream skipped, '
+          : ''
     log(
       'success',
       `Staging complete for ${env(job)} — ${upstreamNote}` +
       `${job.plugins.updated.length} plugin(s) updated, ` +
       `${job.themes.updated.length} theme(s) updated`,
+    )
+
+    postStep(
+      `✅ *Staging complete* — ${job.plugins.updated.length} plugin(s) · ${job.themes.updated.length} theme(s) updated`,
+    )
+    void broadcastMessage(
+      buildCompleteBlocks(
+        siteLabel, job.multidev,
+        job.plugins.updated.length, job.themes.updated.length,
+        job.site !== siteLabel ? job.site : undefined,
+      ),
+      `Staging complete on ${siteLabel} (${job.multidev})`,
     )
 
     finishJob(job, 'completed')
@@ -431,7 +616,7 @@ export async function executeJob(job: StagingJob): Promise<void> {
       site_name: job.site_name,
       upstream: job.upstream,
       upstream_updated: job.upstreamUpdated,
-      upstream_skipped_reason: job.upstreamConflict ? 'merge conflict' : undefined,
+      upstream_skipped_reason: job.upstreamConflict ? 'merge conflict' : job.skipUpstream ? 'skipped by user' : undefined,
       plugins_updated: job.plugins.updated,
       plugins_skipped: job.plugins.skipped,
       themes_updated: job.themes.updated,
@@ -441,9 +626,31 @@ export async function executeJob(job: StagingJob): Promise<void> {
       logs: job.logs,
     })
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    log('error', `Job failed: ${message}`)
-    finishJob(job, 'failed')
+    const isCancelled = err instanceof CancelledError
+    const isPaused    = err instanceof PauseError
+    if (isPaused) return
+
+    const status  = isCancelled ? 'cancelled' : 'failed'
+    const message = isCancelled
+      ? 'Staging cancelled by user'
+      : `Staging failed: ${err instanceof Error ? err.message : String(err)}`
+
+    log(isCancelled ? 'warn' : 'error', message)
+
+    if (isCancelled) {
+      void broadcastMessage(
+        buildCancelledBlocks(siteLabel, job.multidev, 'Cancelled by user', job.site !== siteLabel ? job.site : undefined),
+        `Staging cancelled on ${siteLabel}`,
+      )
+    } else {
+      postStep(`❌ *Failed:* ${err instanceof Error ? err.message : String(err)}`)
+      void broadcastMessage(
+        buildFailedBlocks(siteLabel, job.multidev, err instanceof Error ? err.message : String(err), job.site !== siteLabel ? job.site : undefined),
+        `Staging failed on ${siteLabel}`,
+      )
+    }
+
+    finishJob(job, status)
     await finalizeStagingRecord(job.id, {
       site_name: job.site_name,
       upstream: job.upstream,
@@ -452,7 +659,7 @@ export async function executeJob(job: StagingJob): Promise<void> {
       plugins_skipped: job.plugins.skipped,
       themes_updated: job.themes.updated,
       themes_skipped: job.themes.skipped,
-      status: 'failed',
+      status,
       completed_at: new Date().toISOString(),
       logs: job.logs,
     })

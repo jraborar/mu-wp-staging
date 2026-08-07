@@ -24,6 +24,8 @@ jobs:
               return
             }
 
+            // Extract bullet points from ## Summary and turn them into checkboxes.
+            // Falls back to the full PR body if no Summary section is found.
             function buildIssueBody(prBody, prNumber) {
               const summaryMatch = prBody.match(/##\s*Summary\s*\n([\s\S]*?)(?=\n##\s|\s*$)/)
               let tasks = ''
@@ -42,6 +44,7 @@ jobs:
               if (tasks) {
                 lines.push('## Tasks', tasks)
               } else {
+                // No Summary bullets — use the raw PR body as context
                 const stripped = prBody
                   .replace(/\bCloses\s+#\d+/gi, '')
                   .trim()
@@ -62,6 +65,7 @@ jobs:
 
             console.log(`Created issue #${issue.number}`)
 
+            // Append Closes keyword to the PR body
             const updatedBody = body
               ? `${body}\n\nCloses #${issue.number}`
               : `Closes #${issue.number}`

@@ -1,11 +1,11 @@
 import { type NextRequest } from 'next/server'
 import { createJob, getJob, type StagingJob } from '@/lib/jobStore'
 import { executeJob } from '@/lib/staging'
+import { getManilaYYMMDD } from '@/lib/timezone'
 
 export const runtime = 'nodejs'
 
-const SITE_RE     = /^[a-zA-Z0-9_-]+$/
-const MULTIDEV_RE = /^[a-z0-9][a-z0-9-]{0,10}$/
+const SITE_RE = /^[a-zA-Z0-9_-]+$/
 
 function streamJob(job: StagingJob, request: NextRequest): Response {
   const stream = new ReadableStream({
@@ -19,7 +19,7 @@ function streamJob(job: StagingJob, request: NextRequest): Response {
       // Flush buffered logs for reconnect
       for (const entry of job.logs) send(entry)
 
-      if (['completed', 'failed'].includes(job.status)) {
+      if (['completed', 'failed', 'cancelled', 'paused'].includes(job.status)) {
         send({ type: 'complete', status: job.status })
         controller.close()
         return
@@ -58,21 +58,21 @@ export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => null)
   if (!body) return Response.json({ error: 'Invalid JSON' }, { status: 400 })
 
-  const { site, multidev } = body as Record<string, string>
+  const { site, skipUpstream, skipPluginsThemes } = body as Record<string, unknown>
 
-  if (!site || !SITE_RE.test(site)) {
+  if (!site || typeof site !== 'string' || !SITE_RE.test(site)) {
     return Response.json({ error: 'Invalid or missing site ID' }, { status: 400 })
   }
-  if (!multidev || !MULTIDEV_RE.test(multidev)) {
-    return Response.json({ error: 'Invalid or missing multidev name' }, { status: 400 })
-  }
 
-  const job = createJob(site, multidev)
+  const multidev = `mu-${getManilaYYMMDD()}`
+  const job = createJob(site, multidev, {
+    skipUpstream: Boolean(skipUpstream),
+    skipPluginsThemes: Boolean(skipPluginsThemes),
+  })
   void executeJob(job)
   return streamJob(job, request)
 }
 
-// Resume SSE stream for an existing job
 export async function GET(request: NextRequest) {
   const jobId = request.nextUrl.searchParams.get('jobId')
   if (!jobId) return Response.json({ error: 'Missing jobId' }, { status: 400 })

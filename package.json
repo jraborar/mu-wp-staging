@@ -9,6 +9,8 @@
     "ship": "bash scripts/ship.sh"
   },
   "dependencies": {
+    "@slack/socket-mode": "^3.0.0",
+    "@slack/web-api": "^8.0.0",
     "@supabase/supabase-js": "^2",
     "lucide-react": "^1.28.0",
     "next": "16.2.10",
