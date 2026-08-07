@@ -23,6 +23,7 @@ export interface StagingSchedule {
   bimonthly_ref_month?: number  // 1–12: first "on" month
   bimonthly_day_of_week?: number
   security_check_enabled: boolean
+  security_check_pending: boolean
   deploy_days?: number
   // options
   skip_upstream: boolean
@@ -133,6 +134,30 @@ export async function getSecurityCheckSites(stagedWithinDays = 14): Promise<Stag
     .eq('security_check_enabled', true)
     .or(`last_staged_at.is.null,last_staged_at.lt.${cutoff}`)
   if (error) console.error('[supabase] getSecurityCheckSites:', error.message)
+  return data ?? []
+}
+
+export async function markSecurityCheckPending(id: string): Promise<void> {
+  const db = getClient()
+  if (!db) return
+  await db.from('staging_schedules').update({ security_check_pending: true }).eq('id', id)
+}
+
+export async function clearSecurityCheckPending(id: string): Promise<void> {
+  const db = getClient()
+  if (!db) return
+  await db.from('staging_schedules').update({ security_check_pending: false }).eq('id', id)
+}
+
+export async function getPendingSecuritySites(): Promise<StagingSchedule[]> {
+  const db = getClient()
+  if (!db) return []
+  const { data, error } = await db
+    .from('staging_schedules')
+    .select('*')
+    .eq('active', true)
+    .eq('security_check_pending', true)
+  if (error) console.error('[supabase] getPendingSecuritySites:', error.message)
   return data ?? []
 }
 

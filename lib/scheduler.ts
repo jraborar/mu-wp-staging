@@ -4,11 +4,16 @@ import {
   getDueSchedules,
   updateScheduleAfterRun,
   getSecurityCheckSites,
+  getPendingSecuritySites,
+  markSecurityCheckPending,
+  clearSecurityCheckPending,
   getSchedulerState,
   setSchedulerState,
 } from '@/lib/scheduleStore'
 import { createJob } from '@/lib/jobStore'
 import { executeJob } from '@/lib/staging'
+import { run, cleanJson } from '@/lib/terminus'
+import { parseWpJson } from '@/lib/wordpress'
 
 // ── Next occurrence computation (Manila timezone, pure date math) ─────────────
 
@@ -215,24 +220,53 @@ async function runSecurityCheck(): Promise<void> {
     const stored = await getSchedulerState('last_known_wp_version')
     if (stored === latest) return
 
-    // New WP version detected — trigger eligible bimonthly sites
-    console.log(`[scheduler] New WordPress version detected: ${latest} (was ${stored ?? 'unknown'})`)
+    // New WP version detected — flag eligible sites as pending instead of staging immediately.
+    // Pantheon's upstream may take a day or two to propagate; runPendingSecurityChecks()
+    // will poll terminus until the update is actually available, then trigger staging.
+    console.log(`[scheduler] New WordPress version detected: ${latest} (was ${stored ?? 'unknown'}) — marking sites as pending`)
     await setSchedulerState('last_known_wp_version', latest)
 
     const sites = await getSecurityCheckSites(14)
     for (const sched of sites) {
-      const multidev = `mu-${getManilaYYMMDD()}`
-      const job = createJob(sched.site, multidev, {
-        skipPluginsThemes: sched.skip_plugins_themes,
-        scheduleId: sched.id,
-        deployDays: sched.deploy_days,
-      })
-      void executeJob(job)
-      await updateScheduleAfterRun(sched.id, computeNextOccurrence(sched, new Date()))
-      console.log(`[scheduler] Security update triggered staging for ${sched.site} (WP ${latest})`)
+      await markSecurityCheckPending(sched.id)
+      console.log(`[scheduler] Marked ${sched.site} as pending security check (WP ${latest})`)
     }
   } catch (err) {
     console.error('[scheduler] Error in security check:', err)
+  }
+}
+
+async function runPendingSecurityChecks(): Promise<void> {
+  try {
+    const pending = await getPendingSecuritySites()
+    if (pending.length === 0) return
+
+    for (const sched of pending) {
+      // Check if Pantheon has propagated the upstream update yet
+      const result = await run(`terminus upstream:updates:list ${sched.site}.dev --format=json 2>&1`)
+      let hasUpdates = false
+      try {
+        const entries = parseWpJson(cleanJson(result.stdout))
+        hasUpdates = entries.length > 0
+      } catch {}
+
+      if (hasUpdates) {
+        const multidev = `mu-${getManilaYYMMDD()}`
+        const job = createJob(sched.site, multidev, {
+          skipPluginsThemes: sched.skip_plugins_themes,
+          scheduleId: sched.id,
+          deployDays: sched.deploy_days,
+        })
+        void executeJob(job)
+        await clearSecurityCheckPending(sched.id)
+        await updateScheduleAfterRun(sched.id, computeNextOccurrence(sched, new Date()))
+        console.log(`[scheduler] Security staging triggered for ${sched.site} — upstream updates confirmed on Pantheon`)
+      } else {
+        console.log(`[scheduler] No upstream updates yet on Pantheon for ${sched.site} — will check again`)
+      }
+    }
+  } catch (err) {
+    console.error('[scheduler] Error in pending security checks:', err)
   }
 }
 
@@ -240,11 +274,15 @@ export function startScheduler(): void {
   if (schedulerStarted) return
   schedulerStarted = true
 
-  // Run immediately on boot, then every 5 minutes
+  // Main loop: due scheduled jobs + pending security checks — every 5 minutes
   void runDueJobs()
-  setInterval(runDueJobs, 5 * 60 * 1000)
+  void runPendingSecurityChecks()
+  setInterval(() => {
+    void runDueJobs()
+    void runPendingSecurityChecks()
+  }, 5 * 60 * 1000)
 
-  // Security check: immediately, then every 6 hours
+  // WP.org version check — every 6 hours
   void runSecurityCheck()
   setInterval(runSecurityCheck, 6 * 60 * 60 * 1000)
 
