@@ -68,7 +68,7 @@ async function postPumbleMessage(blocks: (Block | KnownBlock)[], text: string): 
 export async function startStagingThread(site: string, multidev: string, siteId?: string): Promise<string | null> {
   const text   = `🔧 Staging started on ${site} (${multidev})`
   const blocks = buildStartedBlocks(site, multidev, siteId)
-  void postPumbleMessage(blocks, text)
+  if (isPumbleConfigured()) void postPumbleMessage(blocks, text)
   const web = getWeb()
   if (web && SLACK_CHANNEL_ID) {
     try {
