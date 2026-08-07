@@ -40,6 +40,7 @@ export async function POST(request: NextRequest) {
     bimonthly_ref_month: bimonthly_ref_month ?? undefined,
     bimonthly_day_of_week: bimonthly_day_of_week ?? undefined,
     security_check_enabled: security_check_enabled ?? ['bimonthly-week-of-15', 'security-only'].includes(cadence),
+    security_check_pending: false,
     deploy_days: deploy_days ?? undefined,
     skip_upstream: skip_upstream ?? false,
     skip_plugins_themes: skip_plugins_themes ?? false,
