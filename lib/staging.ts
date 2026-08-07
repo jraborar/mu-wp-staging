@@ -140,7 +140,7 @@ async function runPluginOrThemeUpdates(job: StagingJob, type: 'plugin' | 'theme'
   return summary
 }
 
-const STEPS = [
+const BASE_STEPS = [
   'Authenticating',
   'Preflight: connection mode',
   'Preflight: uncommitted changes',
@@ -159,9 +159,18 @@ const STEPS = [
   'Clearing edge cache',
 ]
 
+function buildStepList(job: StagingJob): string[] {
+  return BASE_STEPS.filter(s => {
+    if (job.skipUpstream && (s === 'Checking upstream' || s === 'Applying upstream')) return false
+    if (job.skipPluginsThemes && ['Updating plugins','Committing plugins','Updating themes','Committing themes'].includes(s)) return false
+    return true
+  })
+}
+
 export async function executeJob(job: StagingJob): Promise<void> {
-  const log  = (logType: Parameters<typeof appendLog>[1], m: string) => appendLog(job, logType, m)
-  const step = (name: string) => setStep(job, name, STEPS.indexOf(name) + 1, STEPS.length)
+  const log   = (logType: Parameters<typeof appendLog>[1], m: string) => appendLog(job, logType, m)
+  const STEPS = buildStepList(job)
+  const step  = (name: string) => setStep(job, name, STEPS.indexOf(name) + 1, STEPS.length)
 
   await createStagingRecord(job.id, {
     site: job.site,
