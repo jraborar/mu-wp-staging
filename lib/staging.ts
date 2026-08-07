@@ -12,13 +12,14 @@ import {
   startStagingThread,
   postThreadStep,
   postThreadBlocks,
-  broadcastMessage,
+  notifyInThread,
   buildApprovalBlocks,
   buildCompleteBlocks,
   buildFailedBlocks,
   buildPausedBlocks,
   buildCancelledBlocks,
   buildLongRunningBlocks,
+  buildMultidevReadyBlocks,
 } from '@/lib/slack'
 
 const SUPPORTED_UPSTREAMS = ['wordpress', 'wordpress-multisite']
@@ -607,20 +608,31 @@ export async function executeJob(job: StagingJob): Promise<void> {
       `${job.themes.updated.length} theme(s) updated`,
     )
 
-    postStep(
-      `✅ *Staging complete* — ${job.plugins.updated.length} plugin(s) · ${job.themes.updated.length} theme(s) updated`,
-    )
-    void broadcastMessage(
-      buildCompleteBlocks(
-        siteLabel, job.multidev,
-        job.plugins.updated.length, job.themes.updated.length,
-        job.site !== siteLabel ? job.site : undefined,
-      ),
-      `Staging complete on ${siteLabel} (${job.multidev})`,
-    )
+    if (job.deployDestination === 'multidev') {
+      // Keep in Multidev — notify in thread, skip deployment scheduling
+      postStep(`✅ *Staging complete* — multidev \`${job.multidev}\` is ready for client review`)
+      void notifyInThread(
+        slackThreadTs,
+        buildMultidevReadyBlocks(siteLabel, job.multidev, job.site !== siteLabel ? job.site : undefined),
+        `Staging complete — ${job.multidev} on ${siteLabel} ready for client to promote`,
+      )
+    } else {
+      postStep(
+        `✅ *Staging complete* — ${job.plugins.updated.length} plugin(s) · ${job.themes.updated.length} theme(s) updated`,
+      )
+      void notifyInThread(
+        slackThreadTs,
+        buildCompleteBlocks(
+          siteLabel, job.multidev,
+          job.plugins.updated.length, job.themes.updated.length,
+          job.site !== siteLabel ? job.site : undefined,
+        ),
+        `Staging complete on ${siteLabel} (${job.multidev})`,
+      )
+    }
 
     finishJob(job, 'completed')
-    await scheduleDeployment(job)
+    if (job.deployDestination !== 'multidev') await scheduleDeployment(job)
     await finalizeStagingRecord(job.id, {
       site_name: job.site_name,
       upstream: job.upstream,
@@ -647,13 +659,15 @@ export async function executeJob(job: StagingJob): Promise<void> {
     log(isCancelled ? 'warn' : 'error', message)
 
     if (isCancelled) {
-      void broadcastMessage(
+      void notifyInThread(
+        slackThreadTs,
         buildCancelledBlocks(siteLabel, job.multidev, 'Cancelled by user', job.site !== siteLabel ? job.site : undefined),
         `Staging cancelled on ${siteLabel}`,
       )
     } else {
       postStep(`❌ *Failed:* ${err instanceof Error ? err.message : String(err)}`)
-      void broadcastMessage(
+      void notifyInThread(
+        slackThreadTs,
         buildFailedBlocks(siteLabel, job.multidev, err instanceof Error ? err.message : String(err), job.site !== siteLabel ? job.site : undefined),
         `Staging failed on ${siteLabel}`,
       )

@@ -92,3 +92,20 @@ export async function listStagingHistory(limit = 30): Promise<Omit<StagingRecord
   if (error) console.error('[supabase] listStagingHistory:', error.message)
   return data ?? []
 }
+
+// Queries the shared scheduled_deployments table (mu_deployment uses same Supabase project)
+// and returns the scheduled_for timestamps of all pending deployments on the given Manila date.
+export async function getScheduledDeploymentTimes(manilaDateStr: string): Promise<string[]> {
+  const db = getClient()
+  if (!db) return []
+  const dayStart = `${manilaDateStr}T00:00:00+08:00`
+  const dayEnd   = `${manilaDateStr}T23:59:59+08:00`
+  const { data, error } = await db
+    .from('scheduled_deployments')
+    .select('scheduled_for')
+    .eq('status', 'pending')
+    .gte('scheduled_for', dayStart)
+    .lte('scheduled_for', dayEnd)
+  if (error) console.error('[supabase] getScheduledDeploymentTimes:', error.message)
+  return (data ?? []).map((r) => r.scheduled_for as string)
+}

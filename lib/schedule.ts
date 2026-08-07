@@ -1,5 +1,6 @@
 import { type StagingJob, appendLog } from '@/lib/jobStore'
-import { addBusinessDays, getManilaToday, manilaNineAM } from '@/lib/timezone'
+import { addBusinessDays, getManilaToday, manilaThreePM, formatAsManilaISO } from '@/lib/timezone'
+import { getScheduledDeploymentTimes } from '@/lib/supabase'
 
 function buildNotes(job: StagingJob): string {
   const parts: string[] = ['Auto-scheduled after WP staging.']
@@ -18,6 +19,23 @@ function buildNotes(job: StagingJob): string {
   return parts.join(' ')
 }
 
+// Finds the first free 30-minute slot on targetDate at or after 15:00 Manila time.
+// Checks the shared scheduled_deployments table to avoid booking a taken slot.
+async function findNextAvailableSlot(targetDate: Date): Promise<string> {
+  const manilaDateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(targetDate)
+  const existing = await getScheduledDeploymentTimes(manilaDateStr)
+
+  const takenMs  = new Set(existing.map((t) => new Date(t).getTime()))
+  const HALF_HR  = 30 * 60 * 1000
+  let candidate  = new Date(manilaThreePM(targetDate)) // 15:00 Manila
+
+  while (takenMs.has(candidate.getTime())) {
+    candidate = new Date(candidate.getTime() + HALF_HR)
+  }
+
+  return formatAsManilaISO(candidate)
+}
+
 export async function scheduleDeployment(job: StagingJob): Promise<void> {
   const deployUrl = process.env.MU_DEPLOY_URL
   if (!deployUrl) {
@@ -25,10 +43,11 @@ export async function scheduleDeployment(job: StagingJob): Promise<void> {
     return
   }
 
-  const destination  = process.env.MU_DEPLOY_DESTINATION ?? 'live'
-  const days         = job.deployDays ?? parseInt(process.env.MU_DEPLOY_SCHEDULE_DAYS ?? '2', 10)
+  const destination  = job.deployDestination ?? process.env.MU_DEPLOY_DESTINATION ?? 'live'
+  const days         = job.deployDays ?? parseInt(process.env.MU_DEPLOY_SCHEDULE_DAYS ?? '1', 10)
+
   const targetDate   = addBusinessDays(getManilaToday(), days)
-  const scheduledFor = manilaNineAM(targetDate)
+  const scheduledFor = await findNextAvailableSlot(targetDate)
   const notes        = buildNotes(job)
 
   try {
@@ -45,7 +64,8 @@ export async function scheduleDeployment(job: StagingJob): Promise<void> {
       }),
     })
     if (res.ok) {
-      appendLog(job, 'success', `Deployment scheduled in mu-deployment — ${job.multidev} → ${destination} on ${scheduledFor.slice(0, 10)} at 9 AM PHT`)
+      const timeLabel = scheduledFor.slice(11, 16) // HH:MM
+      appendLog(job, 'success', `Deployment scheduled in mu-deployment — ${job.multidev} → ${destination} on ${scheduledFor.slice(0, 10)} at ${timeLabel} PHT`)
     } else {
       appendLog(job, 'warn', `Deployment schedule request failed (HTTP ${res.status}) — schedule manually in mu-deployment`)
     }

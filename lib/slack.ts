@@ -118,6 +118,21 @@ export async function broadcastMessage(blocks: (Block | KnownBlock)[], text: str
   ])
 }
 
+// Posts to the Slack thread if one exists; always notifies Pumble.
+// Falls back to a top-level channel message when there is no thread.
+export async function notifyInThread(
+  threadTs: string | null,
+  blocks: (Block | KnownBlock)[],
+  text: string,
+): Promise<void> {
+  if (threadTs) {
+    void postThreadBlocks(threadTs, blocks, text)
+    if (isPumbleConfigured()) void postPumbleMessage(blocks, text)
+  } else {
+    void broadcastMessage(blocks, text)
+  }
+}
+
 export function verifySignature(rawBody: string, timestamp: string, signature: string, secret: string): boolean {
   if (!secret) return false
   const age = Math.abs(Date.now() / 1000 - Number(timestamp))
@@ -222,6 +237,16 @@ export function buildLongRunningBlocks(site: string, multidev: string, elapsedMi
     text: {
       type: 'mrkdwn',
       text: `⏱ *Staging running longer than usual*\n${formatSite(site, siteId)} · \`${multidev}\`\nCurrent step: ${stepName} · ${elapsedMin} min elapsed`,
+    },
+  }]
+}
+
+export function buildMultidevReadyBlocks(site: string, multidev: string, siteId?: string): (Block | KnownBlock)[] {
+  return [{
+    type: 'section',
+    text: {
+      type: 'mrkdwn',
+      text: `✅ *Staging complete — multidev ready*\n${formatSite(site, siteId)} · \`${multidev}\`\nThe client can now merge to dev, promote to test, then promote to live.`,
     },
   }]
 }

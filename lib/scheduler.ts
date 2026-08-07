@@ -198,6 +198,7 @@ async function runDueJobs(): Promise<void> {
         skipPluginsThemes: sched.skip_plugins_themes,
         scheduleId: sched.id,
         deployDays: sched.deploy_days,
+        deployDestination: sched.deploy_destination,
       })
       void executeJob(job)
       const next = computeNextOccurrence(sched, new Date())

@@ -542,7 +542,7 @@ function LiveJobCard({ job, onComplete }: { job: LiveJob; onComplete: () => void
           {status === 'completed' && (
             <div className="flex items-center gap-2 pt-2 border-t border-slate-700 text-xs text-slate-400">
               <Clock className="w-3.5 h-3.5" />
-              <span>Deployment scheduled in mu-deployment — 2 business days · 9 AM PHT</span>
+              <span>Deployment scheduled in mu-deployment — check History for the exact time</span>
             </div>
           )}
         </div>
@@ -570,6 +570,7 @@ function ScheduleTab() {
   const [skipUpstream, setSkipUpstream] = useState(false)
   const [skipPluginsThemes, setSkipPluginsThemes] = useState(false)
   const [deployDays, setDeployDays] = useState(2)
+  const [destination, setDestination] = useState('live')
 
   const loadSchedules = useCallback(async () => {
     setLoading(true)
@@ -591,6 +592,7 @@ function ScheduleTab() {
         site: site.trim(), cadence, skip_upstream: skipUpstream,
         skip_plugins_themes: skipPluginsThemes,
         deploy_days: deployDays,
+        deploy_destination: destination,
       }
       if (cadence === 'weekly') { body.day_of_week = dayOfWeek }
       if (cadence === 'biweekly') { body.day_of_week = dayOfWeek; body.biweekly_reference_date = biweeklyRef }
@@ -782,9 +784,22 @@ function ScheduleTab() {
               </label>
             </div>
 
-            {/* Deploy days */}
+            {/* Deploy destination + days */}
             <div className="space-y-1.5 pt-1 border-t border-slate-700">
-              <label className="text-xs text-slate-400 font-mono pt-1">Schedule deployment after (business days)</label>
+              <label className="text-xs text-slate-400 font-mono pt-1">Deploy to</label>
+              <select
+                value={destination}
+                onChange={(e) => setDestination(e.target.value)}
+                className="w-full rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 text-sm text-white focus:border-[#FFDC28] focus:outline-none"
+              >
+                <option value="live">Live</option>
+                <option value="test">Test</option>
+                <option value="dev">Dev</option>
+              </select>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs text-slate-400 font-mono">Schedule deployment after (business days)</label>
               <select
                 value={deployDays}
                 onChange={(e) => setDeployDays(Number(e.target.value))}
@@ -794,6 +809,7 @@ function ScheduleTab() {
                 <option value={2}>2 business days (default)</option>
                 <option value={3}>3 business days</option>
                 <option value={5}>5 business days (1 week)</option>
+                <option value={3}>Pause until approved (schedules 3 days out — edit in mu-deployment)</option>
               </select>
             </div>
 
@@ -959,6 +975,8 @@ export default function Page() {
   const [site, setSite]             = useState('')
   const [skipUpstream, setSkipUpstream] = useState(false)
   const [skipPluginsThemes, setSkipPluginsThemes] = useState(false)
+  const [stageDeployDays, setStageDeployDays] = useState(1)
+  const [stageDestination, setStageDestination] = useState('live')
   const [submitting, setSubmitting] = useState(false)
 
   const [liveJobs, setLiveJobs]             = useState<LiveJob[]>([])
@@ -1015,13 +1033,15 @@ export default function Page() {
           site: site.trim(),
           skipUpstream,
           skipPluginsThemes,
+          deployDays: stageDeployDays,
+          deployDestination: stageDestination,
         }),
       })
       setTab('history')
     } finally {
       setSubmitting(false)
     }
-  }, [site, skipUpstream, skipPluginsThemes])
+  }, [site, skipUpstream, skipPluginsThemes, stageDeployDays, stageDestination])
 
   const liveIds  = new Set(liveJobs.map((j) => j.id))
   const pastJobs = history.filter((h) => !liveIds.has(h.id))
@@ -1111,6 +1131,35 @@ export default function Page() {
                   />
                   Skip plugins &amp; themes
                 </label>
+              </div>
+
+              <div className="space-y-1.5 pt-1 border-t border-slate-700">
+                <label className="text-xs text-slate-400 font-mono pt-1">Deploy to</label>
+                <select
+                  value={stageDestination}
+                  onChange={(e) => setStageDestination(e.target.value)}
+                  className="w-full rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 text-sm text-white focus:border-[#FFDC28] focus:outline-none"
+                >
+                  <option value="live">Live</option>
+                  <option value="test">Test</option>
+                  <option value="dev">Dev</option>
+                  <option value="multidev">Keep in Multidev — client promotes</option>
+                </select>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs text-slate-400 font-mono">Schedule deployment after</label>
+                <select
+                  value={stageDeployDays}
+                  onChange={(e) => setStageDeployDays(Number(e.target.value))}
+                  className="w-full rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 text-sm text-white focus:border-[#FFDC28] focus:outline-none"
+                >
+                  <option value={1}>1 business day (e.g. stage Friday → deploy Monday)</option>
+                  <option value={2}>2 business days</option>
+                  <option value={3}>3 business days</option>
+                  <option value={5}>5 business days (1 week)</option>
+                  <option value={3}>Pause until approved (schedules 3 days out — edit in mu-deployment)</option>
+                </select>
               </div>
 
               <button
