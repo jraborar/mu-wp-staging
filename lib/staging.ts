@@ -485,8 +485,14 @@ export async function executeJob(job: StagingJob): Promise<void> {
     // ── 10. SFTP mode ────────────────────────────────────────────────────────
     step('Setting SFTP mode')
     log('status', 'Setting connection mode to SFTP...')
-    const sftpResult = await run(`terminus connection:set ${env(job)} sftp 2>&1`)
-    if (sftpResult.code !== 0) throw new Error(`Failed to set SFTP mode: ${sftpResult.stderr}`)
+    // Retry up to 5 times with 30s delay — Pantheon needs time after multidev creation
+    let sftpResult = await run(`terminus connection:set ${env(job)} sftp 2>&1`)
+    for (let attempt = 2; sftpResult.code !== 0 && attempt <= 5; attempt++) {
+      log('warn', `SFTP mode switch failed (attempt ${attempt - 1}/5) — waiting 30s for Pantheon to warm up...`)
+      await new Promise((r) => setTimeout(r, 30000))
+      sftpResult = await run(`terminus connection:set ${env(job)} sftp 2>&1`)
+    }
+    if (sftpResult.code !== 0) throw new Error(`Failed to set SFTP mode after 5 attempts: ${sftpResult.stdout.trim()}`)
     log('info', 'Connection mode: SFTP')
 
     // WordPress readiness poll (new multidev needs DB sync time)
