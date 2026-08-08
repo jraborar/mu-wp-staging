@@ -669,7 +669,7 @@ function ScheduleTab() {
           <CardHeader icon={<Calendar className="w-5 h-5" />} title="New Schedule" />
           <div className="px-6 py-5 space-y-4">
             <div className="space-y-1.5">
-              <label className="text-xs text-slate-400 font-mono">Site ID</label>
+              <label className="text-xs text-slate-400 font-mono">Site ID <span className="text-slate-600 normal-case">(Pantheon machine name or UUID — not display name)</span></label>
               <input
                 type="text"
                 value={site}
@@ -1099,7 +1099,7 @@ export default function Page() {
             />
             <div className="px-6 py-5 space-y-4">
               <div className="space-y-1.5">
-                <label className="text-xs text-slate-400 font-mono">Site ID</label>
+                <label className="text-xs text-slate-400 font-mono">Site ID <span className="text-slate-600 normal-case">(Pantheon machine name or UUID — not display name)</span></label>
                 <input
                   type="text"
                   value={site}
