@@ -284,64 +284,65 @@ function HistoryRow({ item }: { item: HistoryItem }) {
       )}
 
       {open && hasDetails && (
-        <div className="border-t border-slate-700 pt-3 space-y-3 font-mono text-xs">
-
-          {/* Upstream */}
+        <div className="border-t border-slate-700 pt-3 space-y-3">
+          {/* Upstream Update/s */}
           {(item.upstream_updated || item.upstream_skipped_reason) && (
-            <div className="space-y-1">
+            <div className="space-y-0.5 font-mono text-xs">
               <p className="text-slate-400 font-semibold">Upstream Update/s:</p>
               {item.upstream_updated && (item.upstream_updates?.length ?? 0) > 0
                 ? item.upstream_updates!.map((u, i) => (
                     <div key={i} className="pl-2 space-y-0.5">
                       <p className="text-green-400">- {u.message}</p>
                       {i === 0 && item.upstream_old_version && item.upstream_new_version && (
-                        <p className="pl-2 text-slate-500">
-                          WordPress ({item.upstream_old_version} to {item.upstream_new_version})
-                        </p>
+                        <p className="pl-2 text-slate-500">WordPress ({item.upstream_old_version} to {item.upstream_new_version})</p>
                       )}
                     </div>
                   ))
                 : item.upstream_updated
-                  ? (
-                    <div className="pl-2 space-y-0.5">
+                  ? <div className="pl-2 space-y-0.5">
                       <p className="text-green-400">- Applied successfully</p>
                       {item.upstream_old_version && item.upstream_new_version && (
-                        <p className="pl-2 text-slate-500">
-                          WordPress ({item.upstream_old_version} to {item.upstream_new_version})
-                        </p>
+                        <p className="pl-2 text-slate-500">WordPress ({item.upstream_old_version} to {item.upstream_new_version})</p>
                       )}
                     </div>
-                  ) : null}
+                  : null}
               {item.upstream_skipped_reason && (
                 <p className="pl-2 text-orange-400">- Skipped — {item.upstream_skipped_reason}</p>
               )}
             </div>
           )}
 
-          {/* Plugins */}
-          {(item.plugins_updated.length > 0 || item.plugins_skipped.length > 0) && (
-            <div className="space-y-1">
+          {/* Plugin/s — updated only */}
+          {item.plugins_updated.length > 0 && (
+            <div className="space-y-0.5 font-mono text-xs">
               <p className="text-slate-400 font-semibold">Plugin/s:</p>
               {item.plugins_updated.map((p) => (
                 <p key={p.name} className="pl-2 text-slate-200">
                   - {p.title} <span className="text-slate-500">({p.from} to {p.to})</span>
                 </p>
               ))}
-              {item.plugins_skipped.map((p) => (
-                <p key={p.name} className="pl-2 text-orange-400">
-                  - {p.title} <span className="text-orange-500/70">— {p.reason}</span>
+            </div>
+          )}
+
+          {/* Theme/s — updated only */}
+          {item.themes_updated.length > 0 && (
+            <div className="space-y-0.5 font-mono text-xs">
+              <p className="text-slate-400 font-semibold">Theme/s:</p>
+              {item.themes_updated.map((t) => (
+                <p key={t.name} className="pl-2 text-slate-200">
+                  - {t.title} <span className="text-slate-500">({t.from} to {t.to})</span>
                 </p>
               ))}
             </div>
           )}
 
-          {/* Themes */}
-          {(item.themes_updated.length > 0 || item.themes_skipped.length > 0) && (
-            <div className="space-y-1">
-              <p className="text-slate-400 font-semibold">Theme/s:</p>
-              {item.themes_updated.map((t) => (
-                <p key={t.name} className="pl-2 text-slate-200">
-                  - {t.title} <span className="text-slate-500">({t.from} to {t.to})</span>
+          {/* Skipped — plugins + themes combined */}
+          {(item.plugins_skipped.length > 0 || item.themes_skipped.length > 0) && (
+            <div className="space-y-0.5 font-mono text-xs">
+              <p className="text-slate-400 font-semibold">Skipped:</p>
+              {item.plugins_skipped.map((p) => (
+                <p key={p.name} className="pl-2 text-orange-400">
+                  - {p.title} <span className="text-orange-500/70">— {p.reason}</span>
                 </p>
               ))}
               {item.themes_skipped.map((t) => (
@@ -351,7 +352,6 @@ function HistoryRow({ item }: { item: HistoryItem }) {
               ))}
             </div>
           )}
-
         </div>
       )}
     </div>
