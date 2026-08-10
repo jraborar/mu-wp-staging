@@ -931,9 +931,25 @@ function ScheduleTab() {
 
 // ── Upcoming Tab ──────────────────────────────────────────────────────────────
 
+function toManilaDatetimeLocal(iso: string): string {
+  const d = new Date(iso)
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(d)
+  const get = (t: string) => parts.find(p => p.type === t)?.value ?? '00'
+  return `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}`
+}
+
 function UpcomingTab() {
   const [upcoming, setUpcoming]   = useState<UpcomingEntry[]>([])
   const [loading, setLoading]     = useState(true)
+  const [editingKey, setEditingKey]       = useState<string | null>(null)   // `${id}-${i}`
+  const [editFor, setEditFor]             = useState('')
+  const [applyScope, setApplyScope]       = useState<'this' | 'all' | null>(null)
+  const [skippingKey, setSkippingKey]     = useState<string | null>(null)
+  const [runningId, setRunningId]         = useState<string | null>(null)
+  const [saving, setSaving]               = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -947,8 +963,77 @@ function UpcomingTab() {
 
   useEffect(() => { void load() }, [load])
 
+  const startEdit = (u: UpcomingEntry, i: number) => {
+    setEditingKey(`${u.id}-${i}`)
+    setEditFor(toManilaDatetimeLocal(u.at))
+    setApplyScope(i === 0 ? null : 'this')   // first entry prompts, rest default to this-only
+  }
+
+  const saveEdit = async (u: UpcomingEntry) => {
+    if (!editFor) return
+    setSaving(true)
+    try {
+      const newIso = new Date(editFor + ':00+08:00').toISOString()
+      if (applyScope === 'all') {
+        // Update the schedule's next_staging_at AND shift reference — PATCH schedule
+        await fetch(`/api/schedules/${u.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ next_staging_at: newIso, shift_reference: true }),
+        })
+      } else {
+        // Just update next_staging_at for this occurrence
+        await fetch(`/api/schedules/${u.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ next_staging_at: newIso }),
+        })
+      }
+      setEditingKey(null)
+      setApplyScope(null)
+      void load()
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const skipOccurrence = async (u: UpcomingEntry) => {
+    // Advance next_staging_at past this occurrence so it skips to the next cycle
+    setSaving(true)
+    try {
+      await fetch(`/api/schedules/${u.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ skip_next: true }),
+      })
+      setSkippingKey(null)
+      void load()
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const runNow = async (u: UpcomingEntry) => {
+    setRunningId(u.id)
+    try {
+      await fetch('/api/staging', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ site: u.site }),
+      })
+    } finally {
+      setRunningId(null)
+    }
+  }
+
+  const fmt = (iso: string) =>
+    new Date(iso).toLocaleString('en-PH', {
+      timeZone: 'Asia/Manila', weekday: 'short', month: 'short',
+      day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit',
+    })
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <CalendarClock className="w-4 h-4 text-slate-400" />
@@ -975,29 +1060,119 @@ function UpcomingTab() {
       )}
 
       {upcoming.map((u, i) => {
-        const d = new Date(u.at)
-        const dateStr = d.toLocaleDateString('en-PH', {
-          timeZone: 'Asia/Manila', weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
-        })
-        const isToday = new Date().toDateString() === new Date(d.toLocaleString('en-US', { timeZone: 'Asia/Manila' })).toDateString()
+        const key      = `${u.id}-${i}`
+        const isFirst  = i === 0
+        const isEditing   = editingKey === key
+        const isSkipping  = skippingKey === key
+        const isRunningNow = runningId === u.id
 
         return (
-          <div key={`${u.id}-${i}`} className="rounded-xl border border-slate-700 bg-slate-800 px-5 py-4 flex items-center gap-4">
-            <div className={`w-2 h-2 rounded-full shrink-0 ${isToday ? 'bg-yellow-400' : 'bg-slate-600'}`} />
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <span className="font-mono text-sm text-white">{u.site_name ?? u.site}</span>
-                {(u.skip_upstream || u.skip_plugins_themes) && (
-                  <span className="text-xs rounded bg-slate-700 px-1.5 py-0.5 text-slate-400">
-                    {u.skip_upstream && u.skip_plugins_themes ? 'upstream + plugins/themes skipped' : u.skip_upstream ? 'upstream skipped' : 'plugins/themes skipped'}
-                  </span>
+          <div key={key} className="rounded-lg border border-slate-700 bg-slate-800 p-4 space-y-3">
+            {/* Row: site + datetime + actions */}
+            <div className="flex items-start gap-3">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-mono text-sm font-semibold text-white">{u.site_name ?? u.site}</span>
+                  {isFirst && (
+                    <span className="text-xs rounded border border-yellow-500/40 text-yellow-400 px-1.5 py-0.5 font-mono">next</span>
+                  )}
+                  {(u.skip_upstream || u.skip_plugins_themes) && (
+                    <span className="text-xs rounded bg-slate-700 px-1.5 py-0.5 text-slate-400 font-mono">
+                      {u.skip_upstream && u.skip_plugins_themes ? 'upstream+plugins skipped' : u.skip_upstream ? 'upstream skipped' : 'plugins/themes skipped'}
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-slate-400 font-mono mt-0.5">{CADENCE_LABELS[u.cadence as Cadence] ?? u.cadence}</p>
+
+                {isEditing ? (
+                  <div className="mt-2 space-y-2">
+                    <input
+                      type="datetime-local"
+                      value={editFor}
+                      onChange={e => setEditFor(e.target.value)}
+                      className="rounded border border-slate-600 bg-slate-700 px-2 py-1 font-mono text-xs text-white focus:border-[#FFDC28] focus:outline-none"
+                    />
+                    {/* Apply scope prompt — only for earliest entry */}
+                    {isFirst && (
+                      <div className="space-y-1.5">
+                        <p className="text-xs text-slate-400 font-mono">Apply this change to:</p>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => setApplyScope('this')}
+                            className={`rounded border px-2.5 py-1 font-mono text-xs transition-colors ${applyScope === 'this' ? 'border-[#FFDC28] text-[#FFDC28] bg-[#FFDC28]/10' : 'border-slate-600 text-slate-400 hover:border-slate-400'}`}
+                          >
+                            This occurrence only
+                          </button>
+                          <button
+                            onClick={() => setApplyScope('all')}
+                            className={`rounded border px-2.5 py-1 font-mono text-xs transition-colors ${applyScope === 'all' ? 'border-[#FFDC28] text-[#FFDC28] bg-[#FFDC28]/10' : 'border-slate-600 text-slate-400 hover:border-slate-400'}`}
+                          >
+                            All future occurrences
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => saveEdit(u)}
+                        disabled={saving || !editFor || (isFirst && !applyScope)}
+                        className="rounded border border-green-500/40 px-2.5 py-1 font-mono text-xs text-green-400 hover:bg-green-400/10 disabled:opacity-40 transition-colors"
+                      >
+                        {saving ? 'Saving…' : 'Save'}
+                      </button>
+                      <button
+                        onClick={() => { setEditingKey(null); setApplyScope(null) }}
+                        className="rounded border border-slate-600 px-2.5 py-1 font-mono text-xs text-slate-400 hover:bg-slate-700 transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-sm text-slate-200 font-mono mt-1">{fmt(u.at)}</p>
                 )}
               </div>
-              <p className="text-xs text-slate-400 mt-0.5">{CADENCE_LABELS[u.cadence as Cadence] ?? u.cadence}</p>
-            </div>
-            <div className="text-right shrink-0">
-              <p className="text-sm text-slate-200">{dateStr}</p>
-              {isToday && <span className="text-xs text-yellow-400">Today</span>}
+
+              {/* Action buttons */}
+              {!isEditing && (
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {isSkipping ? (
+                    <>
+                      <span className="font-mono text-xs text-orange-400 mr-1">Skip this?</span>
+                      <button
+                        onClick={() => skipOccurrence(u)}
+                        disabled={saving}
+                        className="rounded border border-orange-500/40 px-2 py-1 font-mono text-xs text-orange-400 hover:bg-orange-400/10 disabled:opacity-40 transition-colors"
+                      >Yes</button>
+                      <button
+                        onClick={() => setSkippingKey(null)}
+                        className="rounded border border-slate-600 px-2 py-1 font-mono text-xs text-slate-400 hover:bg-slate-700 transition-colors"
+                      >No</button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => runNow(u)}
+                        disabled={!!isRunningNow}
+                        title="Run Now"
+                        className="rounded border border-[#FFDC28]/40 px-2.5 py-1 font-mono text-xs text-[#FFDC28] hover:bg-[#FFDC28]/10 disabled:opacity-40 transition-colors"
+                      >
+                        {isRunningNow ? '…' : '▶'}
+                      </button>
+                      <button
+                        onClick={() => startEdit(u, i)}
+                        title="Edit"
+                        className="rounded border border-slate-600 px-2.5 py-1 font-mono text-xs text-slate-400 hover:border-slate-400 hover:text-white transition-colors"
+                      >✎</button>
+                      <button
+                        onClick={() => setSkippingKey(key)}
+                        title="Skip this occurrence"
+                        className="rounded border border-orange-500/40 px-2.5 py-1 font-mono text-xs text-orange-400 hover:bg-orange-400/10 transition-colors"
+                      >✕</button>
+                    </>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         )
