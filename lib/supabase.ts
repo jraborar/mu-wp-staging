@@ -23,6 +23,9 @@ export interface StagingRecord {
   upstream?: string
   upstream_updated: boolean
   upstream_skipped_reason?: string
+  upstream_updates?: Array<{ message: string; hash?: string }>
+  upstream_old_version?: string
+  upstream_new_version?: string
   plugins_updated: UpdateSummary['updated']
   plugins_skipped: UpdateSummary['skipped']
   themes_updated: UpdateSummary['updated']

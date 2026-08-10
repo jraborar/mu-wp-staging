@@ -40,6 +40,8 @@ interface LiveJob {
   startedAt: number
 }
 
+interface UpstreamUpdateEntry { message: string; hash?: string }
+
 interface HistoryItem {
   id: string
   site: string
@@ -48,6 +50,9 @@ interface HistoryItem {
   upstream?: string
   upstream_updated: boolean
   upstream_skipped_reason?: string
+  upstream_updates?: UpstreamUpdateEntry[]
+  upstream_old_version?: string
+  upstream_new_version?: string
   plugins_updated: UpdatedItem[]
   plugins_skipped: SkippedItem[]
   themes_updated: UpdatedItem[]
@@ -279,21 +284,74 @@ function HistoryRow({ item }: { item: HistoryItem }) {
       )}
 
       {open && hasDetails && (
-        <div className="border-t border-slate-700 pt-3 space-y-3">
-          {item.upstream_updated && (
-            <div className="flex items-center gap-2">
-              <CheckCircle className="w-3.5 h-3.5 text-green-400" />
-              <span className="text-xs text-green-400 font-mono">Upstream updated</span>
+        <div className="border-t border-slate-700 pt-3 space-y-3 font-mono text-xs">
+
+          {/* Upstream */}
+          {(item.upstream_updated || item.upstream_skipped_reason) && (
+            <div className="space-y-1">
+              <p className="text-slate-400 font-semibold">Upstream Update/s:</p>
+              {item.upstream_updated && (item.upstream_updates?.length ?? 0) > 0
+                ? item.upstream_updates!.map((u, i) => (
+                    <div key={i} className="pl-2 space-y-0.5">
+                      <p className="text-green-400">- {u.message}</p>
+                      {i === 0 && item.upstream_old_version && item.upstream_new_version && (
+                        <p className="pl-2 text-slate-500">
+                          WordPress ({item.upstream_old_version} to {item.upstream_new_version})
+                        </p>
+                      )}
+                    </div>
+                  ))
+                : item.upstream_updated
+                  ? (
+                    <div className="pl-2 space-y-0.5">
+                      <p className="text-green-400">- Applied successfully</p>
+                      {item.upstream_old_version && item.upstream_new_version && (
+                        <p className="pl-2 text-slate-500">
+                          WordPress ({item.upstream_old_version} to {item.upstream_new_version})
+                        </p>
+                      )}
+                    </div>
+                  ) : null}
+              {item.upstream_skipped_reason && (
+                <p className="pl-2 text-orange-400">- Skipped — {item.upstream_skipped_reason}</p>
+              )}
             </div>
           )}
-          {item.upstream_skipped_reason && (
-            <div className="flex items-center gap-2">
-              <AlertCircle className="w-3.5 h-3.5 text-orange-400" />
-              <span className="text-xs text-orange-400 font-mono">Upstream skipped — {item.upstream_skipped_reason}</span>
+
+          {/* Plugins */}
+          {(item.plugins_updated.length > 0 || item.plugins_skipped.length > 0) && (
+            <div className="space-y-1">
+              <p className="text-slate-400 font-semibold">Plugin/s:</p>
+              {item.plugins_updated.map((p) => (
+                <p key={p.name} className="pl-2 text-slate-200">
+                  - {p.title} <span className="text-slate-500">({p.from} to {p.to})</span>
+                </p>
+              ))}
+              {item.plugins_skipped.map((p) => (
+                <p key={p.name} className="pl-2 text-orange-400">
+                  - {p.title} <span className="text-orange-500/70">— {p.reason}</span>
+                </p>
+              ))}
             </div>
           )}
-          <UpdateSection label="Plugins" updated={item.plugins_updated} skipped={item.plugins_skipped} />
-          <UpdateSection label="Themes"  updated={item.themes_updated}  skipped={item.themes_skipped} />
+
+          {/* Themes */}
+          {(item.themes_updated.length > 0 || item.themes_skipped.length > 0) && (
+            <div className="space-y-1">
+              <p className="text-slate-400 font-semibold">Theme/s:</p>
+              {item.themes_updated.map((t) => (
+                <p key={t.name} className="pl-2 text-slate-200">
+                  - {t.title} <span className="text-slate-500">({t.from} to {t.to})</span>
+                </p>
+              ))}
+              {item.themes_skipped.map((t) => (
+                <p key={t.name} className="pl-2 text-orange-400">
+                  - {t.title} <span className="text-orange-500/70">— {t.reason}</span>
+                </p>
+              ))}
+            </div>
+          )}
+
         </div>
       )}
     </div>

@@ -21,6 +21,11 @@ export interface PendingApproval {
   rejectLabel: string
 }
 
+export interface UpstreamUpdateEntry {
+  message: string
+  hash?: string
+}
+
 export interface StagingJob {
   id: string
   site: string
@@ -29,6 +34,9 @@ export interface StagingJob {
   upstream?: string
   upstreamUpdated: boolean
   upstreamConflict: boolean
+  upstreamUpdates: UpstreamUpdateEntry[]   // commit details from upstream:updates:list
+  upstreamOldVersion?: string              // wp core version before apply
+  upstreamNewVersion?: string              // wp core version after apply
   plugins: UpdateSummary
   themes: UpdateSummary
   status: JobStatus
@@ -76,6 +84,7 @@ export function createJob(site: string, multidev: string, opts: CreateJobOptions
     multidev,
     upstreamUpdated: false,
     upstreamConflict: false,
+    upstreamUpdates: [],
     plugins: { updated: [], skipped: [] },
     themes:  { updated: [], skipped: [] },
     status: 'running',

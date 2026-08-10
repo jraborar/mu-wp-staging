@@ -447,9 +447,15 @@ export async function executeJob(job: StagingJob): Promise<void> {
       const upstreamList = await run(`terminus upstream:updates:list ${env(job)} --format=json 2>&1`)
       let hasUpdates = false
       try {
-        const entries = parseWpJson(cleanJson(upstreamList.stdout))
+        const entries = parseWpJson<{ message?: string; hash?: string }>(cleanJson(upstreamList.stdout))
         hasUpdates = entries.length > 0
-        log('info', hasUpdates ? `${entries.length} upstream update(s) available` : 'No upstream updates available')
+        if (hasUpdates) {
+          job.upstreamUpdates = entries.map(e => ({ message: e.message ?? '', hash: e.hash }))
+          log('info', `${entries.length} upstream update(s) available`)
+          for (const e of entries) if (e.message) log('info', `  · ${e.message}`)
+        } else {
+          log('info', 'No upstream updates available')
+        }
       } catch {
         log('info', 'No upstream updates available')
       }
@@ -457,6 +463,10 @@ export async function executeJob(job: StagingJob): Promise<void> {
       if (hasUpdates) {
         step('Applying upstream')
         log('status', 'Applying upstream updates...')
+
+        // Capture WordPress version before applying
+        const verBefore = await run(wp(job, 'core version'))
+        job.upstreamOldVersion = cleanJson(verBefore.stdout).trim().replace(/[^\d.]/g, '') || undefined
 
         const hashResult = await run(`terminus env:code-log ${env(job)} --format=json 2>/dev/null`)
         let preApplyHash = ''
@@ -485,7 +495,12 @@ export async function executeJob(job: StagingJob): Promise<void> {
           }
         } else {
           job.upstreamUpdated = true
-          log('success', 'Upstream updates applied successfully')
+          const verAfter = await run(wp(job, 'core version'))
+          job.upstreamNewVersion = cleanJson(verAfter.stdout).trim().replace(/[^\d.]/g, '') || undefined
+          const verNote = job.upstreamOldVersion && job.upstreamNewVersion
+            ? ` (${job.upstreamOldVersion} → ${job.upstreamNewVersion})`
+            : ''
+          log('success', `Upstream updates applied successfully${verNote}`)
           postStep('✓ Upstream updates applied')
         }
       }
@@ -664,6 +679,9 @@ export async function executeJob(job: StagingJob): Promise<void> {
       upstream: job.upstream,
       upstream_updated: job.upstreamUpdated,
       upstream_skipped_reason: job.upstreamConflict ? 'merge conflict' : job.skipUpstream ? 'skipped by user' : undefined,
+      upstream_updates: job.upstreamUpdates.length > 0 ? job.upstreamUpdates : undefined,
+      upstream_old_version: job.upstreamOldVersion,
+      upstream_new_version: job.upstreamNewVersion,
       plugins_updated: job.plugins.updated,
       plugins_skipped: job.plugins.skipped,
       themes_updated: job.themes.updated,
