@@ -204,58 +204,96 @@ function UpdateSection({ label, updated, skipped }: {
 
 function HistoryRow({ item }: { item: HistoryItem }) {
   const [open, setOpen] = useState(false)
-  const startDate = new Date(item.started_at)
-  const dateStr   = startDate.toLocaleDateString('en-PH', { timeZone: 'Asia/Manila', month: 'short', day: 'numeric', year: 'numeric' })
-  const timeStr   = startDate.toLocaleTimeString('en-PH', { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit' })
+
+  const statusColors: Record<string, string> = {
+    completed:  'text-green-400',
+    failed:     'text-red-400',
+    paused:     'text-blue-400',
+    cancelled:  'text-slate-500',
+    running:    'text-yellow-400',
+  }
+  const siteColor  = statusColors[item.status] ?? 'text-slate-400'
+  const statusLabel: Record<string, string> = { completed: 'staged' }
+  const endLabel   = item.status === 'failed' ? 'Failed:' : item.status === 'cancelled' ? 'Cancelled:' : 'Completed:'
+
+  const fmt = (ts: string) =>
+    new Date(ts).toLocaleString('en-PH', {
+      timeZone: 'Asia/Manila', month: 'short', day: 'numeric',
+      year: 'numeric', hour: 'numeric', minute: '2-digit',
+    })
+
   const updatedCount = item.plugins_updated.length + item.themes_updated.length
   const skippedCount = item.plugins_skipped.length + item.themes_skipped.length
+  const hasDetails   = updatedCount > 0 || skippedCount > 0 || item.upstream_updated || !!item.upstream_skipped_reason
 
   return (
-    <div className="rounded-xl border border-slate-700 bg-slate-800 overflow-hidden">
-      <button
-        className="w-full flex items-center gap-3 px-5 py-4 text-left hover:bg-slate-700/50 transition-colors"
-        onClick={() => setOpen((o) => !o)}
-      >
-        <StatusBadge status={item.status} />
-        <div className="flex-1 min-w-0">
-          <span className="font-mono text-sm text-white truncate">{item.site_name ?? item.site}</span>
-          <span className="text-slate-500 mx-2">·</span>
-          <span className="font-mono text-xs text-[#FFDC28]">{item.multidev}</span>
-        </div>
-        <div className="hidden sm:flex items-center gap-3 text-xs shrink-0">
-          {item.upstream_updated
-            ? <span className="text-green-400 font-mono">upstream ✓</span>
-            : item.upstream_skipped_reason
-              ? <span className="text-orange-400 font-mono">upstream — skipped</span>
-              : null}
-          {updatedCount > 0  && <span className="text-green-400">{updatedCount} updated</span>}
-          {skippedCount > 0  && <span className="text-orange-400">{skippedCount} skipped</span>}
-        </div>
-        <div className="flex items-center gap-1 text-slate-500 text-xs shrink-0">
-          <Clock className="w-3 h-3" />
-          <span>{dateStr} {timeStr} PHT</span>
-        </div>
-        {open ? <ChevronUp className="w-4 h-4 text-slate-400 shrink-0" /> : <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />}
-      </button>
+    <div className="rounded-lg border border-slate-700 bg-slate-800 p-4 space-y-1.5">
 
-      {open && (
-        <div className="border-t border-slate-700 px-5 py-4 space-y-4 bg-slate-800/60">
-          {item.upstream_updated ? (
+      {/* Row 1: Site name + status */}
+      <div className="flex items-start justify-between gap-3">
+        <div className="truncate">
+          <span className={`font-mono text-sm font-semibold ${siteColor}`}>
+            {item.site_name ?? item.site}
+          </span>
+          {item.site_name && (
+            <span className="ml-1.5 font-mono font-normal text-slate-500 text-xs">· {item.site}</span>
+          )}
+        </div>
+        <span className={`font-mono text-xs font-semibold shrink-0 ${siteColor}`}>
+          {statusLabel[item.status] ?? item.status}
+        </span>
+      </div>
+
+      {/* Row 2: Multidev + summary chips */}
+      <div className="font-mono text-xs flex items-center flex-wrap gap-x-2 gap-y-0.5">
+        <span className="text-[#FFDC28]">{item.multidev}</span>
+        {item.upstream && (
+          item.upstream_updated
+            ? <><span className="text-slate-600">·</span><span className="text-green-400">upstream ✓</span></>
+            : item.upstream_skipped_reason
+              ? <><span className="text-slate-600">·</span><span className="text-orange-400">upstream skipped</span></>
+              : <><span className="text-slate-600">·</span><span className="text-slate-500">upstream — no updates</span></>
+        )}
+        {updatedCount > 0  && <><span className="text-slate-600">·</span><span className="text-green-400">{updatedCount} updated</span></>}
+        {skippedCount > 0  && <><span className="text-slate-600">·</span><span className="text-orange-400">{skippedCount} skipped</span></>}
+        {!item.upstream && updatedCount === 0 && item.status === 'completed' && (
+          <><span className="text-slate-600">·</span><span className="text-slate-500">nothing updated</span></>
+        )}
+      </div>
+
+      {/* Row 3: Timestamps */}
+      <div className="flex flex-wrap gap-x-4 font-mono text-xs text-slate-400">
+        <span>Started: {fmt(item.started_at)}</span>
+        <span>{endLabel} {item.completed_at ? fmt(item.completed_at) : '—'}</span>
+      </div>
+
+      {/* Expandable detail */}
+      {hasDetails && (
+        <button
+          onClick={() => setOpen((o) => !o)}
+          className="flex items-center gap-1 font-mono text-xs text-slate-500 hover:text-slate-300 transition-colors pt-0.5"
+        >
+          {open ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+          {open ? 'Hide details' : 'Show details'}
+        </button>
+      )}
+
+      {open && hasDetails && (
+        <div className="border-t border-slate-700 pt-3 space-y-3">
+          {item.upstream_updated && (
             <div className="flex items-center gap-2">
-              <CheckCircle className="w-4 h-4 text-green-400" />
-              <span className="text-sm text-green-400 font-mono">Upstream updated</span>
+              <CheckCircle className="w-3.5 h-3.5 text-green-400" />
+              <span className="text-xs text-green-400 font-mono">Upstream updated</span>
             </div>
-          ) : item.upstream_skipped_reason ? (
+          )}
+          {item.upstream_skipped_reason && (
             <div className="flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 text-orange-400" />
-              <span className="text-sm text-orange-400 font-mono">Upstream skipped — {item.upstream_skipped_reason}</span>
+              <AlertCircle className="w-3.5 h-3.5 text-orange-400" />
+              <span className="text-xs text-orange-400 font-mono">Upstream skipped — {item.upstream_skipped_reason}</span>
             </div>
-          ) : null}
+          )}
           <UpdateSection label="Plugins" updated={item.plugins_updated} skipped={item.plugins_skipped} />
           <UpdateSection label="Themes"  updated={item.themes_updated}  skipped={item.themes_skipped} />
-          {!item.upstream_updated && updatedCount === 0 && (
-            <p className="text-xs text-slate-500 font-mono">Nothing was updated</p>
-          )}
         </div>
       )}
     </div>
