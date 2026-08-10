@@ -25,9 +25,9 @@ async function findNextAvailableSlot(targetDate: Date): Promise<string> {
   const manilaDateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(targetDate)
   const existing = await getScheduledDeploymentTimes(manilaDateStr)
 
-  const takenMs  = new Set(existing.map((t) => new Date(t).getTime()))
-  const ONE_HR   = 60 * 60 * 1000
-  let candidate  = new Date(manilaThreePM(targetDate)) // 15:00 Manila
+  const takenMs = new Set(existing.map((t) => new Date(t).getTime()))
+  const ONE_HR  = 60 * 60 * 1000
+  let candidate = new Date(manilaThreePM(targetDate)) // 15:00 Manila
 
   while (takenMs.has(candidate.getTime())) {
     candidate = new Date(candidate.getTime() + ONE_HR)

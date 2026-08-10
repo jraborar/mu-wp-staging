@@ -130,7 +130,16 @@ async function runPluginOrThemeUpdates(job: StagingJob, type: 'plugin' | 'theme'
   const updateCmd = adminContext
     ? `${type} update --all --context=admin --format=json`
     : `${type} update --all --format=json`
-  const jsonResult = await run(wp(job, updateCmd))
+  let jsonResult = await run(wp(job, updateCmd))
+
+  // If update with --context=admin fails and nothing was Updated, retry without it.
+  // PHP 8.1 sites can have admin context issues that crash WP-CLI before updating anything.
+  if (adminContext && (jsonResult.code !== 0 || jsonResult.stdout.toLowerCase().includes('no plugins updated') || jsonResult.stdout.toLowerCase().includes('no themes updated'))) {
+    log('warn', `${label} update failed with admin context — retrying without it`)
+    jsonResult = await run(wp(job, `${type} update --all --format=json`))
+  }
+
+  log('info', `${label} update raw: ${jsonResult.stdout.slice(0, 400).replace(/\n/g, ' ') || '(empty)'}`)
   const results = parseWpJson<WpUpdateEntry>(cleanJson(jsonResult.stdout))
 
   const summary = buildUpdateSummary(available, results)
@@ -576,16 +585,21 @@ export async function executeJob(job: StagingJob): Promise<void> {
     await runStream(wp(job, 'cache flush'), (line) => log('info', line))
     log('success', 'Cache flushed')
 
-    // Safety commit + set Git mode
-    const diffStat = await run(`terminus env:diffstat ${env(job)} --format=json 2>&1`)
-    try {
-      const pending = parseWpJson(cleanJson(diffStat.stdout))
-      if (pending.length > 0) {
-        log('warn', `${pending.length} uncommitted file(s) detected — committing before switching to Git...`)
-        await run(`terminus env:commit ${env(job)} --message='Staged updates (safety commit)' 2>&1`)
-        log('success', 'Safety commit completed')
-      }
-    } catch {}
+    // Safety commit — only if we actually made SFTP changes (plugins or themes updated).
+    // Skipping when nothing was updated avoids false positives where upstream-committed
+    // core files appear as "pending" in env:diffstat after switching to SFTP mode.
+    const hadSftpChanges = job.plugins.updated.length > 0 || job.themes.updated.length > 0
+    if (hadSftpChanges) {
+      const diffStat = await run(`terminus env:diffstat ${env(job)} --format=json 2>&1`)
+      try {
+        const pending = parseWpJson(cleanJson(diffStat.stdout))
+        if (pending.length > 0) {
+          log('warn', `${pending.length} uncommitted file(s) detected — committing before switching to Git...`)
+          await run(`terminus env:commit ${env(job)} --message='Staged updates (safety commit)' 2>&1`)
+          log('success', 'Safety commit completed')
+        }
+      } catch {}
+    }
 
     log('status', 'Setting connection mode to Git...')
     const gitResult = await run(`terminus connection:set ${env(job)} git 2>&1`)
