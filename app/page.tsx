@@ -259,9 +259,16 @@ function HistoryRow({ item }: { item: HistoryItem }) {
               ? <><span className="text-slate-600">·</span><span className="text-orange-400">upstream skipped</span></>
               : <><span className="text-slate-600">·</span><span className="text-slate-500">upstream — no updates</span></>
         )}
-        {updatedCount > 0  && <><span className="text-slate-600">·</span><span className="text-green-400">{updatedCount} updated</span></>}
-        {skippedCount > 0  && <><span className="text-slate-600">·</span><span className="text-orange-400">{skippedCount} skipped</span></>}
-        {!item.upstream && updatedCount === 0 && item.status === 'completed' && (
+        {(updatedCount > 0 || skippedCount > 0) && (
+          <>
+            <span className="text-slate-600">·</span>
+            <span className="text-green-400">{updatedCount} updated</span>
+            {skippedCount > 0 && (
+              <><span className="text-slate-600">·</span><span className="text-orange-400">{skippedCount} skipped</span></>
+            )}
+          </>
+        )}
+        {!item.upstream && updatedCount === 0 && skippedCount === 0 && item.status === 'completed' && (
           <><span className="text-slate-600">·</span><span className="text-slate-500">nothing updated</span></>
         )}
       </div>
@@ -312,10 +319,12 @@ function HistoryRow({ item }: { item: HistoryItem }) {
             </div>
           )}
 
-          {/* Plugin/s — updated only */}
+          {/* Plugin/s — updated only, with count */}
           {item.plugins_updated.length > 0 && (
             <div className="space-y-0.5 font-mono text-xs">
-              <p className="text-slate-400 font-semibold">Plugin/s:</p>
+              <p className="text-slate-400 font-semibold">
+                Plugin/s <span className="text-green-400">({item.plugins_updated.length} updated):</span>
+              </p>
               {item.plugins_updated.map((p) => (
                 <p key={p.name} className="pl-2 text-slate-200">
                   - {p.title} <span className="text-slate-500">({p.from} to {p.to})</span>
@@ -324,10 +333,12 @@ function HistoryRow({ item }: { item: HistoryItem }) {
             </div>
           )}
 
-          {/* Theme/s — updated only */}
+          {/* Theme/s — updated only, with count */}
           {item.themes_updated.length > 0 && (
             <div className="space-y-0.5 font-mono text-xs">
-              <p className="text-slate-400 font-semibold">Theme/s:</p>
+              <p className="text-slate-400 font-semibold">
+                Theme/s <span className="text-green-400">({item.themes_updated.length} updated):</span>
+              </p>
               {item.themes_updated.map((t) => (
                 <p key={t.name} className="pl-2 text-slate-200">
                   - {t.title} <span className="text-slate-500">({t.from} to {t.to})</span>
@@ -336,10 +347,12 @@ function HistoryRow({ item }: { item: HistoryItem }) {
             </div>
           )}
 
-          {/* Skipped — plugins + themes combined */}
+          {/* Skipped — plugins + themes combined, with count */}
           {(item.plugins_skipped.length > 0 || item.themes_skipped.length > 0) && (
             <div className="space-y-0.5 font-mono text-xs">
-              <p className="text-slate-400 font-semibold">Skipped:</p>
+              <p className="text-slate-400 font-semibold">
+                Skipped <span className="text-orange-400">({item.plugins_skipped.length + item.themes_skipped.length}):</span>
+              </p>
               {item.plugins_skipped.map((p) => (
                 <p key={p.name} className="pl-2 text-orange-400">
                   - {p.title} <span className="text-orange-500/70">— {p.reason}</span>
