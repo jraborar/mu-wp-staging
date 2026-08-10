@@ -394,7 +394,35 @@ export async function executeJob(job: StagingJob): Promise<void> {
       `terminus multidev:create ${job.site}.dev ${job.multidev} 2>&1`,
       (line) => log('info', line),
     )
-    if (createResult.code !== 0) throw new Error(`Multidev creation failed`)
+    if (createResult.code !== 0) {
+      // terminus-3 can exit non-zero when Pantheon queues async tasks to stderr
+      // (e.g. "Successfully queued endpoint_wp_search_replace task").
+      // Verify existence before treating as a real failure.
+      const verify = await run(`terminus multidev:list ${job.site} --fields=Name --format=list 2>&1`)
+      const exists  = verify.stdout.split('\n').map(l => l.trim()).includes(job.multidev)
+      if (!exists) throw new Error(`Multidev creation failed`)
+      log('warn', `terminus exited non-zero but ${job.multidev} exists — confirming it is fully ready...`)
+    }
+
+    // Guard: wait until the multidev is confirmed initialized before proceeding.
+    // Pantheon's async workflows (database clone, search-replace, etc.) may still
+    // be running even after terminus returns. Poll env:info up to 20 times × 30s.
+    let initialized = false
+    for (let attempt = 1; attempt <= 20; attempt++) {
+      const info = await run(`terminus env:info ${env(job)} --format=json 2>&1`)
+      try {
+        const d = JSON.parse(cleanJson(info.stdout))
+        if (d?.initialized === true || d?.initialized === 'true') {
+          initialized = true
+          break
+        }
+      } catch {}
+      if (attempt < 20) {
+        log('info', `Waiting for ${job.multidev} to finish initializing (attempt ${attempt}/20)...`)
+        await new Promise(r => setTimeout(r, 30_000))
+      }
+    }
+    if (!initialized) throw new Error(`${job.multidev} did not finish initializing after 10 minutes`)
     job.multidevCreated = true
     log('success', `Multidev ${job.multidev} created`)
     postStep(`✓ Multidev \`${job.multidev}\` created`)
