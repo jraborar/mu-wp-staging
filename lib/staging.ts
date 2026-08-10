@@ -408,12 +408,14 @@ export async function executeJob(job: StagingJob): Promise<void> {
       const envData = JSON.parse(cleanJson(envInfoResult.stdout))
       phpVersion = envData?.php_version ?? '8.2'
     } catch {}
+    // Switch PHP to match the site. The terminus wrapper (/usr/local/bin/terminus)
+    // auto-selects terminus-3 for PHP ≤8.1 and terminus-4 for PHP 8.2+ — no clamping needed.
     log('info', `PHP version: ${phpVersion} — switching terminus to match`)
     const phpSwitch = await run(`update-alternatives --set php /usr/bin/php${phpVersion} 2>&1`)
     if (phpSwitch.code !== 0) {
       log('warn', `Could not switch to PHP ${phpVersion} — continuing with default`)
     } else {
-      log('info', `PHP switched to ${phpVersion}`)
+      log('info', `PHP ${phpVersion} active — terminus wrapper will use ${parseFloat(phpVersion) >= 8.2 ? 'terminus-4' : 'terminus-3'}`)
     }
 
     const isWordPress = SUPPORTED_UPSTREAMS.some((u) => upstream.includes(u))
