@@ -445,6 +445,9 @@ export async function executeJob(job: StagingJob): Promise<void> {
       step('Checking upstream')
       log('status', 'Checking for upstream updates...')
       const upstreamList = await run(`terminus upstream:updates:list ${env(job)} --format=json 2>&1`)
+      // Log raw for diagnosis — Pantheon tracks upstream at site level so a
+      // previously-applied upstream may not show again even on a fresh multidev.
+      log('info', `Upstream list raw: ${upstreamList.stdout.slice(0, 300).replace(/\n/g, ' ') || '(empty)'}`)
       let hasUpdates = false
       try {
         const entries = parseWpJson<{ message?: string; hash?: string }>(cleanJson(upstreamList.stdout))
@@ -454,7 +457,15 @@ export async function executeJob(job: StagingJob): Promise<void> {
           log('info', `${entries.length} upstream update(s) available`)
           for (const e of entries) if (e.message) log('info', `  · ${e.message}`)
         } else {
-          log('info', 'No upstream updates available')
+          // Double-check via string format in case JSON parse missed something
+          const textList = await run(`terminus upstream:updates:list ${env(job)} 2>&1`)
+          const textClean = cleanJson(textList.stdout).toLowerCase()
+          if (!textClean.includes('no upstream updates') && !textClean.includes('no available updates') && textClean.length > 10) {
+            log('warn', 'upstream:updates:list JSON was empty but text output suggests updates may be available — check manually')
+            log('info', `Upstream text: ${textList.stdout.slice(0, 200).replace(/\n/g, ' ')}`)
+          } else {
+            log('info', 'No upstream updates available')
+          }
         }
       } catch {
         log('info', 'No upstream updates available')
