@@ -19,18 +19,18 @@ function buildNotes(job: StagingJob): string {
   return parts.join(' ')
 }
 
-// Finds the first free 30-minute slot on targetDate at or after 15:00 Manila time.
+// Finds the first free 1-hour slot on targetDate at or after 15:00 Manila time.
 // Checks the shared scheduled_deployments table to avoid booking a taken slot.
 async function findNextAvailableSlot(targetDate: Date): Promise<string> {
   const manilaDateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(targetDate)
   const existing = await getScheduledDeploymentTimes(manilaDateStr)
 
   const takenMs  = new Set(existing.map((t) => new Date(t).getTime()))
-  const HALF_HR  = 30 * 60 * 1000
+  const ONE_HR   = 60 * 60 * 1000
   let candidate  = new Date(manilaThreePM(targetDate)) // 15:00 Manila
 
   while (takenMs.has(candidate.getTime())) {
-    candidate = new Date(candidate.getTime() + HALF_HR)
+    candidate = new Date(candidate.getTime() + ONE_HR)
   }
 
   return formatAsManilaISO(candidate)
