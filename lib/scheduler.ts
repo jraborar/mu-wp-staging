@@ -66,10 +66,11 @@ function getManilaMonthDay(date: Date): { month: number; day: number; year: numb
   }
 }
 
+// Staging runs at 15:00 PHT — shift-start time, safely after morning deployments.
 function manilaDate(year: number, month: number, day: number): Date {
   const m = String(month).padStart(2, '0')
   const d = String(day).padStart(2, '0')
-  return new Date(`${year}-${m}-${d}T09:00:00+08:00`)
+  return new Date(`${year}-${m}-${d}T15:00:00+08:00`)
 }
 
 function getDaysInMonth(year: number, month: number): number {
