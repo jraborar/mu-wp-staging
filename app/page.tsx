@@ -1254,21 +1254,161 @@ function UpcomingTab() {
 
 // ── Update Options tab ────────────────────────────────────────────────────────
 
-function UpdateOptionsTab({ site }: { site: string }) {
-  type Item = { name: string; title: string }
-  type InnerTab = 'update' | 'skipped'
+// ── Reusable accordion section for one type (plugins OR themes) ───────────────
 
+function ItemAccordion({
+  label, items, skips, setSkips, onDirty,
+}: {
+  label: string
+  items: { name: string; title: string }[]
+  skips: Set<string>
+  setSkips: (s: Set<string>) => void
+  onDirty: () => void
+}) {
+  type InnerTab = 'update' | 'skipped'
+  const [open, setOpen]         = useState(true)
+  const [innerTab, setInnerTab] = useState<InnerTab>('update')
+  const [search, setSearch]     = useState('')
+
+  const matches = (item: { name: string; title: string }) => {
+    if (!search.trim()) return true
+    const q = search.toLowerCase()
+    return item.title.toLowerCase().includes(q) || item.name.toLowerCase().includes(q)
+  }
+
+  const forUpdate = items.filter(i => !skips.has(i.name) && matches(i))
+  const skipped   = items.filter(i =>  skips.has(i.name) && matches(i))
+
+  const toggle = (name: string) => {
+    const next = new Set(skips)
+    next.has(name) ? next.delete(name) : next.add(name)
+    setSkips(next)
+    onDirty()
+  }
+
+  const skipAllMatching = () => {
+    const next = new Set(skips)
+    forUpdate.forEach(i => next.add(i.name))
+    setSkips(next); onDirty()
+  }
+
+  const restoreAllMatching = () => {
+    const next = new Set(skips)
+    skipped.forEach(i => next.delete(i.name))
+    setSkips(next); onDirty()
+  }
+
+  const totalSkipped = items.filter(i => skips.has(i.name)).length
+
+  return (
+    <div className="rounded-xl border border-slate-700 overflow-hidden">
+      {/* Accordion header */}
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center gap-3 px-5 py-3.5 bg-slate-800 hover:bg-slate-700/50 transition-colors text-left"
+      >
+        {open ? <ChevronUp className="w-4 h-4 text-slate-400 shrink-0" /> : <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />}
+        <span className="font-mono text-sm font-semibold text-white">{label}</span>
+        <span className="text-xs text-slate-500 font-mono">{items.length} total</span>
+        {totalSkipped > 0 && (
+          <span className="ml-auto text-xs font-mono text-orange-400">{totalSkipped} skipped</span>
+        )}
+      </button>
+
+      {open && (
+        <div className="border-t border-slate-700 bg-slate-800/40 p-4 space-y-3">
+          {/* Search */}
+          <div className="relative">
+            <input
+              type="text"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder={`Search ${label.toLowerCase()}… (by name or slug)`}
+              className="w-full rounded-lg border border-slate-600 bg-slate-700 pl-3 pr-8 py-1.5 font-mono text-xs text-white placeholder-slate-500 focus:border-[#FFDC28] focus:outline-none"
+            />
+            {search && (
+              <button onClick={() => setSearch('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white">
+                <X className="w-3 h-3" />
+              </button>
+            )}
+          </div>
+
+          {/* Sub-tabs */}
+          <div className="flex gap-1 border-b border-slate-700">
+            {([['update', `For Update (${forUpdate.length})`], ['skipped', `Skipped (${skipped.length})`]] as [InnerTab, string][]).map(([t, lbl]) => (
+              <button key={t} onClick={() => setInnerTab(t)}
+                className={`px-3 py-1.5 text-xs font-mono font-medium transition-colors ${
+                  innerTab === t ? 'border-b-2 border-[#FFDC28] text-[#FFDC28]' : 'text-slate-400 hover:text-slate-200'
+                }`}>
+                {lbl}
+              </button>
+            ))}
+            <div className="flex-1" />
+            {innerTab === 'update' && forUpdate.length > 0 && search && (
+              <button onClick={skipAllMatching}
+                className="px-2.5 py-1 text-xs font-mono text-orange-400 hover:text-orange-300 border border-orange-500/30 rounded mb-1 transition-colors">
+                Skip all ({forUpdate.length})
+              </button>
+            )}
+            {innerTab === 'skipped' && skipped.length > 0 && search && (
+              <button onClick={restoreAllMatching}
+                className="px-2.5 py-1 text-xs font-mono text-green-400 hover:text-green-300 border border-green-500/30 rounded mb-1 transition-colors">
+                Restore all ({skipped.length})
+              </button>
+            )}
+          </div>
+
+          {/* Items */}
+          <div className="max-h-64 overflow-y-auto space-y-0.5">
+            {innerTab === 'update' && (
+              forUpdate.length === 0
+                ? <p className="text-xs text-slate-600 font-mono text-center py-6">
+                    {search ? `No ${label.toLowerCase()} matching "${search}" in For Update` : `All ${label.toLowerCase()} are in the Skipped list`}
+                  </p>
+                : forUpdate.map(i => (
+                    <div key={i.name} onClick={() => toggle(i.name)}
+                      className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-slate-700/50 cursor-pointer transition-colors">
+                      <div className="w-4 h-4 rounded border border-[#FFDC28]/60 bg-[#FFDC28]/10 flex items-center justify-center shrink-0">
+                        <Check className="w-2.5 h-2.5 text-[#FFDC28]" />
+                      </div>
+                      <span className="text-xs font-mono text-slate-200 flex-1">{i.title}</span>
+                      <span className="text-xs text-slate-600 font-mono">{i.name}</span>
+                    </div>
+                  ))
+            )}
+            {innerTab === 'skipped' && (
+              skipped.length === 0
+                ? <p className="text-xs text-slate-600 font-mono text-center py-6">
+                    {search ? `No ${label.toLowerCase()} matching "${search}" in Skipped` : `No ${label.toLowerCase()} skipped — all will be updated`}
+                  </p>
+                : skipped.map(i => (
+                    <div key={i.name} onClick={() => toggle(i.name)}
+                      className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-slate-700/50 cursor-pointer transition-colors">
+                      <div className="w-4 h-4 rounded border border-orange-500/60 bg-orange-900/20 flex items-center justify-center shrink-0">
+                        <X className="w-2.5 h-2.5 text-orange-400" />
+                      </div>
+                      <span className="text-xs font-mono text-slate-500 line-through flex-1">{i.title}</span>
+                      <span className="text-xs text-slate-600 font-mono">{i.name}</span>
+                    </div>
+                  ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function UpdateOptionsTab({ site }: { site: string }) {
   const [loading, setLoading]         = useState(false)
   const [saving, setSaving]           = useState(false)
   const [saved, setSaved]             = useState(false)
-  const [plugins, setPlugins]         = useState<Item[]>([])
-  const [themes, setThemes]           = useState<Item[]>([])
+  const [plugins, setPlugins]         = useState<{ name: string; title: string }[]>([])
+  const [themes, setThemes]           = useState<{ name: string; title: string }[]>([])
   const [pluginSkips, setPluginSkips] = useState<Set<string>>(new Set())
   const [themeSkips, setThemeSkips]   = useState<Set<string>>(new Set())
   const [loaded, setLoaded]           = useState(false)
   const [savedSite, setSavedSite]     = useState('')
-  const [innerTab, setInnerTab]       = useState<InnerTab>('update')
-  const [search, setSearch]           = useState('')
 
   const load = useCallback(async () => {
     if (!site.trim()) return
@@ -1298,13 +1438,6 @@ function UpdateOptionsTab({ site }: { site: string }) {
 
   useEffect(() => { void load() }, [load])
 
-  const toggle = (name: string, set: Set<string>, setFn: (s: Set<string>) => void) => {
-    const next = new Set(set)
-    next.has(name) ? next.delete(name) : next.add(name)
-    setFn(next)
-    setSaved(false)
-  }
-
   const save = async () => {
     setSaving(true)
     try {
@@ -1317,68 +1450,6 @@ function UpdateOptionsTab({ site }: { site: string }) {
     } finally {
       setSaving(false)
     }
-  }
-
-  // All items combined: plugins first, then themes
-  const allItems = [
-    ...plugins.map(p => ({ ...p, kind: 'plugin' as const })),
-    ...themes.map(t => ({ ...t, kind: 'theme' as const })),
-  ]
-
-  const isSkipped = (item: typeof allItems[0]) =>
-    item.kind === 'plugin' ? pluginSkips.has(item.name) : themeSkips.has(item.name)
-
-  const matchesSearch = (item: typeof allItems[0]) => {
-    if (!search.trim()) return true
-    const q = search.toLowerCase()
-    return item.title.toLowerCase().includes(q) || item.name.toLowerCase().includes(q)
-  }
-
-  const forUpdate = allItems.filter(i => !isSkipped(i) && matchesSearch(i))
-  const skipped   = allItems.filter(i =>  isSkipped(i) && matchesSearch(i))
-
-  // Skip all items currently matching the search in For Update tab
-  const skipAllMatching = () => {
-    const newPluginSkips = new Set(pluginSkips)
-    const newThemeSkips  = new Set(themeSkips)
-    forUpdate.forEach(i => i.kind === 'plugin' ? newPluginSkips.add(i.name) : newThemeSkips.add(i.name))
-    setPluginSkips(newPluginSkips)
-    setThemeSkips(newThemeSkips)
-    setSaved(false)
-  }
-
-  // Restore all items currently matching the search in Skipped tab
-  const restoreAllMatching = () => {
-    const newPluginSkips = new Set(pluginSkips)
-    const newThemeSkips  = new Set(themeSkips)
-    skipped.forEach(i => i.kind === 'plugin' ? newPluginSkips.delete(i.name) : newThemeSkips.delete(i.name))
-    setPluginSkips(newPluginSkips)
-    setThemeSkips(newThemeSkips)
-    setSaved(false)
-  }
-
-  const ItemRow = ({ item }: { item: typeof allItems[0] }) => {
-    const skippedItem = isSkipped(item)
-    return (
-      <div
-        className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-slate-700/50 cursor-pointer transition-colors"
-        onClick={() => item.kind === 'plugin'
-          ? toggle(item.name, pluginSkips, setPluginSkips)
-          : toggle(item.name, themeSkips, setThemeSkips)}
-      >
-        <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${
-          skippedItem ? 'border-orange-500/60 bg-orange-900/20' : 'border-[#FFDC28]/60 bg-[#FFDC28]/10'
-        }`}>
-          {skippedItem
-            ? <X className="w-2.5 h-2.5 text-orange-400" />
-            : <Check className="w-2.5 h-2.5 text-[#FFDC28]" />}
-        </div>
-        <span className={`text-xs font-mono flex-1 ${skippedItem ? 'text-slate-500 line-through' : 'text-slate-200'}`}>
-          {item.title}
-        </span>
-        <span className="text-xs text-slate-600 font-mono">{item.kind}</span>
-      </div>
-    )
   }
 
   return (
@@ -1407,66 +1478,25 @@ function UpdateOptionsTab({ site }: { site: string }) {
 
           {loaded && !loading && (
             <>
-              {/* Search bar */}
-              <div className="relative">
-                <input
-                  type="text"
-                  value={search}
-                  onChange={e => setSearch(e.target.value)}
-                  placeholder="Search plugins and themes… (e.g. elementor)"
-                  className="w-full rounded-lg border border-slate-600 bg-slate-700 pl-3 pr-8 py-2 font-mono text-sm text-white placeholder-slate-500 focus:border-[#FFDC28] focus:outline-none"
+              {/* Plugins accordion */}
+              <ItemAccordion
+                label="Plugins"
+                items={plugins}
+                skips={pluginSkips}
+                setSkips={setPluginSkips}
+                onDirty={() => setSaved(false)}
+              />
+
+              {/* Themes accordion */}
+              {themes.length > 0 && (
+                <ItemAccordion
+                  label="Themes"
+                  items={themes}
+                  skips={themeSkips}
+                  setSkips={setThemeSkips}
+                  onDirty={() => setSaved(false)}
                 />
-                {search && (
-                  <button onClick={() => setSearch('')}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white">
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                )}
-              </div>
-
-              {/* Inner tabs */}
-              <div className="flex gap-1 border-b border-slate-700">
-                {([['update', `For Update (${forUpdate.length})`], ['skipped', `Skipped (${skipped.length})`]] as [InnerTab, string][]).map(([t, label]) => (
-                  <button key={t} onClick={() => setInnerTab(t)}
-                    className={`px-4 py-2 text-xs font-mono font-medium transition-colors ${
-                      innerTab === t ? 'border-b-2 border-[#FFDC28] text-[#FFDC28]' : 'text-slate-400 hover:text-slate-200'
-                    }`}>
-                    {label}
-                  </button>
-                ))}
-                <div className="flex-1" />
-                {/* Bulk action */}
-                {innerTab === 'update' && forUpdate.length > 0 && search && (
-                  <button onClick={skipAllMatching}
-                    className="px-3 py-1.5 text-xs font-mono text-orange-400 hover:text-orange-300 border border-orange-500/30 rounded mb-1 transition-colors">
-                    Skip all matching ({forUpdate.length})
-                  </button>
-                )}
-                {innerTab === 'skipped' && skipped.length > 0 && search && (
-                  <button onClick={restoreAllMatching}
-                    className="px-3 py-1.5 text-xs font-mono text-green-400 hover:text-green-300 border border-green-500/30 rounded mb-1 transition-colors">
-                    Restore all matching ({skipped.length})
-                  </button>
-                )}
-              </div>
-
-              {/* Item list */}
-              <div className="min-h-[200px] max-h-80 overflow-y-auto space-y-0.5">
-                {innerTab === 'update' && (
-                  forUpdate.length === 0
-                    ? <p className="text-xs text-slate-600 font-mono text-center py-8">
-                        {search ? 'No matching items in For Update' : 'All items are in the Skipped list'}
-                      </p>
-                    : forUpdate.map(i => <ItemRow key={`${i.kind}-${i.name}`} item={i} />)
-                )}
-                {innerTab === 'skipped' && (
-                  skipped.length === 0
-                    ? <p className="text-xs text-slate-600 font-mono text-center py-8">
-                        {search ? 'No matching items in Skipped' : 'Nothing is skipped — all items will be updated'}
-                      </p>
-                    : skipped.map(i => <ItemRow key={`${i.kind}-${i.name}`} item={i} />)
-                )}
-              </div>
+              )}
 
               {/* Save */}
               <div className="flex items-center gap-3 pt-2 border-t border-slate-700">
