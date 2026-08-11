@@ -148,10 +148,12 @@ async function runPluginOrThemeUpdates(
     : `${type} update --all --format=json${excludeFlag}`
   let jsonResult = await run(wp(job, updateCmd))
 
-  // If update with --context=admin fails, retry without it (PHP 8.1 admin context issues)
+  // Guardrail: if update with --context=admin fails (e.g. PHP 8.1 sites), retry without it.
+  // --exclude is preserved in both attempts so site preferences always apply regardless of context.
   if (adminContext && (jsonResult.code !== 0 || jsonResult.stdout.toLowerCase().includes('no plugins updated') || jsonResult.stdout.toLowerCase().includes('no themes updated'))) {
-    log('warn', `${label} update failed with admin context — retrying without it`)
-    jsonResult = await run(wp(job, `${type} update --all --format=json${excludeFlag}`))
+    const retryCmd = `${type} update --all --format=json${excludeFlag}`
+    log('warn', `${label} update failed with admin context — retrying without it${excludeFlag ? ` (--exclude preserved: ${siteSkips.join(',')})` : ''}`)
+    jsonResult = await run(wp(job, retryCmd))
   }
 
   log('info', `${label} update raw: ${jsonResult.stdout.slice(0, 400).replace(/\n/g, ' ') || '(empty)'}`)
