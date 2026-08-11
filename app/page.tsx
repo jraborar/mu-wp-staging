@@ -91,6 +91,15 @@ interface UpcomingEntry {
   skip_plugins_themes: boolean
 }
 
+// Manila date string YYMMDD for display in the Stage tab test mode toggle
+function getManilaYYMMDD(): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Manila', year: '2-digit', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date())
+  const get = (t: string) => parts.find(p => p.type === t)?.value ?? '00'
+  return `${get('year')}${get('month')}${get('day')}`
+}
+
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
@@ -1527,6 +1536,7 @@ export default function Page() {
   const [skipPluginsThemes, setSkipPluginsThemes] = useState(false)
   const [stageDeployDays, setStageDeployDays] = useState(1)
   const [stageDestination, setStageDestination] = useState('live')
+  const [testMode, setTestMode]               = useState(false)
   const [submitting, setSubmitting] = useState(false)
 
   const [liveJobs, setLiveJobs]             = useState<LiveJob[]>([])
@@ -1576,22 +1586,25 @@ export default function Page() {
     if (!site.trim()) return
     setSubmitting(true)
     try {
+      const body: Record<string, unknown> = {
+        site: site.trim(),
+        skipUpstream,
+        skipPluginsThemes,
+        deployDays: stageDeployDays,
+        deployDestination: stageDestination,
+      }
+      // Test mode: server appends -t to today's date → mu-YYMMDD-t (never deletes production env)
+      if (testMode) body.testMode = true
       await fetch('/api/staging', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          site: site.trim(),
-          skipUpstream,
-          skipPluginsThemes,
-          deployDays: stageDeployDays,
-          deployDestination: stageDestination,
-        }),
+        body: JSON.stringify(body),
       })
       setTab('history')
     } finally {
       setSubmitting(false)
     }
-  }, [site, skipUpstream, skipPluginsThemes, stageDeployDays, stageDestination])
+  }, [site, skipUpstream, skipPluginsThemes, stageDeployDays, stageDestination, testMode])
 
   const liveIds  = new Set(liveJobs.map((j) => j.id))
   const pastJobs = history.filter((h) => !liveIds.has(h.id))
@@ -1723,17 +1736,43 @@ export default function Page() {
                 </select>
               </div>
 
+              {/* Test mode toggle */}
+              <div className="flex items-center justify-between rounded-lg border border-slate-700 px-4 py-3">
+                <div>
+                  <p className="text-xs font-semibold text-slate-300 font-mono">Test Mode</p>
+                  <p className="text-xs text-slate-500 font-mono mt-0.5">
+                    {testMode
+                      ? `Uses mu-${getManilaYYMMDD()}-t — production mu-${getManilaYYMMDD()} stays untouched`
+                      : 'Off — uses standard mu-YYMMDD (client-facing)'}
+                  </p>
+                </div>
+                <button
+                  onClick={() => setTestMode(t => !t)}
+                  className={`relative inline-flex h-6 w-11 shrink-0 rounded-full border-2 transition-colors ${
+                    testMode ? 'border-[#FFDC28] bg-[#FFDC28]/20' : 'border-slate-600 bg-slate-700'
+                  }`}
+                >
+                  <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform mt-0.5 ${
+                    testMode ? 'translate-x-5' : 'translate-x-0.5'
+                  }`} />
+                </button>
+              </div>
+
               <button
                 onClick={startJob}
                 disabled={submitting || !site.trim()}
-                className="w-full rounded-lg bg-[#FFDC28] hover:bg-[#E6C625] px-4 py-2.5 text-sm font-semibold text-slate-900 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                className={`w-full rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                  testMode
+                    ? 'bg-slate-600 hover:bg-slate-500 text-white border border-slate-500'
+                    : 'bg-[#FFDC28] hover:bg-[#E6C625] text-slate-900'
+                }`}
               >
                 {submitting ? (
                   <span className="flex items-center justify-center gap-2">
-                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-900 border-t-transparent" />
+                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
                     Starting…
                   </span>
-                ) : 'Run Staging Updates'}
+                ) : testMode ? `Run Test Staging (mu-${getManilaYYMMDD()}-t)` : 'Run Staging Updates'}
               </button>
             </div>
           </Card>
