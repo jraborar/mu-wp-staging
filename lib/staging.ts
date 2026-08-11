@@ -157,10 +157,41 @@ async function runPluginOrThemeUpdates(
   }
 
   log('info', `${label} update raw: ${jsonResult.stdout.slice(0, 400).replace(/\n/g, ' ') || '(empty)'}`)
-  const results = parseWpJson<WpUpdateEntry>(cleanJson(jsonResult.stdout))
 
-  const summary = buildUpdateSummary(available.filter(p => !siteSkips.includes(p.name)), results)
-  summary.skipped.push(...sitePrefSkipped)
+  // WP-CLI exits 1 and says "No X updated" when ANY plugin fails (e.g. pro plugins need license),
+  // even if other plugins DID update. Cross-check by re-listing what still needs updates after the
+  // command ran — anything that disappeared from the available list was actually updated.
+  const afterListResult = await run(wp(job, `${type} list --update=available --format=json`))
+  const afterAvailable = new Set(
+    parseWpJson<{ name: string }>(cleanJson(afterListResult.stdout)).map(p => p.name)
+  )
+
+  const toUpdate = available.filter(p => !siteSkips.includes(p.name))
+  const actuallyUpdated = toUpdate
+    .filter(p => !afterAvailable.has(p.name))
+    .map(p => ({ name: p.name, title: p.title ?? p.name, from: p.version ?? '?', to: '?' }))
+  const genuinelySkipped = toUpdate
+    .filter(p => afterAvailable.has(p.name))
+    .map(p => ({ name: p.name, title: p.title ?? p.name, reason: 'Could not be updated automatically' }))
+
+  // Enrich updated items with actual new versions from the JSON output where available
+  const jsonResults = parseWpJson<WpUpdateEntry>(cleanJson(jsonResult.stdout))
+  const versionMap = new Map(jsonResults.map(r => [r.name, r]))
+  for (const u of actuallyUpdated) {
+    const r = versionMap.get(u.name)
+    if (r?.new_version) u.to = r.new_version
+    if (r?.old_version) u.from = r.old_version
+  }
+  // Mark pro/premium failures with the right reason
+  for (const s of genuinelySkipped) {
+    const r = versionMap.get(s.name)
+    if (r?.status === 'Error') s.reason = 'Update failed — manual update may be required'
+  }
+
+  const summary = {
+    updated: actuallyUpdated,
+    skipped: [...genuinelySkipped, ...sitePrefSkipped],
+  }
 
   for (const u of summary.updated) log('success', `${label}: ${u.title} ${u.from} → ${u.to}`)
   for (const s of summary.skipped) log('warn', `${label} skipped: ${s.title} — ${s.reason}`)
