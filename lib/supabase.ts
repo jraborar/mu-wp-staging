@@ -96,7 +96,32 @@ export async function listStagingHistory(limit = 30): Promise<Omit<StagingRecord
   return data ?? []
 }
 
-// Queries the shared scheduled_deployments table (mu_deployment uses same Supabase project)
+// ── Per-site update preferences ───────────────────────────────────────────────
+
+export interface SiteUpdatePrefs {
+  site: string
+  plugin_skips: string[]
+  theme_skips: string[]
+  updated_at: string
+}
+
+export async function getSiteUpdatePrefs(site: string): Promise<SiteUpdatePrefs | null> {
+  const db = getClient()
+  if (!db) return null
+  const { data } = await db.from('site_update_prefs').select('*').eq('site', site).single()
+  return data ?? null
+}
+
+export async function saveSiteUpdatePrefs(site: string, pluginSkips: string[], themeSkips: string[]): Promise<void> {
+  const db = getClient()
+  if (!db) return
+  const { error } = await db.from('site_update_prefs').upsert({
+    site, plugin_skips: pluginSkips, theme_skips: themeSkips, updated_at: new Date().toISOString(),
+  }, { onConflict: 'site' })
+  if (error) console.error('[supabase] saveSiteUpdatePrefs:', error.message)
+}
+
+// ── Queries the shared scheduled_deployments table (mu_deployment uses same Supabase project)
 // and returns the scheduled_for timestamps of all pending deployments on the given Manila date.
 export async function getScheduledDeploymentTimes(manilaDateStr: string): Promise<string[]> {
   const db = getClient()

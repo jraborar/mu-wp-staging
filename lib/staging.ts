@@ -7,7 +7,7 @@ import {
   parseWpJson,
   type UpdateSummary,
 } from '@/lib/wordpress'
-import { createStagingRecord, finalizeStagingRecord } from '@/lib/supabase'
+import { createStagingRecord, finalizeStagingRecord, getSiteUpdatePrefs } from '@/lib/supabase'
 import {
   startStagingThread,
   postThreadStep,
@@ -94,7 +94,11 @@ async function revertUpstreamConflict(job: StagingJob, preApplyHash: string): Pr
   }
 }
 
-async function runPluginOrThemeUpdates(job: StagingJob, type: 'plugin' | 'theme'): Promise<UpdateSummary> {
+async function runPluginOrThemeUpdates(
+  job: StagingJob,
+  type: 'plugin' | 'theme',
+  siteSkips: string[] = [],
+): Promise<UpdateSummary> {
   const label = type === 'plugin' ? 'Plugin' : 'Theme'
   const log = (logType: Parameters<typeof appendLog>[1], m: string) => appendLog(job, logType, m)
 
@@ -116,11 +120,21 @@ async function runPluginOrThemeUpdates(job: StagingJob, type: 'plugin' | 'theme'
   const cleaned = cleanJson(listResult.stdout)
   log('info', `${label} list cleaned: ${cleaned.slice(0, 300) || '(empty)'}`)
 
-  const available = parseWpJson<{ name: string; title?: string; version?: string }>(cleaned)
+  const all = parseWpJson<{ name: string; title?: string; version?: string }>(cleaned)
+
+  // Apply site-level skip preferences
+  const sitePrefSkipped = all
+    .filter(p => siteSkips.includes(p.name))
+    .map(p => ({ name: p.name, title: p.title ?? p.name, reason: 'Skipped per site update preferences' }))
+  const available = all.filter(p => !siteSkips.includes(p.name))
+
+  if (sitePrefSkipped.length > 0) {
+    log('info', `${label} skipped by site preferences: ${sitePrefSkipped.map(p => p.title).join(', ')}`)
+  }
 
   if (available.length === 0) {
     log('info', `No ${label.toLowerCase()} updates available`)
-    return { updated: [], skipped: [] }
+    return { updated: [], skipped: sitePrefSkipped }
   }
 
   log('info', `Found ${available.length} ${label.toLowerCase()}(s) with available updates`)
@@ -143,6 +157,8 @@ async function runPluginOrThemeUpdates(job: StagingJob, type: 'plugin' | 'theme'
   const results = parseWpJson<WpUpdateEntry>(cleanJson(jsonResult.stdout))
 
   const summary = buildUpdateSummary(available, results)
+  // Merge site-preference skips into the summary
+  summary.skipped.push(...sitePrefSkipped)
 
   for (const u of summary.updated) log('success', `${label}: ${u.title} ${u.from} → ${u.to}`)
   for (const s of summary.skipped) log('warn', `${label} skipped: ${s.title} — ${s.reason}`)
@@ -576,9 +592,17 @@ export async function executeJob(job: StagingJob): Promise<void> {
     }
 
     // ── 11–14. Plugin + theme updates (skippable) ────────────────────────────
+    // Load per-site skip preferences (configured in Update Options tab)
+    const sitePrefs = await getSiteUpdatePrefs(job.site)
+    const pluginSkipPrefs = sitePrefs?.plugin_skips ?? []
+    const themeSkipPrefs  = sitePrefs?.theme_skips  ?? []
+    if (pluginSkipPrefs.length > 0 || themeSkipPrefs.length > 0) {
+      log('info', `Site preferences: skipping ${pluginSkipPrefs.length} plugin(s) and ${themeSkipPrefs.length} theme(s)`)
+    }
+
     if (!job.skipPluginsThemes) {
       step('Updating plugins')
-      const pluginSummary = wpReady ? await runPluginOrThemeUpdates(job, 'plugin') : { updated: [], skipped: [] }
+      const pluginSummary = wpReady ? await runPluginOrThemeUpdates(job, 'plugin', pluginSkipPrefs) : { updated: [], skipped: [] }
       job.plugins = pluginSummary
 
       if (pluginSummary.updated.length > 0 || pluginSummary.skipped.length > 0) {
@@ -599,7 +623,7 @@ export async function executeJob(job: StagingJob): Promise<void> {
       }
 
       step('Updating themes')
-      const themeSummary = wpReady ? await runPluginOrThemeUpdates(job, 'theme') : { updated: [], skipped: [] }
+      const themeSummary = wpReady ? await runPluginOrThemeUpdates(job, 'theme', themeSkipPrefs) : { updated: [], skipped: [] }
       job.themes = themeSummary
 
       if (themeSummary.updated.length > 0 || themeSummary.skipped.length > 0) {
