@@ -782,7 +782,13 @@ export async function executeJob(job: StagingJob): Promise<void> {
     }
 
     finishJob(job, 'completed')
-    if (job.deployDestination !== 'multidev') await scheduleDeployment(job)
+    // Only schedule deployment if something was actually updated — no point deploying a clean run.
+    const anythingUpdated = job.upstreamUpdated || job.plugins.updated.length > 0 || job.themes.updated.length > 0
+    if (job.deployDestination !== 'multidev' && anythingUpdated) {
+      await scheduleDeployment(job)
+    } else if (!anythingUpdated) {
+      log('info', 'Nothing was updated — skipping deployment schedule')
+    }
     await finalizeStagingRecord(job.id, {
       site_name: job.site_name,
       upstream: job.upstream,
