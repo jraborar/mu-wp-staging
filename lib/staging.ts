@@ -378,7 +378,11 @@ export async function executeJob(job: StagingJob): Promise<void> {
     const currentMultidevs = multidevList.split('\n').map(l => l.trim()).filter(l => /^[a-z0-9][a-z0-9-]{0,10}$/.test(l))
     const currentCount = currentMultidevs.length
 
-    const existingMu = findByPrefix(multidevList, 'mu')
+    // Only clean up old mu-YYMMDD envs when the job itself uses the standard date pattern.
+    // Custom names (mu-YYMMDD-t for test mode, ad-hoc names) skip cleanup so manually
+    // staged production envs are never accidentally deleted.
+    const isStandardName = /^mu-\d{6}$/.test(job.multidev)
+    const existingMu = isStandardName ? findByPrefix(multidevList, 'mu') : null
     const countAfterDelete = existingMu ? currentCount - 1 : currentCount
 
     if (countAfterDelete >= maxMultidevs) {

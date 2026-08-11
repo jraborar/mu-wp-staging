@@ -58,16 +58,21 @@ export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => null)
   if (!body) return Response.json({ error: 'Invalid JSON' }, { status: 400 })
 
-  const { site, multidev: multidevOverride, skipUpstream, skipPluginsThemes, deployDays, deployDestination } = body as Record<string, unknown>
+  const { site, multidev: multidevOverride, testMode, skipUpstream, skipPluginsThemes, deployDays, deployDestination } = body as Record<string, unknown>
 
   if (!site || typeof site !== 'string' || !SITE_RE.test(site)) {
     return Response.json({ error: 'Invalid or missing site ID' }, { status: 400 })
   }
 
-  // Optional multidev override for testing (e.g. "mu-260811a"). Falls back to today's Manila date.
-  const multidev = (typeof multidevOverride === 'string' && /^[a-z0-9-]{1,11}$/.test(multidevOverride))
-    ? multidevOverride
-    : `mu-${getManilaYYMMDD()}`
+  // Test mode: append -t to today's date → mu-YYMMDD-t (never collides with production mu-YYMMDD)
+  // Custom override: explicit multidev name for ad-hoc runs
+  // Default: standard mu-YYMMDD
+  const dateStr = getManilaYYMMDD()
+  const multidev = testMode
+    ? `mu-${dateStr}-t`
+    : (typeof multidevOverride === 'string' && /^[a-z0-9-]{1,11}$/.test(multidevOverride))
+      ? multidevOverride
+      : `mu-${dateStr}`
   const job = createJob(site, multidev, {
     skipUpstream: Boolean(skipUpstream),
     skipPluginsThemes: Boolean(skipPluginsThemes),
