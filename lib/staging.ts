@@ -120,44 +120,44 @@ async function runPluginOrThemeUpdates(
   const cleaned = cleanJson(listResult.stdout)
   log('info', `${label} list cleaned: ${cleaned.slice(0, 300) || '(empty)'}`)
 
-  const all = parseWpJson<{ name: string; title?: string; version?: string }>(cleaned)
+  const available = parseWpJson<{ name: string; title?: string; version?: string }>(cleaned)
 
-  // Apply site-level skip preferences
-  const sitePrefSkipped = all
+  // Identify which available items are in the site-level skip list
+  const sitePrefSkipped = available
     .filter(p => siteSkips.includes(p.name))
     .map(p => ({ name: p.name, title: p.title ?? p.name, reason: 'Skipped per site update preferences' }))
-  const available = all.filter(p => !siteSkips.includes(p.name))
 
   if (sitePrefSkipped.length > 0) {
-    log('info', `${label} skipped by site preferences: ${sitePrefSkipped.map(p => p.title).join(', ')}`)
+    log('info', `${label} site preferences: excluding ${sitePrefSkipped.map(p => p.title).join(', ')}`)
   }
 
-  if (available.length === 0) {
-    log('info', `No ${label.toLowerCase()} updates available`)
+  if (available.length === 0 || available.every(p => siteSkips.includes(p.name))) {
+    log('info', `No ${label.toLowerCase()} updates to apply`)
     return { updated: [], skipped: sitePrefSkipped }
   }
 
   log('info', `Found ${available.length} ${label.toLowerCase()}(s) with available updates`)
   log('status', `Updating ${label.toLowerCase()}s...`)
 
+  // Pass site-skip list directly to WP-CLI via --exclude so it never touches them.
+  // Equivalent to: wp plugin update --all --exclude=slug1,slug2 --format=json
+  const excludeFlag = siteSkips.length > 0 ? ` --exclude=${siteSkips.join(',')}` : ''
   interface WpUpdateEntry { name: string; old_version: string; new_version: string; status: string }
   const updateCmd = adminContext
-    ? `${type} update --all --context=admin --format=json`
-    : `${type} update --all --format=json`
+    ? `${type} update --all --context=admin --format=json${excludeFlag}`
+    : `${type} update --all --format=json${excludeFlag}`
   let jsonResult = await run(wp(job, updateCmd))
 
-  // If update with --context=admin fails and nothing was Updated, retry without it.
-  // PHP 8.1 sites can have admin context issues that crash WP-CLI before updating anything.
+  // If update with --context=admin fails, retry without it (PHP 8.1 admin context issues)
   if (adminContext && (jsonResult.code !== 0 || jsonResult.stdout.toLowerCase().includes('no plugins updated') || jsonResult.stdout.toLowerCase().includes('no themes updated'))) {
     log('warn', `${label} update failed with admin context — retrying without it`)
-    jsonResult = await run(wp(job, `${type} update --all --format=json`))
+    jsonResult = await run(wp(job, `${type} update --all --format=json${excludeFlag}`))
   }
 
   log('info', `${label} update raw: ${jsonResult.stdout.slice(0, 400).replace(/\n/g, ' ') || '(empty)'}`)
   const results = parseWpJson<WpUpdateEntry>(cleanJson(jsonResult.stdout))
 
-  const summary = buildUpdateSummary(available, results)
-  // Merge site-preference skips into the summary
+  const summary = buildUpdateSummary(available.filter(p => !siteSkips.includes(p.name)), results)
   summary.skipped.push(...sitePrefSkipped)
 
   for (const u of summary.updated) log('success', `${label}: ${u.title} ${u.from} → ${u.to}`)
