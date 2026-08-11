@@ -1255,18 +1255,25 @@ function UpcomingTab() {
 // ── Update Options tab ────────────────────────────────────────────────────────
 
 function UpdateOptionsTab({ site }: { site: string }) {
-  const [loading, setLoading]     = useState(false)
-  const [saving, setSaving]       = useState(false)
-  const [plugins, setPlugins]     = useState<{ name: string; title: string }[]>([])
-  const [themes, setThemes]       = useState<{ name: string; title: string }[]>([])
+  type Item = { name: string; title: string }
+  type InnerTab = 'update' | 'skipped'
+
+  const [loading, setLoading]         = useState(false)
+  const [saving, setSaving]           = useState(false)
+  const [saved, setSaved]             = useState(false)
+  const [plugins, setPlugins]         = useState<Item[]>([])
+  const [themes, setThemes]           = useState<Item[]>([])
   const [pluginSkips, setPluginSkips] = useState<Set<string>>(new Set())
   const [themeSkips, setThemeSkips]   = useState<Set<string>>(new Set())
-  const [loaded, setLoaded]       = useState(false)
-  const [savedSite, setSavedSite] = useState('')
+  const [loaded, setLoaded]           = useState(false)
+  const [savedSite, setSavedSite]     = useState('')
+  const [innerTab, setInnerTab]       = useState<InnerTab>('update')
+  const [search, setSearch]           = useState('')
 
   const load = useCallback(async () => {
     if (!site.trim()) return
     setLoading(true)
+    setSaved(false)
     try {
       const [pluginsRes, prefsRes] = await Promise.all([
         fetch(`/api/site-plugins?site=${encodeURIComponent(site.trim())}`),
@@ -1291,17 +1298,12 @@ function UpdateOptionsTab({ site }: { site: string }) {
 
   useEffect(() => { void load() }, [load])
 
-  const togglePlugin = (name: string) => setPluginSkips(prev => {
-    const next = new Set(prev)
+  const toggle = (name: string, set: Set<string>, setFn: (s: Set<string>) => void) => {
+    const next = new Set(set)
     next.has(name) ? next.delete(name) : next.add(name)
-    return next
-  })
-
-  const toggleTheme = (name: string) => setThemeSkips(prev => {
-    const next = new Set(prev)
-    next.has(name) ? next.delete(name) : next.add(name)
-    return next
-  })
+    setFn(next)
+    setSaved(false)
+  }
 
   const save = async () => {
     setSaving(true)
@@ -1311,9 +1313,72 @@ function UpdateOptionsTab({ site }: { site: string }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ plugin_skips: [...pluginSkips], theme_skips: [...themeSkips] }),
       })
+      setSaved(true)
     } finally {
       setSaving(false)
     }
+  }
+
+  // All items combined: plugins first, then themes
+  const allItems = [
+    ...plugins.map(p => ({ ...p, kind: 'plugin' as const })),
+    ...themes.map(t => ({ ...t, kind: 'theme' as const })),
+  ]
+
+  const isSkipped = (item: typeof allItems[0]) =>
+    item.kind === 'plugin' ? pluginSkips.has(item.name) : themeSkips.has(item.name)
+
+  const matchesSearch = (item: typeof allItems[0]) => {
+    if (!search.trim()) return true
+    const q = search.toLowerCase()
+    return item.title.toLowerCase().includes(q) || item.name.toLowerCase().includes(q)
+  }
+
+  const forUpdate = allItems.filter(i => !isSkipped(i) && matchesSearch(i))
+  const skipped   = allItems.filter(i =>  isSkipped(i) && matchesSearch(i))
+
+  // Skip all items currently matching the search in For Update tab
+  const skipAllMatching = () => {
+    const newPluginSkips = new Set(pluginSkips)
+    const newThemeSkips  = new Set(themeSkips)
+    forUpdate.forEach(i => i.kind === 'plugin' ? newPluginSkips.add(i.name) : newThemeSkips.add(i.name))
+    setPluginSkips(newPluginSkips)
+    setThemeSkips(newThemeSkips)
+    setSaved(false)
+  }
+
+  // Restore all items currently matching the search in Skipped tab
+  const restoreAllMatching = () => {
+    const newPluginSkips = new Set(pluginSkips)
+    const newThemeSkips  = new Set(themeSkips)
+    skipped.forEach(i => i.kind === 'plugin' ? newPluginSkips.delete(i.name) : newThemeSkips.delete(i.name))
+    setPluginSkips(newPluginSkips)
+    setThemeSkips(newThemeSkips)
+    setSaved(false)
+  }
+
+  const ItemRow = ({ item }: { item: typeof allItems[0] }) => {
+    const skippedItem = isSkipped(item)
+    return (
+      <div
+        className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-slate-700/50 cursor-pointer transition-colors"
+        onClick={() => item.kind === 'plugin'
+          ? toggle(item.name, pluginSkips, setPluginSkips)
+          : toggle(item.name, themeSkips, setThemeSkips)}
+      >
+        <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${
+          skippedItem ? 'border-orange-500/60 bg-orange-900/20' : 'border-[#FFDC28]/60 bg-[#FFDC28]/10'
+        }`}>
+          {skippedItem
+            ? <X className="w-2.5 h-2.5 text-orange-400" />
+            : <Check className="w-2.5 h-2.5 text-[#FFDC28]" />}
+        </div>
+        <span className={`text-xs font-mono flex-1 ${skippedItem ? 'text-slate-500 line-through' : 'text-slate-200'}`}>
+          {item.title}
+        </span>
+        <span className="text-xs text-slate-600 font-mono">{item.kind}</span>
+      </div>
+    )
   }
 
   return (
@@ -1322,101 +1387,98 @@ function UpdateOptionsTab({ site }: { site: string }) {
         <CardHeader
           icon={<Package className="w-5 h-5" />}
           title="Update Options"
-          description="Configure which plugins and themes to skip for this site. Applies to all staging runs — manual, scheduled, and automated."
+          description="Configure which plugins and themes to skip. Applies to all staging runs — manual, scheduled, and automated."
         />
-        <div className="px-6 py-5 space-y-5">
+        <div className="px-6 py-5 space-y-4">
+
           {/* Read-only site ID */}
-          <div className="space-y-1.5">
+          <div className="space-y-1">
             <label className="text-xs text-slate-500 font-mono">Site ID (set in Stage tab)</label>
-            <input
-              type="text"
-              value={site || '—'}
-              readOnly
-              className="w-full rounded-lg border border-slate-700 bg-slate-700/40 px-3 py-2 font-mono text-sm text-slate-500 cursor-not-allowed"
-            />
+            <input type="text" value={site || '—'} readOnly
+              className="w-full rounded-lg border border-slate-700 bg-slate-700/40 px-3 py-2 font-mono text-sm text-slate-500 cursor-not-allowed" />
           </div>
 
           {!site.trim() && (
-            <p className="text-sm text-slate-500 font-mono text-center py-4">
-              Enter a site ID in the Stage tab first
-            </p>
+            <p className="text-sm text-slate-500 font-mono text-center py-4">Enter a site ID in the Stage tab first</p>
           )}
-
           {loading && (
             <p className="text-sm text-slate-500 font-mono text-center py-4">Loading plugin list from live…</p>
           )}
 
           {loaded && !loading && (
             <>
-              {/* Plugins */}
-              <div className="space-y-2">
-                <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">
-                  Plugins — <span className="text-orange-400 normal-case">{pluginSkips.size} skipped</span>
-                </p>
-                <p className="text-xs text-slate-500 font-mono">Checked = update normally · Unchecked = always skip</p>
-                <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
-                  {plugins.length === 0 && <p className="text-xs text-slate-600 font-mono">No plugins found</p>}
-                  {plugins.map(p => (
-                    <label key={p.name} className="flex items-center gap-2.5 cursor-pointer group">
-                      <input
-                        type="checkbox"
-                        checked={!pluginSkips.has(p.name)}
-                        onChange={() => togglePlugin(p.name)}
-                        className="accent-[#FFDC28] shrink-0"
-                      />
-                      <span className={`text-xs font-mono ${pluginSkips.has(p.name) ? 'text-slate-600 line-through' : 'text-slate-200'}`}>
-                        {p.title}
-                      </span>
-                      {pluginSkips.has(p.name) && (
-                        <span className="text-xs text-orange-500/70 font-mono">skip</span>
-                      )}
-                    </label>
-                  ))}
-                </div>
+              {/* Search bar */}
+              <div className="relative">
+                <input
+                  type="text"
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  placeholder="Search plugins and themes… (e.g. elementor)"
+                  className="w-full rounded-lg border border-slate-600 bg-slate-700 pl-3 pr-8 py-2 font-mono text-sm text-white placeholder-slate-500 focus:border-[#FFDC28] focus:outline-none"
+                />
+                {search && (
+                  <button onClick={() => setSearch('')}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
               </div>
 
-              {/* Themes */}
-              {themes.length > 0 && (
-                <div className="space-y-2">
-                  <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">
-                    Themes — <span className="text-orange-400 normal-case">{themeSkips.size} skipped</span>
-                  </p>
-                  <div className="space-y-1.5">
-                    {themes.map(t => (
-                      <label key={t.name} className="flex items-center gap-2.5 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={!themeSkips.has(t.name)}
-                          onChange={() => toggleTheme(t.name)}
-                          className="accent-[#FFDC28] shrink-0"
-                        />
-                        <span className={`text-xs font-mono ${themeSkips.has(t.name) ? 'text-slate-600 line-through' : 'text-slate-200'}`}>
-                          {t.title}
-                        </span>
-                        {themeSkips.has(t.name) && (
-                          <span className="text-xs text-orange-500/70 font-mono">skip</span>
-                        )}
-                      </label>
-                    ))}
-                  </div>
-                </div>
-              )}
+              {/* Inner tabs */}
+              <div className="flex gap-1 border-b border-slate-700">
+                {([['update', `For Update (${forUpdate.length})`], ['skipped', `Skipped (${skipped.length})`]] as [InnerTab, string][]).map(([t, label]) => (
+                  <button key={t} onClick={() => setInnerTab(t)}
+                    className={`px-4 py-2 text-xs font-mono font-medium transition-colors ${
+                      innerTab === t ? 'border-b-2 border-[#FFDC28] text-[#FFDC28]' : 'text-slate-400 hover:text-slate-200'
+                    }`}>
+                    {label}
+                  </button>
+                ))}
+                <div className="flex-1" />
+                {/* Bulk action */}
+                {innerTab === 'update' && forUpdate.length > 0 && search && (
+                  <button onClick={skipAllMatching}
+                    className="px-3 py-1.5 text-xs font-mono text-orange-400 hover:text-orange-300 border border-orange-500/30 rounded mb-1 transition-colors">
+                    Skip all matching ({forUpdate.length})
+                  </button>
+                )}
+                {innerTab === 'skipped' && skipped.length > 0 && search && (
+                  <button onClick={restoreAllMatching}
+                    className="px-3 py-1.5 text-xs font-mono text-green-400 hover:text-green-300 border border-green-500/30 rounded mb-1 transition-colors">
+                    Restore all matching ({skipped.length})
+                  </button>
+                )}
+              </div>
 
-              <div className="flex gap-2 pt-2 border-t border-slate-700">
-                <button
-                  onClick={save}
-                  disabled={saving}
-                  className="rounded-lg bg-[#FFDC28] hover:bg-[#E6C625] px-4 py-2 text-sm font-semibold text-slate-900 transition-colors disabled:opacity-40"
-                >
+              {/* Item list */}
+              <div className="min-h-[200px] max-h-80 overflow-y-auto space-y-0.5">
+                {innerTab === 'update' && (
+                  forUpdate.length === 0
+                    ? <p className="text-xs text-slate-600 font-mono text-center py-8">
+                        {search ? 'No matching items in For Update' : 'All items are in the Skipped list'}
+                      </p>
+                    : forUpdate.map(i => <ItemRow key={`${i.kind}-${i.name}`} item={i} />)
+                )}
+                {innerTab === 'skipped' && (
+                  skipped.length === 0
+                    ? <p className="text-xs text-slate-600 font-mono text-center py-8">
+                        {search ? 'No matching items in Skipped' : 'Nothing is skipped — all items will be updated'}
+                      </p>
+                    : skipped.map(i => <ItemRow key={`${i.kind}-${i.name}`} item={i} />)
+                )}
+              </div>
+
+              {/* Save */}
+              <div className="flex items-center gap-3 pt-2 border-t border-slate-700">
+                <button onClick={save} disabled={saving}
+                  className="rounded-lg bg-[#FFDC28] hover:bg-[#E6C625] px-4 py-2 text-sm font-semibold text-slate-900 transition-colors disabled:opacity-40">
                   {saving ? 'Saving…' : 'Save Preferences'}
                 </button>
-                <button
-                  onClick={load}
-                  disabled={loading}
-                  className="rounded-lg border border-slate-600 px-4 py-2 text-sm text-slate-400 hover:text-white transition-colors disabled:opacity-40"
-                >
+                <button onClick={load} disabled={loading}
+                  className="rounded-lg border border-slate-600 px-4 py-2 text-sm text-slate-400 hover:text-white transition-colors disabled:opacity-40">
                   Refresh
                 </button>
+                {saved && <span className="text-xs text-green-400 font-mono">✦ Saved</span>}
               </div>
             </>
           )}
