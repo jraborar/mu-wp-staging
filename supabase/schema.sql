@@ -24,3 +24,12 @@ create index on staging_history (status);
 
 -- Row-level security (enable after configuring your service role key)
 -- alter table staging_history enable row level security;
+
+-- Per-site plugin/theme skip preferences
+-- Configure once, applies to all staging runs (manual, scheduled, automated)
+create table if not exists site_update_prefs (
+  site         text primary key,
+  plugin_skips text[] not null default '{}',
+  theme_skips  text[] not null default '{}',
+  updated_at   timestamptz not null default now()
+);

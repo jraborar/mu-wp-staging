@@ -9,7 +9,7 @@ import {
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-type Tab = 'stage' | 'history' | 'schedule' | 'upcoming'
+type Tab = 'stage' | 'history' | 'schedule' | 'upcoming' | 'options'
 
 type Cadence = 'weekly' | 'biweekly' | 'monthly' | 'bimonthly-week-of-15' | 'security-only'
 
@@ -1252,6 +1252,180 @@ function UpcomingTab() {
   )
 }
 
+// ── Update Options tab ────────────────────────────────────────────────────────
+
+function UpdateOptionsTab({ site }: { site: string }) {
+  const [loading, setLoading]     = useState(false)
+  const [saving, setSaving]       = useState(false)
+  const [plugins, setPlugins]     = useState<{ name: string; title: string }[]>([])
+  const [themes, setThemes]       = useState<{ name: string; title: string }[]>([])
+  const [pluginSkips, setPluginSkips] = useState<Set<string>>(new Set())
+  const [themeSkips, setThemeSkips]   = useState<Set<string>>(new Set())
+  const [loaded, setLoaded]       = useState(false)
+  const [savedSite, setSavedSite] = useState('')
+
+  const load = useCallback(async () => {
+    if (!site.trim()) return
+    setLoading(true)
+    try {
+      const [pluginsRes, prefsRes] = await Promise.all([
+        fetch(`/api/site-plugins?site=${encodeURIComponent(site.trim())}`),
+        fetch(`/api/prefs/${encodeURIComponent(site.trim())}`),
+      ])
+      if (pluginsRes.ok) {
+        const data = await pluginsRes.json()
+        setPlugins(data.plugins ?? [])
+        setThemes(data.themes ?? [])
+      }
+      if (prefsRes.ok) {
+        const prefs = await prefsRes.json()
+        setPluginSkips(new Set(prefs.plugin_skips ?? []))
+        setThemeSkips(new Set(prefs.theme_skips ?? []))
+      }
+      setSavedSite(site.trim())
+      setLoaded(true)
+    } finally {
+      setLoading(false)
+    }
+  }, [site])
+
+  useEffect(() => { void load() }, [load])
+
+  const togglePlugin = (name: string) => setPluginSkips(prev => {
+    const next = new Set(prev)
+    next.has(name) ? next.delete(name) : next.add(name)
+    return next
+  })
+
+  const toggleTheme = (name: string) => setThemeSkips(prev => {
+    const next = new Set(prev)
+    next.has(name) ? next.delete(name) : next.add(name)
+    return next
+  })
+
+  const save = async () => {
+    setSaving(true)
+    try {
+      await fetch(`/api/prefs/${encodeURIComponent(savedSite)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plugin_skips: [...pluginSkips], theme_skips: [...themeSkips] }),
+      })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="space-y-5">
+      <Card>
+        <CardHeader
+          icon={<Package className="w-5 h-5" />}
+          title="Update Options"
+          description="Configure which plugins and themes to skip for this site. Applies to all staging runs — manual, scheduled, and automated."
+        />
+        <div className="px-6 py-5 space-y-5">
+          {/* Read-only site ID */}
+          <div className="space-y-1.5">
+            <label className="text-xs text-slate-500 font-mono">Site ID (set in Stage tab)</label>
+            <input
+              type="text"
+              value={site || '—'}
+              readOnly
+              className="w-full rounded-lg border border-slate-700 bg-slate-700/40 px-3 py-2 font-mono text-sm text-slate-500 cursor-not-allowed"
+            />
+          </div>
+
+          {!site.trim() && (
+            <p className="text-sm text-slate-500 font-mono text-center py-4">
+              Enter a site ID in the Stage tab first
+            </p>
+          )}
+
+          {loading && (
+            <p className="text-sm text-slate-500 font-mono text-center py-4">Loading plugin list from live…</p>
+          )}
+
+          {loaded && !loading && (
+            <>
+              {/* Plugins */}
+              <div className="space-y-2">
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">
+                  Plugins — <span className="text-orange-400 normal-case">{pluginSkips.size} skipped</span>
+                </p>
+                <p className="text-xs text-slate-500 font-mono">Checked = update normally · Unchecked = always skip</p>
+                <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
+                  {plugins.length === 0 && <p className="text-xs text-slate-600 font-mono">No plugins found</p>}
+                  {plugins.map(p => (
+                    <label key={p.name} className="flex items-center gap-2.5 cursor-pointer group">
+                      <input
+                        type="checkbox"
+                        checked={!pluginSkips.has(p.name)}
+                        onChange={() => togglePlugin(p.name)}
+                        className="accent-[#FFDC28] shrink-0"
+                      />
+                      <span className={`text-xs font-mono ${pluginSkips.has(p.name) ? 'text-slate-600 line-through' : 'text-slate-200'}`}>
+                        {p.title}
+                      </span>
+                      {pluginSkips.has(p.name) && (
+                        <span className="text-xs text-orange-500/70 font-mono">skip</span>
+                      )}
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* Themes */}
+              {themes.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">
+                    Themes — <span className="text-orange-400 normal-case">{themeSkips.size} skipped</span>
+                  </p>
+                  <div className="space-y-1.5">
+                    {themes.map(t => (
+                      <label key={t.name} className="flex items-center gap-2.5 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={!themeSkips.has(t.name)}
+                          onChange={() => toggleTheme(t.name)}
+                          className="accent-[#FFDC28] shrink-0"
+                        />
+                        <span className={`text-xs font-mono ${themeSkips.has(t.name) ? 'text-slate-600 line-through' : 'text-slate-200'}`}>
+                          {t.title}
+                        </span>
+                        {themeSkips.has(t.name) && (
+                          <span className="text-xs text-orange-500/70 font-mono">skip</span>
+                        )}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex gap-2 pt-2 border-t border-slate-700">
+                <button
+                  onClick={save}
+                  disabled={saving}
+                  className="rounded-lg bg-[#FFDC28] hover:bg-[#E6C625] px-4 py-2 text-sm font-semibold text-slate-900 transition-colors disabled:opacity-40"
+                >
+                  {saving ? 'Saving…' : 'Save Preferences'}
+                </button>
+                <button
+                  onClick={load}
+                  disabled={loading}
+                  className="rounded-lg border border-slate-600 px-4 py-2 text-sm text-slate-400 hover:text-white transition-colors disabled:opacity-40"
+                >
+                  Refresh
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </Card>
+    </div>
+  )
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function Page() {
@@ -1332,6 +1506,7 @@ export default function Page() {
 
   const TABS: { key: Tab; label: string }[] = [
     { key: 'stage',    label: 'Stage' },
+    { key: 'options',  label: 'Update Options' },
     { key: 'schedule', label: 'Schedule' },
     { key: 'upcoming', label: 'Upcoming' },
     { key: 'history',  label: 'History' },
@@ -1384,15 +1559,25 @@ export default function Page() {
             <div className="px-6 py-5 space-y-4">
               <div className="space-y-1.5">
                 <label className="text-xs text-slate-400 font-mono">Site ID <span className="text-slate-600 normal-case">(Pantheon machine name or UUID — not display name)</span></label>
-                <input
-                  type="text"
-                  value={site}
-                  onChange={(e) => setSite(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && !submitting && startJob()}
-                  placeholder="my-site-name"
-                  disabled={submitting}
-                  className="w-full rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 font-mono text-sm text-white placeholder-slate-500 focus:border-[#FFDC28] focus:outline-none disabled:opacity-50"
-                />
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={site}
+                    onChange={(e) => setSite(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && !submitting && startJob()}
+                    placeholder="my-site-name"
+                    disabled={submitting}
+                    className="flex-1 rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 font-mono text-sm text-white placeholder-slate-500 focus:border-[#FFDC28] focus:outline-none disabled:opacity-50"
+                  />
+                  <button
+                    onClick={() => site.trim() && setTab('options')}
+                    disabled={!site.trim() || submitting}
+                    title="Configure per-site plugin/theme skip preferences"
+                    className="rounded-lg border border-slate-600 px-3 py-2 text-xs font-mono text-slate-400 hover:border-[#FFDC28] hover:text-[#FFDC28] transition-colors disabled:opacity-30 disabled:cursor-not-allowed shrink-0"
+                  >
+                    More Options
+                  </button>
+                </div>
               </div>
 
               <div className="space-y-2 pt-1 border-t border-slate-700">
@@ -1461,6 +1646,9 @@ export default function Page() {
             </div>
           </Card>
         )}
+
+        {/* ── Update Options tab ── */}
+        {tab === 'options' && <UpdateOptionsTab site={site} />}
 
         {/* ── History tab ── */}
         {tab === 'history' && (
