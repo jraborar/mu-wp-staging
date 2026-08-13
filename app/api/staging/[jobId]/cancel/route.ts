@@ -11,8 +11,16 @@ export async function POST(
   const job = getJob(jobId)
   if (!job) return Response.json({ error: 'Job not found' }, { status: 404 })
 
-  if (!['running', 'awaiting-approval'].includes(job.status)) {
+  if (!['running', 'awaiting-approval', 'paused'].includes(job.status)) {
     return Response.json({ error: 'Job is not cancellable' }, { status: 409 })
+  }
+
+  // Force-cancel paused jobs immediately (no pipeline to signal)
+  if (job.status === 'paused') {
+    job.status = 'cancelled'
+    job.emitter.emit('event', { type: 'complete', status: 'cancelled' })
+    job.emitter.emit('done')
+    return Response.json({ ok: true })
   }
 
   job.cancelRequested = true

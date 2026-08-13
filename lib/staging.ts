@@ -174,17 +174,41 @@ async function runPluginOrThemeUpdates(
   )
 
   const toUpdate = available.filter(p => !siteSkips.includes(p.name))
+
+  // Key guardrail: a plugin is only truly "updated" if it BOTH left the available list AND
+  // its installed version actually changed. When WP-CLI refreshes the update transient during
+  // a failed run, plugins can disappear from the available list without being installed —
+  // same version before/after = silent fail, not an update.
   const actuallyUpdated = toUpdate
-    .filter(p => !afterAvailable.has(p.name))
+    .filter(p => {
+      if (afterAvailable.has(p.name)) return false          // still needs update
+      const newVer = afterVersionMap.get(p.name)
+      return !!newVer && newVer !== p.version               // version genuinely changed
+    })
     .map(p => ({
       name:  p.name,
       title: p.title ?? p.name,
       from:  p.version ?? '?',
       to:    afterVersionMap.get(p.name) ?? '?',
     }))
+
+  // Plugins still in available list = failed to update
+  // Plugins that left available list but version unchanged = transient cleared, NOT installed
   const genuinelySkipped = toUpdate
-    .filter(p => afterAvailable.has(p.name))
-    .map(p => ({ name: p.name, title: p.title ?? p.name, reason: 'Could not be updated automatically' }))
+    .filter(p => {
+      if (afterAvailable.has(p.name)) return true           // still needs update
+      const newVer = afterVersionMap.get(p.name)
+      return !newVer || newVer === p.version                // version unchanged = false positive
+    })
+    .map(p => {
+      const newVer = afterVersionMap.get(p.name)
+      const reason = afterAvailable.has(p.name)
+        ? 'Could not be updated automatically'
+        : (!newVer || newVer === p.version)
+          ? 'Update not applied — may require license or manual install'
+          : 'Could not be updated automatically'
+      return { name: p.name, title: p.title ?? p.name, reason }
+    })
 
   // Refine skip reasons using the JSON output error entries
   const jsonResults = parseWpJson<WpUpdateEntry>(cleanJson(jsonResult.stdout))

@@ -534,6 +534,7 @@ function LiveJobCard({ job, onComplete }: { job: LiveJob; onComplete: () => void
   const label        = job.site_name ?? job.site
   const elapsedMins  = Math.floor((Date.now() - job.startedAt) / 60000)
   const isActive     = ['running', 'awaiting-approval'].includes(status)
+  const isPaused     = status === 'paused'
   const isLongRunning = elapsedMins >= 30 && status === 'running'
   const pct          = step ? Math.round((step.index / step.total) * 100) : 0
 
@@ -558,6 +559,32 @@ function LiveJobCard({ job, onComplete }: { job: LiveJob; onComplete: () => void
             <X className="w-3 h-3" />
             {cancelling ? 'Cancelling…' : 'Cancel'}
           </button>
+        )}
+        {isPaused && (
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={async () => {
+                await fetch('/api/staging', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ site: job.site }),
+                })
+              }}
+              title="Restart staging from scratch"
+              className="flex items-center gap-1 rounded border border-[#FFDC28]/40 px-2 py-0.5 text-xs text-[#FFDC28] hover:bg-[#FFDC28]/10 transition-colors"
+            >
+              ↺ Restart
+            </button>
+            <button
+              onClick={cancelJob}
+              disabled={cancelling}
+              title="Cancel and dismiss"
+              className="flex items-center gap-1 rounded border border-red-700 px-2 py-0.5 text-xs text-red-400 hover:bg-red-900/30 transition-colors disabled:opacity-40"
+            >
+              <X className="w-3 h-3" />
+              {cancelling ? '…' : 'Cancel'}
+            </button>
+          </div>
         )}
       </div>
 
