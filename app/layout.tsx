@@ -1,4 +1,6 @@
 import type { Metadata } from 'next'
+import { Toaster } from 'sonner'
+import UserMenu from '@/app/components/UserMenu'
 import './globals.css'
 
 export const metadata: Metadata = {
@@ -8,8 +10,18 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
-      <body className="antialiased">{children}</body>
+    <html lang="en" className="dark">
+      <body className="antialiased">
+        <div className="border-b border-slate-700/40 bg-slate-900/60 backdrop-blur-sm sticky top-0 z-10">
+          <div className="mx-auto flex max-w-3xl items-center justify-end px-6 py-2">
+            <UserMenu />
+          </div>
+        </div>
+
+        {children}
+
+        <Toaster theme="dark" position="bottom-right" />
+      </body>
     </html>
   )
 }
