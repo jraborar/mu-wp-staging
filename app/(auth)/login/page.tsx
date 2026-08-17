@@ -1,12 +1,18 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { login, signInWithOAuth } from '@/app/auth/actions'
 
 export default function LoginPage() {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+
+  // Surface errors handed back via ?error= (e.g. from the OAuth callback)
+  useEffect(() => {
+    const err = new URLSearchParams(window.location.search).get('error')
+    if (err) setError(err)
+  }, [])
 
   const inputCls = 'w-full rounded-lg border border-slate-600 bg-slate-700 px-3.5 py-2.5 font-mono text-sm text-white placeholder-slate-500 outline-none transition focus:border-[#FFDC28] focus:ring-1 focus:ring-[#FFDC28]'
   const btnCls   = 'w-full rounded-lg bg-[#FFDC28] px-4 py-2.5 font-mono text-sm font-semibold text-slate-900 hover:bg-[#E6C625] transition-colors disabled:opacity-50 disabled:cursor-not-allowed'

@@ -8,11 +8,16 @@ export async function GET(request: Request) {
   const next = searchParams.get('next') ?? '/'
   const origin = publicOrigin(request)
 
+  // Supabase may redirect here with a provider error instead of a code
+  const providerError = searchParams.get('error_description') || searchParams.get('error')
+
   if (code) {
     const supabase = await createClient()
     const { error } = await supabase.auth.exchangeCodeForSession(code)
     if (!error) return NextResponse.redirect(`${origin}${next}`)
+    return NextResponse.redirect(`${origin}/login?error=${encodeURIComponent(error.message)}`)
   }
 
-  return NextResponse.redirect(`${origin}/login?error=auth_callback_failed`)
+  const msg = providerError || 'No authorization code was returned from the provider'
+  return NextResponse.redirect(`${origin}/login?error=${encodeURIComponent(msg)}`)
 }
