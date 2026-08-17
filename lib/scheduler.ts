@@ -77,6 +77,14 @@ function getDaysInMonth(year: number, month: number): number {
   return new Date(year, month, 0).getDate()
 }
 
+// Snap a Manila-midnight date to the 15:00 PHT staging hour on the same Manila day.
+// weekly/biweekly candidates are built from getManilaDate (midnight); without this
+// they would fire at 00:00 instead of the intended 15:00 the other cadences use.
+function atStagingHour(date: Date): Date {
+  const { year, month, day } = getManilaMonthDay(date)
+  return manilaDate(year, month, day)
+}
+
 // Returns the Nth occurrence (1-based, or -1 for last) of dayOfWeek in the given month/year.
 function nthWeekdayInMonth(year: number, month: number, dayOfWeek: number, n: number): Date | null {
   const firstDay = manilaDate(year, month, 1)
@@ -124,7 +132,7 @@ export function computeNextOccurrence(sched: StagingSchedule, after: Date): Date
     let candidate = start
     for (let i = 0; i < 14; i++) {
       if (getDayOfWeek(candidate) === sched.day_of_week) {
-        return new Date(candidate.getTime())
+        return atStagingHour(candidate)
       }
       candidate = addDays(candidate, 1)
     }
@@ -140,7 +148,7 @@ export function computeNextOccurrence(sched: StagingSchedule, after: Date): Date
         getDayOfWeek(candidate) === sched.day_of_week &&
         weeksSince(ref, candidate) % 2 === 0
       ) {
-        return new Date(candidate.getTime())
+        return atStagingHour(candidate)
       }
       candidate = addDays(candidate, 1)
     }
