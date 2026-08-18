@@ -122,6 +122,16 @@ async function runPluginOrThemeUpdates(
 
   const available = parseWpJson<{ name: string; title?: string; version?: string }>(cleaned)
 
+  // Full BEFORE state (every installed item) so we can detect ANY version change caused by
+  // `${type} update --all` — not just entries in the pre-update "available" list, which can be
+  // incomplete right after a multidev is created (update transient not yet refreshed). Without
+  // this, plugins that update but weren't in that stale list get silently under-reported.
+  const beforeAll = parseWpJson<{ name: string; title?: string; version?: string }>(
+    cleanJson((await run(wp(job, `${type} list --fields=name,title,version --format=json`))).stdout),
+  )
+  const beforeVersionMap = new Map(beforeAll.map(p => [p.name, p.version]))
+  const titleMap = new Map(beforeAll.map(p => [p.name, p.title ?? p.name]))
+
   // Identify which available items are in the site-level skip list
   const sitePrefSkipped = available
     .filter(p => siteSkips.includes(p.name))
@@ -173,40 +183,32 @@ async function runPluginOrThemeUpdates(
     parseWpJson<{ name: string; version: string }>(cleanJson(afterAllResult.stdout)).map(p => [p.name, p.version])
   )
 
-  const toUpdate = available.filter(p => !siteSkips.includes(p.name))
+  const skipSet = new Set(siteSkips)
 
-  // Key guardrail: a plugin is only truly "updated" if it BOTH left the available list AND
-  // its installed version actually changed. When WP-CLI refreshes the update transient during
-  // a failed run, plugins can disappear from the available list without being installed —
-  // same version before/after = silent fail, not an update.
-  const actuallyUpdated = toUpdate
-    .filter(p => {
-      if (afterAvailable.has(p.name)) return false          // still needs update
-      const newVer = afterVersionMap.get(p.name)
-      return !!newVer && newVer !== p.version               // version genuinely changed
+  // Source of truth for "updated": the installed version genuinely changed (before ≠ after).
+  // This catches everything `${type} update --all` touched, including items missing from the
+  // pre-update available list. A version that did NOT change is never counted as updated.
+  const actuallyUpdated = [...afterVersionMap.entries()]
+    .filter(([name, afterVer]) => {
+      if (skipSet.has(name)) return false
+      const beforeVer = beforeVersionMap.get(name)
+      return !!beforeVer && !!afterVer && beforeVer !== afterVer
     })
-    .map(p => ({
-      name:  p.name,
-      title: p.title ?? p.name,
-      from:  p.version ?? '?',
-      to:    afterVersionMap.get(p.name) ?? '?',
+    .map(([name, afterVer]) => ({
+      name,
+      title: titleMap.get(name) ?? name,
+      from:  beforeVersionMap.get(name) ?? '?',
+      to:    afterVer,
     }))
+  const updatedNames = new Set(actuallyUpdated.map(u => u.name))
 
-  // Plugins still in available list = failed to update
-  // Plugins that left available list but version unchanged = transient cleared, NOT installed
-  const genuinelySkipped = toUpdate
-    .filter(p => {
-      if (afterAvailable.has(p.name)) return true           // still needs update
-      const newVer = afterVersionMap.get(p.name)
-      return !newVer || newVer === p.version                // version unchanged = false positive
-    })
+  // Known-to-need-an-update but did NOT change version = failed / needs manual or license.
+  const genuinelySkipped = available
+    .filter(p => !skipSet.has(p.name) && !updatedNames.has(p.name))
     .map(p => {
-      const newVer = afterVersionMap.get(p.name)
       const reason = afterAvailable.has(p.name)
         ? 'Could not be updated automatically'
-        : (!newVer || newVer === p.version)
-          ? 'Update not applied — may require license or manual install'
-          : 'Could not be updated automatically'
+        : 'Update not applied — may require license or manual install'
       return { name: p.name, title: p.title ?? p.name, reason }
     })
 
