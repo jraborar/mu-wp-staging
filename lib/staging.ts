@@ -474,10 +474,11 @@ export async function executeJob(job: StagingJob): Promise<void> {
       postStep(`✓ Removed \`${existingMu}\``)
     }
 
-    log('create', `Creating multidev ${job.multidev}...`)
-    postStep(`◈ Creating multidev \`${job.multidev}\`... _(this step typically takes a few minutes)_`)
+    log('create', `Creating multidev ${job.multidev} from live...`)
+    postStep(`◈ Creating multidev \`${job.multidev}\` from live... _(this step typically takes a few minutes)_`)
     const createResult = await runStream(
-      `terminus multidev:create ${job.site}.dev ${job.multidev} 2>&1`,
+      // Build from live so updates are tested against actual production state
+      `terminus multidev:create ${job.site}.live ${job.multidev} 2>&1`,
       (line) => log('info', line),
     )
     if (createResult.code !== 0) {
