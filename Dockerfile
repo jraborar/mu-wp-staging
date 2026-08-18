@@ -34,8 +34,10 @@ RUN curl -fsSL \
     -o /usr/local/bin/terminus-4 \
     && chmod +x /usr/local/bin/terminus-4
 
-# Wrapper: auto-selects terminus-3 for PHP ≤8.1, terminus-4 for PHP 8.2+
-RUN printf '#!/bin/sh\nPHP_VER=$(php -r "echo PHP_MAJOR_VERSION.\".\".PHP_MINOR_VERSION;")\ncase "$PHP_VER" in\n  7.*|8.0|8.1) exec php /usr/local/bin/terminus-3 "$@" ;;\n  *)            exec php /usr/local/bin/terminus-4 "$@" ;;\nesac\n' \
+# Wrapper: picks php + terminus PER COMMAND from MU_TERMINUS_PHP (the site's php_version,
+# set per-job by the app). ≤8.1 → php8.1 + terminus-3; 8.2+ → php8.2 + terminus-4.
+# No global `update-alternatives` — concurrent jobs on different PHP versions can't race.
+RUN printf '#!/bin/sh\nV="${MU_TERMINUS_PHP:-8.2}"\ncase "$V" in\n  7.*|8.0|8.1) exec php8.1 /usr/local/bin/terminus-3 "$@" ;;\n  *)           exec php8.2 /usr/local/bin/terminus-4 "$@" ;;\nesac\n' \
     > /usr/local/bin/terminus \
     && chmod +x /usr/local/bin/terminus \
     && terminus --version
