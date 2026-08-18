@@ -1,7 +1,7 @@
 import { type NextRequest } from 'next/server'
 import { createJob, getJob, type StagingJob } from '@/lib/jobStore'
 import { executeJob } from '@/lib/staging'
-import { getManilaYYMMDD } from '@/lib/timezone'
+import { getPacificYYMMDD } from '@/lib/timezone'
 
 export const runtime = 'nodejs'
 
@@ -67,7 +67,7 @@ export async function POST(request: NextRequest) {
   // Test mode: append -t to today's date → mu-YYMMDD-t (never collides with production mu-YYMMDD)
   // Custom override: explicit multidev name for ad-hoc runs
   // Default: standard mu-YYMMDD
-  const dateStr = getManilaYYMMDD()
+  const dateStr = getPacificYYMMDD()
   const multidev = testMode
     ? `mu-${dateStr}-t`
     : (typeof multidevOverride === 'string' && /^[a-z0-9-]{1,11}$/.test(multidevOverride))

@@ -132,10 +132,10 @@ const PLATFORM_LABELS: Record<Platform, string> = {
   'drupal':       'Drupal',
 }
 
-// Manila date string YYMMDD for display in the Stage tab test mode toggle
-function getManilaYYMMDD(): string {
+// US Pacific date string YYMMDD — matches how multidevs are named (see lib/timezone)
+function getPacificYYMMDD(): string {
   const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'Asia/Manila', year: '2-digit', month: '2-digit', day: '2-digit',
+    timeZone: 'America/Los_Angeles', year: '2-digit', month: '2-digit', day: '2-digit',
   }).formatToParts(new Date())
   const get = (t: string) => parts.find(p => p.type === t)?.value ?? '00'
   return `${get('year')}${get('month')}${get('day')}`
@@ -2242,7 +2242,7 @@ export default function Page() {
                   <p className="text-xs font-semibold text-slate-300 font-mono">Test Mode</p>
                   <p className="text-xs text-slate-500 font-mono mt-0.5">
                     {testMode
-                      ? `Uses mu-${getManilaYYMMDD()}-t — production mu-${getManilaYYMMDD()} stays untouched`
+                      ? `Uses mu-${getPacificYYMMDD()}-t — production mu-${getPacificYYMMDD()} stays untouched`
                       : 'Off — uses standard mu-YYMMDD (client-facing)'}
                   </p>
                 </div>
@@ -2272,7 +2272,7 @@ export default function Page() {
                     <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
                     Starting…
                   </span>
-                ) : testMode ? `Run Test Staging (mu-${getManilaYYMMDD()}-t)` : 'Run Staging Updates'}
+                ) : testMode ? `Run Test Staging (mu-${getPacificYYMMDD()}-t)` : 'Run Staging Updates'}
               </button>
             </div>
           </Card>
