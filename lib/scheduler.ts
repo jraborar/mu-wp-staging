@@ -1,4 +1,4 @@
-import { getManilaYYMMDD } from '@/lib/timezone'
+import { getPacificYYMMDD } from '@/lib/timezone'
 import { listSites, getSite } from '@/lib/sites'
 import {
   type StagingSchedule,
@@ -202,7 +202,7 @@ async function runDueJobs(): Promise<void> {
   try {
     const due = await getDueSchedules()
     for (const sched of due) {
-      const multidev = `mu-${getManilaYYMMDD()}`
+      const multidev = `mu-${getPacificYYMMDD()}`
       // Skip flags are SITE FACTS (registry) — same source runUpstreamCheck uses.
       const site = await getSite(sched.site)
       const job = createJob(sched.site, multidev, {
@@ -264,7 +264,7 @@ async function runPendingSecurityChecks(): Promise<void> {
       } catch {}
 
       if (hasUpdates) {
-        const multidev = `mu-${getManilaYYMMDD()}`
+        const multidev = `mu-${getPacificYYMMDD()}`
         const job = createJob(sched.site, multidev, {
           skipPluginsThemes: true, // security runs apply upstream only
           scheduleId: sched.id,
@@ -285,7 +285,7 @@ async function runPendingSecurityChecks(): Promise<void> {
 
 async function runUpstreamCheck(): Promise<void> {
   try {
-    const today = getManilaYYMMDD()
+    const today = getPacificYYMMDD()
     const sites = await listSites()
     const eligible = sites.filter(s => s.active && !s.skip_upstream)
     if (eligible.length === 0) return
