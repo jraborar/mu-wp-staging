@@ -18,7 +18,7 @@ export async function GET() {
   return Response.json(withNext)
 }
 
-const VALID_CADENCES: Cadence[] = ['weekly', 'biweekly', 'monthly', 'bimonthly-week-of-15', 'security-only']
+const VALID_CADENCES: Cadence[] = ['weekly', 'biweekly', 'monthly', 'bimonthly-week-of-15', 'security-only', 'once']
 
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => null)
@@ -26,7 +26,8 @@ export async function POST(request: NextRequest) {
 
   const { site, cadence, day_of_week, week_of_month, biweekly_reference_date,
           bimonthly_ref_month, bimonthly_day_of_week, security_check_enabled,
-          skip_upstream, skip_plugins_themes, deploy_days, deploy_destination } = body
+          skip_upstream, skip_plugins_themes, deploy_days, deploy_destination,
+          scheduled_for } = body
 
   if (!site || typeof site !== 'string') {
     return Response.json({ error: 'site is required' }, { status: 400 })
@@ -34,6 +35,14 @@ export async function POST(request: NextRequest) {
   if (!cadence || !VALID_CADENCES.includes(cadence)) {
     return Response.json({ error: `cadence must be one of: ${VALID_CADENCES.join(', ')}` }, { status: 400 })
   }
+  if (cadence === 'once' && !scheduled_for) {
+    return Response.json({ error: 'scheduled_for is required for a one-off (once) schedule' }, { status: 400 })
+  }
+
+  // 'once' fires at the explicit datetime; recurring cadences compute the next occurrence.
+  const nextStagingAt = cadence === 'once'
+    ? new Date(scheduled_for).toISOString()
+    : computeNextOccurrence({ cadence, day_of_week, week_of_month, biweekly_reference_date, bimonthly_ref_month, bimonthly_day_of_week } as never, new Date())?.toISOString()
 
   const record = await createSchedule({
     site,
@@ -50,7 +59,7 @@ export async function POST(request: NextRequest) {
     skip_upstream: skip_upstream ?? false,
     skip_plugins_themes: skip_plugins_themes ?? false,
     active: true,
-    next_staging_at: computeNextOccurrence({ cadence, day_of_week, week_of_month, biweekly_reference_date, bimonthly_ref_month, bimonthly_day_of_week } as never, new Date())?.toISOString(),
+    next_staging_at: nextStagingAt,
   })
 
   if (!record) return Response.json({ error: 'Failed to create schedule' }, { status: 500 })

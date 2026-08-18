@@ -11,7 +11,7 @@ import {
 
 type Tab = 'stage' | 'sites' | 'history' | 'schedule' | 'upcoming' | 'options'
 
-type Cadence = 'weekly' | 'biweekly' | 'monthly' | 'bimonthly-week-of-15' | 'security-only'
+type Cadence = 'weekly' | 'biweekly' | 'monthly' | 'bimonthly-week-of-15' | 'security-only' | 'once'
 
 interface LogEntry {
   type: 'log'
@@ -152,6 +152,7 @@ const CADENCE_LABELS: Record<Cadence, string> = {
   'monthly': 'Monthly',
   'bimonthly-week-of-15': 'Every other month (week of 15th)',
   'security-only': 'Security updates only',
+  'once': 'One-off',
 }
 
 // ── Log styling ────────────────────────────────────────────────────────────────
@@ -1171,344 +1172,192 @@ function SitesTab() {
 }
 
 function ScheduleTab() {
-  const [schedules, setSchedules]   = useState<StagingSchedule[]>([])
-  const [loading, setLoading]       = useState(true)
-  const [showForm, setShowForm]     = useState(false)
-  const [saving, setSaving]         = useState(false)
+  const [jobs, setJobs]         = useState<StagingSchedule[]>([])
+  const [loading, setLoading]   = useState(true)
+  const [showForm, setShowForm] = useState(false)
+  const [saving, setSaving]     = useState(false)
+  const [error, setError]       = useState<string | null>(null)
+  const [busy, setBusy]         = useState<string | null>(null)
 
-  // Form state
-  const [site, setSite]             = useState('')
-  const [cadence, setCadence]       = useState<Cadence>('weekly')
-  const [dayOfWeek, setDayOfWeek]   = useState(1) // Monday default
-  const [weekOfMonth, setWeekOfMonth] = useState(1)
-  const [biweeklyRef, setBiweeklyRef] = useState('')
-  const [bimonthlyRefMonth, setBimonthlyRefMonth] = useState(1)
-  const [bimonthlyDow, setBimonthlyDow] = useState(2) // Tuesday default
+  const [site, setSite]                 = useState('')
+  const [when, setWhen]                 = useState(() => `${manilaTodayDate()}T15:00`)
+  const [destination, setDestination]   = useState('live')
+  const [deployDays, setDeployDays]     = useState(2)
   const [skipUpstream, setSkipUpstream] = useState(false)
   const [skipPluginsThemes, setSkipPluginsThemes] = useState(false)
-  const [deployDays, setDeployDays] = useState(2)
-  const [destination, setDestination] = useState('live')
 
-  const loadSchedules = useCallback(async () => {
+  const inputCls = 'w-full rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 font-mono text-sm text-white placeholder-slate-500 focus:border-[#FFDC28] focus:outline-none'
+  const labelCls = 'text-xs text-slate-400 font-mono'
+
+  const load = useCallback(async () => {
     setLoading(true)
     try {
       const res = await fetch('/api/schedules')
-      if (res.ok) setSchedules(await res.json())
-    } finally {
-      setLoading(false)
-    }
+      if (res.ok) {
+        const all: StagingSchedule[] = await res.json()
+        setJobs(all.filter(s => s.cadence === 'once' && s.active !== false)
+                   .sort((a, b) => (a.next_staging_at ?? '').localeCompare(b.next_staging_at ?? '')))
+      }
+    } finally { setLoading(false) }
   }, [])
 
-  useEffect(() => { void loadSchedules() }, [loadSchedules])
+  useEffect(() => { void load() }, [load])
 
-  const saveSchedule = async () => {
-    if (!site.trim()) return
-    setSaving(true)
+  const save = async () => {
+    if (!site.trim() || !when) return
+    setSaving(true); setError(null)
     try {
-      const body: Record<string, unknown> = {
-        site: site.trim(), cadence, skip_upstream: skipUpstream,
-        skip_plugins_themes: skipPluginsThemes,
-        deploy_days: deployDays,
-        deploy_destination: destination,
-      }
-      if (cadence === 'weekly') { body.day_of_week = dayOfWeek }
-      if (cadence === 'biweekly') { body.day_of_week = dayOfWeek; body.biweekly_reference_date = biweeklyRef }
-      if (cadence === 'monthly') { body.day_of_week = dayOfWeek; body.week_of_month = weekOfMonth }
-      if (cadence === 'bimonthly-week-of-15') {
-        body.bimonthly_ref_month = bimonthlyRefMonth
-        body.bimonthly_day_of_week = bimonthlyDow
-        body.security_check_enabled = true
-      }
-      if (cadence === 'security-only') {
-        body.security_check_enabled = true
-      }
+      // The picker value is bare local time; interpret it as Manila (+08:00).
+      const iso = new Date(`${when}:00+08:00`).toISOString()
       const res = await fetch('/api/schedules', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body: JSON.stringify({
+          site: site.trim(), cadence: 'once', scheduled_for: iso,
+          deploy_destination: destination, deploy_days: deployDays,
+          skip_upstream: skipUpstream, skip_plugins_themes: skipPluginsThemes,
+        }),
       })
-      if (res.ok) {
-        setSite(''); setShowForm(false)
-        await loadSchedules()
-      }
-    } finally {
-      setSaving(false)
-    }
+      if (!res.ok) { setError((await res.json().catch(() => ({}))).error ?? `Failed (HTTP ${res.status})`); return }
+      setSite(''); setShowForm(false); await load()
+    } finally { setSaving(false) }
   }
 
-  const toggleActive = async (id: string, active: boolean) => {
-    await fetch(`/api/schedules/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ active: !active }),
-    })
-    await loadSchedules()
+  const cancelJob = async (id: string) => {
+    setBusy(id)
+    try { await fetch(`/api/schedules/${id}`, { method: 'DELETE' }); await load() }
+    finally { setBusy(null) }
   }
 
-  const deleteSchedule = async (id: string) => {
-    await fetch(`/api/schedules/${id}`, { method: 'DELETE' })
-    await loadSchedules()
+  const runNow = async (j: StagingSchedule) => {
+    setBusy(j.id)
+    try {
+      await fetch('/api/staging', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          site: j.site, deployDestination: j.deploy_destination ?? 'live', deployDays: j.deploy_days ?? 2,
+          skipUpstream: j.skip_upstream, skipPluginsThemes: j.skip_plugins_themes,
+        }),
+      })
+      // Running now consumes the one-off — remove it from the queue.
+      await fetch(`/api/schedules/${j.id}`, { method: 'DELETE' })
+      await load()
+    } finally { setBusy(null) }
   }
 
-  const formatCadenceDetail = (s: StagingSchedule) => {
-    if (s.cadence === 'weekly' && s.day_of_week != null)
-      return `Every ${DAYS[s.day_of_week]}`
-    if (s.cadence === 'biweekly' && s.day_of_week != null)
-      return `Every other ${DAYS[s.day_of_week]}`
-    if (s.cadence === 'monthly' && s.day_of_week != null && s.week_of_month != null)
-      return `${WEEKS.find(w => w.v === s.week_of_month)?.l ?? ''} ${DAYS[s.day_of_week]} of month`
-    if (s.cadence === 'bimonthly-week-of-15' && s.bimonthly_ref_month != null && s.bimonthly_day_of_week != null)
-      return `${DAYS[s.bimonthly_day_of_week]} · week of 15th · every other month (from ${MONTHS[(s.bimonthly_ref_month - 1) % 12]})`
-    if (s.cadence === 'security-only')
-      return 'Manual / security updates only'
-    return CADENCE_LABELS[s.cadence]
-  }
+  const fmt = (iso?: string) => iso
+    ? new Date(iso).toLocaleString('en-PH', { timeZone: 'Asia/Manila', weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+    : '—'
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Calendar className="w-4 h-4 text-slate-400" />
-          <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-widest">Site Schedules</h3>
+          <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-widest">One-off Stagings</h3>
         </div>
         <button
-          onClick={() => setShowForm((f) => !f)}
+          onClick={() => setShowForm(f => !f)}
           className="flex items-center gap-1.5 rounded-lg bg-[#FFDC28] hover:bg-[#E6C625] px-3 py-1.5 text-xs font-semibold text-slate-900 transition-colors"
         >
           <Plus className="w-3.5 h-3.5" />
-          Add Schedule
+          Schedule One-off
         </button>
       </div>
 
-      {/* Add form */}
+      <p className="text-xs text-slate-500">
+        Ad-hoc, single staging runs. For recurring schedules, use a site&apos;s Standing schedule in the Sites tab.
+      </p>
+
       {showForm && (
         <Card className="overflow-visible">
-          <CardHeader icon={<Calendar className="w-5 h-5" />} title="New Schedule" />
+          <CardHeader icon={<Calendar className="w-5 h-5" />} title="Schedule a one-off staging" description="Runs once at the chosen Manila time, then clears itself." />
           <div className="px-6 py-5 space-y-4">
             <div className="space-y-1.5">
-              <label className="text-xs text-slate-400 font-mono">Site ID <span className="text-slate-600 normal-case">(Pantheon machine name or UUID — not display name)</span></label>
-              <input
-                type="text"
-                value={site}
-                onChange={(e) => setSite(e.target.value)}
-                placeholder="my-site-name"
-                className="w-full rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 font-mono text-sm text-white placeholder-slate-500 focus:border-[#FFDC28] focus:outline-none"
-              />
+              <label className={labelCls}>Site ID <span className="text-slate-600 normal-case">(Pantheon machine name or UUID)</span></label>
+              <input type="text" value={site} onChange={e => setSite(e.target.value)} placeholder="my-site-name" className={inputCls} />
             </div>
-
             <div className="space-y-1.5">
-              <label className="text-xs text-slate-400 font-mono">Cadence</label>
-              <select
-                value={cadence}
-                onChange={(e) => {
-                  const c = e.target.value as Cadence
-                  setCadence(c)
-                  if (c === 'security-only') setDeployDays(1)
-                  else if (deployDays === 1) setDeployDays(2)
-                }}
-                className="w-full rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 text-sm text-white focus:border-[#FFDC28] focus:outline-none"
-              >
-                {(Object.keys(CADENCE_LABELS) as Cadence[]).map(c => (
-                  <option key={c} value={c}>{CADENCE_LABELS[c]}</option>
-                ))}
-              </select>
+              <label className={labelCls}>Stage at <span className="text-slate-600 normal-case">(Manila time)</span></label>
+              <input type="datetime-local" value={when} onChange={e => setWhen(e.target.value)} className={inputCls} />
             </div>
-
-            {/* Conditional cadence fields */}
-            {(cadence === 'weekly' || cadence === 'biweekly' || cadence === 'monthly') && (
+            <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1.5">
-                <label className="text-xs text-slate-400 font-mono">Day of week</label>
-                <select
-                  value={dayOfWeek}
-                  onChange={(e) => setDayOfWeek(Number(e.target.value))}
-                  className="w-full rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 text-sm text-white focus:border-[#FFDC28] focus:outline-none"
-                >
-                  {DAYS.map((d, i) => <option key={i} value={i}>{d}</option>)}
+                <label className={labelCls}>Deploy to</label>
+                <select value={destination} onChange={e => setDestination(e.target.value)} className={inputCls}>
+                  <option value="live">Live</option>
+                  <option value="test">Test</option>
+                  <option value="dev">Dev</option>
+                  <option value="multidev">Multidev (no deploy)</option>
                 </select>
               </div>
-            )}
-
-            {cadence === 'monthly' && (
               <div className="space-y-1.5">
-                <label className="text-xs text-slate-400 font-mono">Which occurrence</label>
-                <select
-                  value={weekOfMonth}
-                  onChange={(e) => setWeekOfMonth(Number(e.target.value))}
-                  className="w-full rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 text-sm text-white focus:border-[#FFDC28] focus:outline-none"
-                >
-                  {WEEKS.map(w => <option key={w.v} value={w.v}>{w.l}</option>)}
+                <label className={labelCls}>Deploy after</label>
+                <select value={deployDays} onChange={e => setDeployDays(Number(e.target.value))} className={inputCls}>
+                  <option value={1}>1 business day</option>
+                  <option value={2}>2 business days</option>
+                  <option value={3}>3 business days</option>
+                  <option value={5}>5 business days</option>
                 </select>
               </div>
-            )}
-
-            {cadence === 'biweekly' && (
-              <div className="space-y-1.5">
-                <label className="text-xs text-slate-400 font-mono">Reference date (week 1 anchor)</label>
-                <input
-                  type="date"
-                  value={biweeklyRef}
-                  onChange={(e) => setBiweeklyRef(e.target.value)}
-                  className="w-full rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 text-sm text-white focus:border-[#FFDC28] focus:outline-none"
-                />
-              </div>
-            )}
-
-            {cadence === 'bimonthly-week-of-15' && (
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1.5">
-                  <label className="text-xs text-slate-400 font-mono">First &quot;on&quot; month</label>
-                  <select
-                    value={bimonthlyRefMonth}
-                    onChange={(e) => setBimonthlyRefMonth(Number(e.target.value))}
-                    className="w-full rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 text-sm text-white focus:border-[#FFDC28] focus:outline-none"
-                  >
-                    {MONTHS.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
-                  </select>
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-xs text-slate-400 font-mono">Day of week (in week of 15th)</label>
-                  <select
-                    value={bimonthlyDow}
-                    onChange={(e) => setBimonthlyDow(Number(e.target.value))}
-                    className="w-full rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 text-sm text-white focus:border-[#FFDC28] focus:outline-none"
-                  >
-                    {DAYS.map((d, i) => <option key={i} value={i}>{d}</option>)}
-                  </select>
-                </div>
-              </div>
-            )}
-
-            {/* Options */}
+            </div>
             <div className="space-y-2 pt-1 border-t border-slate-700">
               <p className="text-xs text-slate-400 font-mono pt-1">Update options</p>
               <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={skipUpstream}
-                  onChange={(e) => setSkipUpstream(e.target.checked)}
-                  className="rounded border-slate-600 bg-slate-700 accent-[#FFDC28]"
-                />
+                <input type="checkbox" checked={skipUpstream} onChange={e => setSkipUpstream(e.target.checked)} className="rounded border-slate-600 bg-slate-700 accent-[#FFDC28]" />
                 Skip upstream updates
               </label>
               <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={skipPluginsThemes}
-                  onChange={(e) => setSkipPluginsThemes(e.target.checked)}
-                  className="rounded border-slate-600 bg-slate-700 accent-[#FFDC28]"
-                />
+                <input type="checkbox" checked={skipPluginsThemes} onChange={e => setSkipPluginsThemes(e.target.checked)} className="rounded border-slate-600 bg-slate-700 accent-[#FFDC28]" />
                 Skip plugins &amp; themes
               </label>
             </div>
-
-            {/* Deploy destination + days */}
-            <div className="space-y-1.5 pt-1 border-t border-slate-700">
-              <label className="text-xs text-slate-400 font-mono pt-1">Deploy to</label>
-              <select
-                value={destination}
-                onChange={(e) => setDestination(e.target.value)}
-                className="w-full rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 text-sm text-white focus:border-[#FFDC28] focus:outline-none"
-              >
-                <option value="live">Live</option>
-                <option value="test">Test</option>
-                <option value="dev">Dev</option>
-              </select>
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-xs text-slate-400 font-mono">Schedule deployment after (business days)</label>
-              <select
-                value={deployDays}
-                onChange={(e) => setDeployDays(Number(e.target.value))}
-                className="w-full rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 text-sm text-white focus:border-[#FFDC28] focus:outline-none"
-              >
-                <option value={1}>1 business day (e.g. stage Friday → deploy Monday)</option>
-                <option value={2}>2 business days (default)</option>
-                <option value={3}>3 business days</option>
-                <option value={5}>5 business days (1 week)</option>
-                <option value={3}>Pause until approved (schedules 3 days out — edit in mu-deployment)</option>
-              </select>
-            </div>
-
+            {error && <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 font-mono text-xs text-red-400">{error}</div>}
             <div className="flex gap-2 pt-2">
-              <button
-                onClick={saveSchedule}
-                disabled={saving || !site.trim()}
-                className="flex-1 rounded-lg bg-[#FFDC28] hover:bg-[#E6C625] px-4 py-2.5 text-sm font-semibold text-slate-900 transition-colors disabled:opacity-40"
-              >
-                {saving ? 'Saving…' : 'Save Schedule'}
+              <button onClick={save} disabled={saving || !site.trim() || !when}
+                className="flex-1 rounded-lg bg-[#FFDC28] hover:bg-[#E6C625] px-4 py-2.5 text-sm font-semibold text-slate-900 transition-colors disabled:opacity-40">
+                {saving ? 'Saving…' : 'Schedule'}
               </button>
-              <button
-                onClick={() => setShowForm(false)}
-                className="px-4 py-2.5 text-sm text-slate-400 hover:text-white transition-colors"
-              >
-                Cancel
-              </button>
+              <button onClick={() => setShowForm(false)} className="px-4 py-2.5 text-sm text-slate-400 hover:text-white transition-colors">Cancel</button>
             </div>
           </div>
         </Card>
       )}
 
-      {/* Schedule list */}
-      {loading && schedules.length === 0 && (
+      {loading && jobs.length === 0 && (
         <p className="text-sm text-slate-500 font-mono text-center py-6">Loading…</p>
       )}
-      {!loading && schedules.length === 0 && (
+      {!loading && jobs.length === 0 && (
         <div className="text-center py-8 space-y-2">
           <CalendarClock className="w-8 h-8 text-slate-600 mx-auto" />
-          <p className="text-sm text-slate-500">No schedules yet — add one above</p>
+          <p className="text-sm text-slate-500">No one-off stagings queued</p>
         </div>
       )}
 
-      {schedules.map((s) => {
-        const nextDate = s.next_staging_at ? new Date(s.next_staging_at) : null
-        const nextStr  = nextDate
-          ? nextDate.toLocaleDateString('en-PH', { timeZone: 'Asia/Manila', weekday: 'short', month: 'short', day: 'numeric' })
-          : '—'
-        const lastDate = s.last_staged_at ? new Date(s.last_staged_at) : null
-        const lastStr  = lastDate
-          ? lastDate.toLocaleDateString('en-PH', { timeZone: 'Asia/Manila', month: 'short', day: 'numeric' })
-          : 'Never'
-
-        return (
-          <div key={s.id} className={`rounded-xl border bg-slate-800 overflow-hidden ${s.active ? 'border-slate-700' : 'border-slate-700/50 opacity-60'}`}>
-            <div className="flex items-center gap-3 px-5 py-3">
-              <div className="flex-1 min-w-0">
-                <span className="font-mono text-sm text-white">{s.site_name ?? s.site}</span>
-                <p className="text-xs text-slate-400 mt-0.5">{formatCadenceDetail(s)}</p>
-              </div>
-              <div className="hidden sm:flex flex-col items-end text-xs text-slate-500">
-                <span>Next: <span className="text-slate-300">{nextStr}</span></span>
-                <span>Last: {lastStr}</span>
-              </div>
-              <button
-                onClick={() => toggleActive(s.id, s.active)}
-                className={`text-xs px-2 py-0.5 rounded border transition-colors ${s.active ? 'border-green-700 text-green-400 hover:bg-green-900/30' : 'border-slate-600 text-slate-500 hover:bg-slate-700'}`}
-              >
-                {s.active ? 'Active' : 'Paused'}
-              </button>
-              <button
-                onClick={() => deleteSchedule(s.id)}
-                className="text-red-500 hover:text-red-400 transition-colors"
-                title="Delete schedule"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
+      {jobs.map(j => (
+        <div key={j.id} className="rounded-xl border border-slate-700 bg-slate-800 overflow-hidden">
+          <div className="flex items-center gap-3 px-5 py-3">
+            <div className="flex-1 min-w-0">
+              <span className="font-mono text-sm text-white">{j.site_name ?? j.site}</span>
+              <p className="text-xs text-slate-400 mt-0.5">
+                {fmt(j.next_staging_at)} · → {j.deploy_destination ?? 'live'} · +{j.deploy_days ?? 2}bd
+                {(j.skip_upstream || j.skip_plugins_themes) ? ` · ${[j.skip_upstream && 'skip upstream', j.skip_plugins_themes && 'skip plugins/themes'].filter(Boolean).join(' · ')}` : ''}
+              </p>
             </div>
-            {(s.skip_upstream || s.skip_plugins_themes) && (
-              <div className="px-5 pb-3 flex gap-2">
-                {s.skip_upstream && <span className="text-xs rounded bg-slate-700 px-2 py-0.5 text-slate-400">skip upstream</span>}
-                {s.skip_plugins_themes && <span className="text-xs rounded bg-slate-700 px-2 py-0.5 text-slate-400">skip plugins/themes</span>}
-              </div>
-            )}
+            <button onClick={() => runNow(j)} disabled={busy === j.id}
+              className="rounded-lg bg-[#FFDC28] hover:bg-[#E6C625] px-2.5 py-1.5 text-xs font-semibold text-slate-900 transition-colors disabled:opacity-40">
+              Run now
+            </button>
+            <button onClick={() => cancelJob(j.id)} disabled={busy === j.id}
+              className="text-red-500 hover:text-red-400 transition-colors disabled:opacity-40" title="Cancel">
+              <Trash2 className="w-4 h-4" />
+            </button>
           </div>
-        )
-      })}
+        </div>
+      ))}
     </div>
   )
 }
-
-// ── Upcoming Tab ──────────────────────────────────────────────────────────────
 
 function toManilaDatetimeLocal(iso: string): string {
   const d = new Date(iso)

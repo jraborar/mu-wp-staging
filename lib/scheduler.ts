@@ -3,6 +3,7 @@ import { listSites, getSite } from '@/lib/sites'
 import {
   type StagingSchedule,
   getDueSchedules,
+  updateSchedule,
   updateScheduleAfterRun,
   getSecurityCheckSites,
   getPendingSecuritySites,
@@ -124,7 +125,9 @@ function weeksSince(reference: Date, target: Date): number {
 }
 
 export function computeNextOccurrence(sched: StagingSchedule, after: Date): Date | null {
-  if (sched.cadence === 'security-only') return null
+  // 'once' fires a single time at its stored next_staging_at and never recurs;
+  // 'security-only' is triggered separately, not on a cadence.
+  if (sched.cadence === 'security-only' || sched.cadence === 'once') return null
 
   const start = getManilaDate(addDays(after, 1)) // start search from tomorrow Manila
 
@@ -215,6 +218,8 @@ async function runDueJobs(): Promise<void> {
       void executeJob(job)
       const next = computeNextOccurrence(sched, new Date())
       await updateScheduleAfterRun(sched.id, next)
+      // A one-off ('once') has no next occurrence — retire it so it can't linger active.
+      if (sched.cadence === 'once') await updateSchedule(sched.id, { active: false })
       console.log(`[scheduler] Triggered staging for ${sched.site} (${multidev}); next at ${next?.toISOString() ?? 'none'}`)
     }
   } catch (err) {

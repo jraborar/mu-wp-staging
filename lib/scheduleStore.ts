@@ -8,7 +8,7 @@ function getClient(): SupabaseClient | null {
   return createClient(url, key)
 }
 
-export type Cadence = 'weekly' | 'biweekly' | 'monthly' | 'bimonthly-week-of-15' | 'security-only'
+export type Cadence = 'weekly' | 'biweekly' | 'monthly' | 'bimonthly-week-of-15' | 'security-only' | 'once'
 
 export interface StagingSchedule {
   id: string
