@@ -94,23 +94,34 @@ interface UpcomingEntry {
 }
 
 type Platform = 'wp-single' | 'wp-multisite' | 'drupal'
+type UpdateMode = 'upstream' | 'composer' | 'none'
 
 interface Site {
   site: string
   site_name?: string | null
+  site_uuid?: string | null
   platform: Platform
   parent_site?: string | null
   php_version?: string | null
   upstream?: string | null
+  update_mode: UpdateMode
   skip_upstream: boolean
   skip_plugins_themes: boolean
   deploy_days: number
   deploy_destination: 'dev' | 'test' | 'live' | 'multidev'
+  deploy_approval?: 'manual' | 'auto'
+  security_deploy_hours?: number
   vrt_paths: string[]
   active: boolean
   notes?: string | null
   created_at?: string
   updated_at?: string
+}
+
+const UPDATE_MODE_LABELS: Record<UpdateMode, string> = {
+  upstream: 'Pantheon upstream',
+  composer: 'Composer-managed',
+  none:     'No core updates',
 }
 
 const MAX_VRT_PATHS = 70
@@ -770,25 +781,28 @@ function formatStandingSchedule(s: StagingSchedule): string {
 interface SiteFormState {
   site: string
   platform: Platform
+  // update policy — SITE FACTS (write to the registry; read by runUpstreamCheck)
+  update_mode: UpdateMode
+  skip_upstream: boolean
+  skip_plugins_themes: boolean
   vrt_paths_text: string
   notes: string
-  // standing schedule
+  // standing schedule (timing) — writes to staging_schedules
   managed: boolean
   cadence: UiCadence
   day_of_week: number
   week_of_month: number
   deploy_days: number
   deploy_destination: 'dev' | 'test' | 'live' | 'multidev'
-  skip_upstream: boolean
-  skip_plugins_themes: boolean
   scheduleId: string | null
   biweekly_reference_date: string
 }
 
 const emptySiteForm: SiteFormState = {
-  site: '', platform: 'wp-single', vrt_paths_text: '', notes: '',
+  site: '', platform: 'wp-single', update_mode: 'upstream',
+  skip_upstream: false, skip_plugins_themes: false, vrt_paths_text: '', notes: '',
   managed: false, cadence: 'weekly', day_of_week: 1, week_of_month: 1,
-  deploy_days: 1, deploy_destination: 'live', skip_upstream: false, skip_plugins_themes: false,
+  deploy_days: 1, deploy_destination: 'live',
   scheduleId: null, biweekly_reference_date: '',
 }
 
@@ -833,6 +847,9 @@ function SitesTab() {
     const sched = schedules.find(x => x.site === s.site)
     setForm({
       site: s.site, platform: s.platform,
+      update_mode: s.update_mode ?? 'upstream',
+      skip_upstream: s.skip_upstream ?? false,          // site fact (registry)
+      skip_plugins_themes: s.skip_plugins_themes ?? false,
       vrt_paths_text: (s.vrt_paths ?? []).join('\n'), notes: s.notes ?? '',
       managed: Boolean(sched) && sched?.active !== false,
       cadence: storeToUiCadence(sched?.cadence),
@@ -840,8 +857,6 @@ function SitesTab() {
       week_of_month: sched?.week_of_month ?? 1,
       deploy_days: sched?.deploy_days ?? 1,
       deploy_destination: (sched?.deploy_destination as SiteFormState['deploy_destination']) ?? 'live',
-      skip_upstream: sched?.skip_upstream ?? false,
-      skip_plugins_themes: sched?.skip_plugins_themes ?? false,
       scheduleId: sched?.id ?? null,
       biweekly_reference_date: sched?.biweekly_reference_date ?? '',
     })
@@ -855,21 +870,25 @@ function SitesTab() {
       const site = form.site.trim()
       const isNew = editing === '__new__'
 
-      // 1) Site facts (identity/config only — scheduling lives on the schedule)
+      // 1) Site facts + update policy (skip flags are site facts read by runUpstreamCheck)
       const siteRes = await fetch(isNew ? '/api/sites' : `/api/sites/${encodeURIComponent(site)}`, {
         method: isNew ? 'POST' : 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ site, platform: form.platform, vrt_paths: vrtPaths, notes: form.notes.trim() || null }),
+        body: JSON.stringify({
+          site, platform: form.platform,
+          update_mode: form.update_mode,
+          skip_upstream: form.skip_upstream, skip_plugins_themes: form.skip_plugins_themes,
+          vrt_paths: vrtPaths, notes: form.notes.trim() || null,
+        }),
       })
       if (!siteRes.ok) { setError((await siteRes.json().catch(() => ({}))).error ?? `Site save failed (HTTP ${siteRes.status})`); return }
 
-      // 2) Standing schedule (create / update / deactivate)
+      // 2) Standing schedule — TIMING only (skip flags live on the site, above)
       if (form.managed) {
         const store = uiToStoreCadence(form.cadence)
         const body: Record<string, unknown> = {
           site, cadence: store, active: true,
           deploy_days: form.deploy_days, deploy_destination: form.deploy_destination,
-          skip_upstream: form.skip_upstream, skip_plugins_themes: form.skip_plugins_themes,
         }
         if (store === 'weekly' || store === 'biweekly' || store === 'monthly') body.day_of_week = form.day_of_week
         if (store === 'monthly') body.week_of_month = form.week_of_month
@@ -969,6 +988,30 @@ function SitesTab() {
               </select>
             </div>
 
+            {/* ── Update policy (site facts — apply to every run, scheduled or ad-hoc) ── */}
+            <div className="space-y-3 pt-1 border-t border-slate-700">
+              <p className="font-mono text-xs uppercase tracking-widest text-slate-400 pt-1">Update policy</p>
+              <div className="space-y-1.5">
+                <label className={labelCls}>Core updates</label>
+                <select value={form.update_mode} onChange={e => setForm(f => ({ ...f, update_mode: e.target.value as UpdateMode }))}
+                  className={inputCls}>
+                  {(Object.keys(UPDATE_MODE_LABELS) as UpdateMode[]).map(m => (
+                    <option key={m} value={m}>{UPDATE_MODE_LABELS[m]}</option>
+                  ))}
+                </select>
+              </div>
+              <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
+                <input type="checkbox" checked={form.skip_upstream} onChange={e => setForm(f => ({ ...f, skip_upstream: e.target.checked }))}
+                  className="rounded border-slate-600 bg-slate-700 accent-[#FFDC28]" />
+                Skip upstream updates
+              </label>
+              <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
+                <input type="checkbox" checked={form.skip_plugins_themes} onChange={e => setForm(f => ({ ...f, skip_plugins_themes: e.target.checked }))}
+                  className="rounded border-slate-600 bg-slate-700 accent-[#FFDC28]" />
+                Skip plugins &amp; themes
+              </label>
+            </div>
+
             {/* ── Standing schedule ── */}
             <div className="space-y-3 pt-1 border-t border-slate-700">
               <label className="flex items-center gap-2 cursor-pointer pt-1">
@@ -1034,19 +1077,6 @@ function SitesTab() {
                         <option value={5}>5 business days</option>
                       </select>
                     </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
-                      <input type="checkbox" checked={form.skip_upstream} onChange={e => setForm(f => ({ ...f, skip_upstream: e.target.checked }))}
-                        className="rounded border-slate-600 bg-slate-700 accent-[#FFDC28]" />
-                      Skip upstream updates
-                    </label>
-                    <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
-                      <input type="checkbox" checked={form.skip_plugins_themes} onChange={e => setForm(f => ({ ...f, skip_plugins_themes: e.target.checked }))}
-                        className="rounded border-slate-600 bg-slate-700 accent-[#FFDC28]" />
-                      Skip plugins &amp; themes
-                    </label>
                   </div>
                 </div>
               )}
