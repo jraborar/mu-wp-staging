@@ -1,5 +1,5 @@
 import { getManilaYYMMDD } from '@/lib/timezone'
-import { listSites } from '@/lib/sites'
+import { listSites, getSite } from '@/lib/sites'
 import {
   type StagingSchedule,
   getDueSchedules,
@@ -203,9 +203,11 @@ async function runDueJobs(): Promise<void> {
     const due = await getDueSchedules()
     for (const sched of due) {
       const multidev = `mu-${getManilaYYMMDD()}`
+      // Skip flags are SITE FACTS (registry) — same source runUpstreamCheck uses.
+      const site = await getSite(sched.site)
       const job = createJob(sched.site, multidev, {
-        skipUpstream: sched.skip_upstream,
-        skipPluginsThemes: sched.skip_plugins_themes,
+        skipUpstream: site?.skip_upstream ?? sched.skip_upstream,
+        skipPluginsThemes: site?.skip_plugins_themes ?? sched.skip_plugins_themes,
         scheduleId: sched.id,
         deployDays: sched.deploy_days,
         deployDestination: sched.deploy_destination,

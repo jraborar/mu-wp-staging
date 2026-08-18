@@ -15,18 +15,24 @@ function getClient(): SupabaseClient | null {
 
 export type Platform = 'wp-single' | 'wp-multisite' | 'drupal'
 export type DeployDestination = 'dev' | 'test' | 'live' | 'multidev'
+export type UpdateMode = 'upstream' | 'composer' | 'none'
+export type DeployApproval = 'manual' | 'auto'
 
 export interface Site {
   site: string
   site_name?: string | null
+  site_uuid?: string | null
   platform: Platform
   parent_site?: string | null
   php_version?: string | null
   upstream?: string | null
+  update_mode: UpdateMode
   skip_upstream: boolean
   skip_plugins_themes: boolean
   deploy_days: number
   deploy_destination: DeployDestination
+  deploy_approval: DeployApproval
+  security_deploy_hours: number
   vrt_paths: string[]
   active: boolean
   notes?: string | null
@@ -107,14 +113,18 @@ export async function registerSite(input: Partial<Site> & { site: string }): Pro
   const row = {
     site,
     site_name:           input.site_name          ?? meta.site_name   ?? existing?.site_name   ?? null,
+    site_uuid:           input.site_uuid          ?? existing?.site_uuid ?? null,
     platform:            input.platform           ?? existing?.platform ?? 'wp-single',
     parent_site:         input.parent_site        ?? existing?.parent_site ?? null,
     php_version:         input.php_version        ?? meta.php_version ?? existing?.php_version ?? null,
     upstream:            input.upstream           ?? meta.upstream    ?? existing?.upstream    ?? null,
+    update_mode:         input.update_mode         ?? existing?.update_mode         ?? 'upstream',
     skip_upstream:       input.skip_upstream       ?? existing?.skip_upstream       ?? false,
     skip_plugins_themes: input.skip_plugins_themes ?? existing?.skip_plugins_themes ?? false,
     deploy_days:         input.deploy_days         ?? existing?.deploy_days         ?? 1,
     deploy_destination:  input.deploy_destination  ?? existing?.deploy_destination  ?? 'live',
+    deploy_approval:     input.deploy_approval     ?? existing?.deploy_approval     ?? 'manual',
+    security_deploy_hours: input.security_deploy_hours ?? existing?.security_deploy_hours ?? 24,
     vrt_paths:           input.vrt_paths !== undefined
                            ? cleanVrtPaths(input.vrt_paths)
                            : existing?.vrt_paths ?? [],
@@ -131,8 +141,9 @@ export async function updateSite(site: string, patch: Partial<Site>): Promise<Si
   const db = getClient()
   if (!db) return null
   const allowed: (keyof Site)[] = [
-    'site_name', 'platform', 'parent_site', 'php_version', 'upstream',
-    'skip_upstream', 'skip_plugins_themes', 'deploy_days', 'deploy_destination',
+    'site_name', 'site_uuid', 'platform', 'parent_site', 'php_version', 'upstream',
+    'update_mode', 'skip_upstream', 'skip_plugins_themes',
+    'deploy_days', 'deploy_destination', 'deploy_approval', 'security_deploy_hours',
     'vrt_paths', 'active', 'notes',
   ]
   const updates: Record<string, unknown> = {}
