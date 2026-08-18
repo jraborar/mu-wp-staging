@@ -1,6 +1,6 @@
 import { type StagingJob, appendLog, finishJob, setStep, waitForApproval } from '@/lib/jobStore'
 import { run, runStream, shellEscape, cleanJson } from '@/lib/terminus'
-import { scheduleDeployment } from '@/lib/schedule'
+import { prebookDeployment, reconcileDeployment } from '@/lib/schedule'
 import {
   buildUpdateSummary,
   buildCommitMessage,
@@ -514,6 +514,10 @@ export async function executeJob(job: StagingJob): Promise<void> {
     log('success', `Multidev ${job.multidev} created`)
     postStep(`✓ Multidev \`${job.multidev}\` created`)
 
+    // Pre-book the deploy now that the source multidev exists — visible/committed
+    // without waiting for staging to finish; reconciled (kept/cancelled) at the end.
+    await prebookDeployment(job)
+
     // ── 6. Site info + upstream ───────────────────────────────────────────────
     checkCancelled(job)
     step('Checking site info')
@@ -807,12 +811,11 @@ export async function executeJob(job: StagingJob): Promise<void> {
     }
 
     finishJob(job, 'completed')
-    // Only schedule deployment if something was actually updated — no point deploying a clean run.
+    // Reconcile the pre-booked deploy: keep it if something changed, else cancel it.
     const anythingUpdated = job.upstreamUpdated || job.plugins.updated.length > 0 || job.themes.updated.length > 0
-    if (job.deployDestination !== 'multidev' && anythingUpdated) {
-      await scheduleDeployment(job)
-    } else if (!anythingUpdated) {
-      log('info', 'Nothing was updated — skipping deployment schedule')
+    if (job.deployDestination !== 'multidev') {
+      await reconcileDeployment(job, anythingUpdated)
+      if (!anythingUpdated) log('info', 'Nothing was updated — pre-booked deploy cancelled')
     }
     await finalizeStagingRecord(job.id, {
       site_name: job.site_name,
@@ -858,6 +861,8 @@ export async function executeJob(job: StagingJob): Promise<void> {
     }
 
     finishJob(job, status)
+    // Cancelled/failed staging must not leave a pre-booked deploy dangling.
+    await reconcileDeployment(job, false)
     await finalizeStagingRecord(job.id, {
       site_name: job.site_name,
       upstream: job.upstream,
