@@ -471,7 +471,10 @@ export async function executeJob(job: StagingJob): Promise<void> {
     if (existingMu) {
       log('delete', `Removing existing multidev ${existingMu}...`)
       postStep(`🗑 Removing old multidev \`${existingMu}\`...`)
-      await run(`terminus multidev:delete --yes ${job.site}.${existingMu} 2>&1`)
+      // --delete-branch is essential: without it Pantheon keeps the git branch, and the next
+      // multidev:create reuses that stale branch (carrying prior runs' plugin commits) instead
+      // of branching fresh from live — causing the multidev to drift ahead of live.
+      await run(`terminus multidev:delete --yes --delete-branch ${job.site}.${existingMu} 2>&1`)
       log('deleted', `Removed ${existingMu}`)
       postStep(`✓ Removed \`${existingMu}\``)
     }
