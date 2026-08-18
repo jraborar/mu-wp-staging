@@ -1,4 +1,5 @@
 import { getManilaYYMMDD } from '@/lib/timezone'
+import { listSites } from '@/lib/sites'
 import {
   type StagingSchedule,
   getDueSchedules,
@@ -263,7 +264,7 @@ async function runPendingSecurityChecks(): Promise<void> {
       if (hasUpdates) {
         const multidev = `mu-${getManilaYYMMDD()}`
         const job = createJob(sched.site, multidev, {
-          skipPluginsThemes: sched.skip_plugins_themes,
+          skipPluginsThemes: true, // security runs apply upstream only
           scheduleId: sched.id,
           deployDays: sched.deploy_days,
         })
@@ -277,6 +278,44 @@ async function runPendingSecurityChecks(): Promise<void> {
     }
   } catch (err) {
     console.error('[scheduler] Error in pending security checks:', err)
+  }
+}
+
+async function runUpstreamCheck(): Promise<void> {
+  try {
+    const today = getManilaYYMMDD()
+    const sites = await listSites()
+    const eligible = sites.filter(s => s.active && !s.skip_upstream)
+    if (eligible.length === 0) return
+
+    for (const site of eligible) {
+      // Skip if we already staged upstream for this site today
+      const stateKey = `upstream_staged_${site.site}`
+      const lastStaged = await getSchedulerState(stateKey)
+      if (lastStaged === today) continue
+
+      const result = await run(`terminus upstream:updates:list ${site.site}.dev --format=json 2>&1`)
+      let hasUpdates = false
+      try {
+        const entries = parseWpJson(cleanJson(result.stdout))
+        hasUpdates = Array.isArray(entries) && entries.length > 0
+      } catch {}
+
+      if (!hasUpdates) continue
+
+      const multidev = `up-${today}`
+      const job = createJob(site.site, multidev, {
+        skipUpstream: false,
+        skipPluginsThemes: true,
+        deployDays: site.deploy_days,
+        deployDestination: site.deploy_destination,
+      })
+      void executeJob(job)
+      await setSchedulerState(stateKey, today)
+      console.log(`[scheduler] Upstream updates found for ${site.site} — staging upstream only (${multidev})`)
+    }
+  } catch (err) {
+    console.error('[scheduler] Error in upstream check:', err)
   }
 }
 
@@ -295,6 +334,10 @@ export function startScheduler(): void {
   // WP.org version check — every 6 hours
   void runSecurityCheck()
   setInterval(runSecurityCheck, 6 * 60 * 60 * 1000)
+
+  // Upstream check for all active sites — every 12 hours
+  void runUpstreamCheck()
+  setInterval(runUpstreamCheck, 12 * 60 * 60 * 1000)
 
   console.log('[scheduler] Started')
 }
