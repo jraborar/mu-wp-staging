@@ -1,14 +1,18 @@
 import { type NextRequest } from 'next/server'
 import { listSchedules, createSchedule, type Cadence } from '@/lib/scheduleStore'
 import { computeNextOccurrence } from '@/lib/scheduler'
+import { listSites } from '@/lib/sites'
 
 export const runtime = 'nodejs'
 
 export async function GET() {
-  const schedules = await listSchedules()
+  const [schedules, sites] = await Promise.all([listSchedules(), listSites()])
   const now = new Date()
+  // Friendly name is the registry's source of truth (schedule rows don't carry it)
+  const nameBySite = new Map(sites.map(s => [s.site, s.site_name]))
   const withNext = schedules.map(s => ({
     ...s,
+    site_name: nameBySite.get(s.site) ?? s.site_name,
     next_staging_at: s.next_staging_at ?? computeNextOccurrence(s, now)?.toISOString() ?? null,
   }))
   return Response.json(withNext)
