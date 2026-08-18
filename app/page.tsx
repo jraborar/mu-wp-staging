@@ -75,6 +75,8 @@ interface StagingSchedule {
   security_check_enabled: boolean
   skip_upstream: boolean
   skip_plugins_themes: boolean
+  deploy_days?: number
+  deploy_destination?: string
   active: boolean
   created_at: string
   last_staged_at?: string
@@ -728,56 +730,120 @@ function LiveJobCard({ job, onComplete }: { job: LiveJob; onComplete: () => void
 
 // ── Sites Registry Tab ──────────────────────────────────────────────────────
 
+type UiCadence = 'weekly' | 'biweekly' | 'monthly' | 'custom'
+
+const UI_CADENCE_LABELS: Record<UiCadence, string> = {
+  weekly:   'Weekly',
+  biweekly: 'Bi-weekly',
+  monthly:  'Monthly',
+  custom:   'Custom (every other month, week of the 15th)',
+}
+
+// The standing-schedule store cadence 'bimonthly-week-of-15' is surfaced as "Custom".
+function storeToUiCadence(c?: string): UiCadence {
+  if (c === 'weekly' || c === 'biweekly' || c === 'monthly') return c
+  return 'custom' // bimonthly-week-of-15 (and any legacy) → Custom
+}
+function uiToStoreCadence(u: UiCadence): Cadence {
+  return u === 'custom' ? 'bimonthly-week-of-15' : u
+}
+
+// Manila-time helpers for schedule anchoring
+function manilaTodayDate(): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date())
+}
+function manilaMonth(): number {
+  return Number(new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Manila', month: 'numeric' }).format(new Date()))
+}
+
+// One-line summary of a site's standing schedule (for the card)
+function formatStandingSchedule(s: StagingSchedule): string {
+  if (s.cadence === 'weekly' && s.day_of_week != null)   return `Weekly · ${DAYS[s.day_of_week]}`
+  if (s.cadence === 'biweekly' && s.day_of_week != null) return `Bi-weekly · ${DAYS[s.day_of_week]}`
+  if (s.cadence === 'monthly' && s.day_of_week != null && s.week_of_month != null)
+    return `Monthly · ${WEEKS.find(w => w.v === s.week_of_month)?.l ?? ''} ${DAYS[s.day_of_week]}`
+  if (s.cadence === 'bimonthly-week-of-15' && s.bimonthly_day_of_week != null)
+    return `Custom · ${DAYS[s.bimonthly_day_of_week]} · every other month`
+  return CADENCE_LABELS[s.cadence] ?? s.cadence
+}
+
 interface SiteFormState {
   site: string
   platform: Platform
-  deploy_destination: 'dev' | 'test' | 'live' | 'multidev'
-  deploy_days: number
-  skip_upstream: boolean
-  skip_plugins_themes: boolean
   vrt_paths_text: string
   notes: string
+  // standing schedule
+  managed: boolean
+  cadence: UiCadence
+  day_of_week: number
+  week_of_month: number
+  deploy_days: number
+  deploy_destination: 'dev' | 'test' | 'live' | 'multidev'
+  skip_upstream: boolean
+  skip_plugins_themes: boolean
+  scheduleId: string | null
+  biweekly_reference_date: string
 }
 
 const emptySiteForm: SiteFormState = {
-  site: '', platform: 'wp-single', deploy_destination: 'live', deploy_days: 1,
-  skip_upstream: false, skip_plugins_themes: false, vrt_paths_text: '', notes: '',
+  site: '', platform: 'wp-single', vrt_paths_text: '', notes: '',
+  managed: false, cadence: 'weekly', day_of_week: 1, week_of_month: 1,
+  deploy_days: 1, deploy_destination: 'live', skip_upstream: false, skip_plugins_themes: false,
+  scheduleId: null, biweekly_reference_date: '',
 }
 
 function SitesTab() {
-  const [sites, setSites]       = useState<Site[]>([])
-  const [loading, setLoading]   = useState(true)
-  const [editing, setEditing]   = useState<string | null>(null) // site machine-name, or '__new__'
-  const [form, setForm]         = useState<SiteFormState>(emptySiteForm)
-  const [saving, setSaving]     = useState(false)
-  const [busy, setBusy]         = useState<string | null>(null)  // site id being toggled/synced/deleted
-  const [error, setError]       = useState<string | null>(null)
+  const [sites, setSites]         = useState<Site[]>([])
+  const [schedules, setSchedules] = useState<StagingSchedule[]>([])
+  const [loading, setLoading]     = useState(true)
+  const [editing, setEditing]     = useState<string | null>(null) // site machine-name, or '__new__'
+  const [form, setForm]           = useState<SiteFormState>(emptySiteForm)
+  const [saving, setSaving]       = useState(false)
+  const [busy, setBusy]           = useState<string | null>(null)
+  const [error, setError]         = useState<string | null>(null)
 
   const inputCls  = 'w-full rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 font-mono text-sm text-white placeholder-slate-500 focus:border-[#FFDC28] focus:outline-none'
   const labelCls  = 'text-xs text-slate-400 font-mono'
 
-  const loadSites = useCallback(async () => {
+  const loadAll = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await fetch('/api/sites')
-      if (res.ok) setSites(await res.json())
+      const [sr, cr] = await Promise.all([fetch('/api/sites'), fetch('/api/schedules')])
+      if (sr.ok) setSites(await sr.json())
+      if (cr.ok) setSchedules(await cr.json())
     } finally {
       setLoading(false)
     }
   }, [])
 
-  useEffect(() => { void loadSites() }, [loadSites])
+  useEffect(() => { void loadAll() }, [loadAll])
+
+  // The standing schedule for a site (≤1 active per managed site under this model)
+  const scheduleForSite = useCallback(
+    (site: string) => schedules.find(s => s.site === site && s.active !== false),
+    [schedules],
+  )
 
   const vrtPaths = form.vrt_paths_text.split('\n').map(p => p.trim()).filter(Boolean)
   const vrtOver  = vrtPaths.length > MAX_VRT_PATHS
 
   const openNew  = () => { setForm(emptySiteForm); setEditing('__new__'); setError(null) }
   const openEdit = (s: Site) => {
+    // find any schedule row (even paused) so re-enabling reuses it instead of duplicating
+    const sched = schedules.find(x => x.site === s.site)
     setForm({
-      site: s.site, platform: s.platform, deploy_destination: s.deploy_destination,
-      deploy_days: s.deploy_days, skip_upstream: s.skip_upstream,
-      skip_plugins_themes: s.skip_plugins_themes,
+      site: s.site, platform: s.platform,
       vrt_paths_text: (s.vrt_paths ?? []).join('\n'), notes: s.notes ?? '',
+      managed: Boolean(sched) && sched?.active !== false,
+      cadence: storeToUiCadence(sched?.cadence),
+      day_of_week: sched?.day_of_week ?? sched?.bimonthly_day_of_week ?? 1,
+      week_of_month: sched?.week_of_month ?? 1,
+      deploy_days: sched?.deploy_days ?? 1,
+      deploy_destination: (sched?.deploy_destination as SiteFormState['deploy_destination']) ?? 'live',
+      skip_upstream: sched?.skip_upstream ?? false,
+      skip_plugins_themes: sched?.skip_plugins_themes ?? false,
+      scheduleId: sched?.id ?? null,
+      biweekly_reference_date: sched?.biweekly_reference_date ?? '',
     })
     setEditing(s.site); setError(null)
   }
@@ -786,20 +852,40 @@ function SitesTab() {
     if (!form.site.trim() || vrtOver) return
     setSaving(true); setError(null)
     try {
-      const payload = {
-        site: form.site.trim(), platform: form.platform,
-        deploy_destination: form.deploy_destination, deploy_days: form.deploy_days,
-        skip_upstream: form.skip_upstream, skip_plugins_themes: form.skip_plugins_themes,
-        vrt_paths: vrtPaths, notes: form.notes.trim() || null,
-      }
+      const site = form.site.trim()
       const isNew = editing === '__new__'
-      const res = await fetch(isNew ? '/api/sites' : `/api/sites/${encodeURIComponent(form.site)}`, {
+
+      // 1) Site facts (identity/config only — scheduling lives on the schedule)
+      const siteRes = await fetch(isNew ? '/api/sites' : `/api/sites/${encodeURIComponent(site)}`, {
         method: isNew ? 'POST' : 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ site, platform: form.platform, vrt_paths: vrtPaths, notes: form.notes.trim() || null }),
       })
-      if (!res.ok) { setError((await res.json().catch(() => ({}))).error ?? `Failed (HTTP ${res.status})`); return }
-      setEditing(null); await loadSites()
+      if (!siteRes.ok) { setError((await siteRes.json().catch(() => ({}))).error ?? `Site save failed (HTTP ${siteRes.status})`); return }
+
+      // 2) Standing schedule (create / update / deactivate)
+      if (form.managed) {
+        const store = uiToStoreCadence(form.cadence)
+        const body: Record<string, unknown> = {
+          site, cadence: store, active: true,
+          deploy_days: form.deploy_days, deploy_destination: form.deploy_destination,
+          skip_upstream: form.skip_upstream, skip_plugins_themes: form.skip_plugins_themes,
+        }
+        if (store === 'weekly' || store === 'biweekly' || store === 'monthly') body.day_of_week = form.day_of_week
+        if (store === 'monthly') body.week_of_month = form.week_of_month
+        if (store === 'biweekly') body.biweekly_reference_date = form.biweekly_reference_date || manilaTodayDate()
+        if (store === 'bimonthly-week-of-15') { body.bimonthly_ref_month = manilaMonth(); body.bimonthly_day_of_week = form.day_of_week }
+
+        const schedRes = form.scheduleId
+          ? await fetch(`/api/schedules/${form.scheduleId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+          : await fetch('/api/schedules', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+        if (!schedRes.ok) { setError((await schedRes.json().catch(() => ({}))).error ?? `Schedule save failed (HTTP ${schedRes.status})`); return }
+      } else if (form.scheduleId) {
+        // Managed turned off — deactivate the standing schedule (preserve history)
+        await fetch(`/api/schedules/${form.scheduleId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active: false }) })
+      }
+
+      setEditing(null); await loadAll()
     } finally {
       setSaving(false)
     }
@@ -812,7 +898,7 @@ function SitesTab() {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ active: !s.active }),
       })
-      await loadSites()
+      await loadAll()
     } finally { setBusy(null) }
   }
 
@@ -824,7 +910,7 @@ function SitesTab() {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ site: s.site }),
       })
-      await loadSites()
+      await loadAll()
     } finally { setBusy(null) }
   }
 
@@ -832,7 +918,7 @@ function SitesTab() {
     setBusy(s.site)
     try {
       await fetch(`/api/sites/${encodeURIComponent(s.site)}`, { method: 'DELETE' })
-      await loadSites()
+      await loadAll()
     } finally { setBusy(null) }
   }
 
@@ -873,51 +959,97 @@ function SitesTab() {
               </div>
             )}
 
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <label className={labelCls}>Platform</label>
-                <select value={form.platform} onChange={e => setForm(f => ({ ...f, platform: e.target.value as Platform }))}
-                  className={inputCls}>
-                  {(Object.keys(PLATFORM_LABELS) as Platform[]).map(p => (
-                    <option key={p} value={p}>{PLATFORM_LABELS[p]}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="space-y-1.5">
-                <label className={labelCls}>Deploy to</label>
-                <select value={form.deploy_destination} onChange={e => setForm(f => ({ ...f, deploy_destination: e.target.value as SiteFormState['deploy_destination'] }))}
-                  className={inputCls}>
-                  <option value="live">Live</option>
-                  <option value="test">Test</option>
-                  <option value="dev">Dev</option>
-                  <option value="multidev">Multidev (no deploy)</option>
-                </select>
-              </div>
-            </div>
-
             <div className="space-y-1.5">
-              <label className={labelCls}>Deploy after (business days)</label>
-              <select value={form.deploy_days} onChange={e => setForm(f => ({ ...f, deploy_days: Number(e.target.value) }))}
+              <label className={labelCls}>Platform</label>
+              <select value={form.platform} onChange={e => setForm(f => ({ ...f, platform: e.target.value as Platform }))}
                 className={inputCls}>
-                <option value={1}>1 business day</option>
-                <option value={2}>2 business days</option>
-                <option value={3}>3 business days</option>
-                <option value={5}>5 business days (1 week)</option>
+                {(Object.keys(PLATFORM_LABELS) as Platform[]).map(p => (
+                  <option key={p} value={p}>{PLATFORM_LABELS[p]}</option>
+                ))}
               </select>
             </div>
 
-            <div className="space-y-2 pt-1 border-t border-slate-700">
-              <p className="text-xs text-slate-400 font-mono pt-1">Update defaults</p>
-              <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
-                <input type="checkbox" checked={form.skip_upstream} onChange={e => setForm(f => ({ ...f, skip_upstream: e.target.checked }))}
+            {/* ── Standing schedule ── */}
+            <div className="space-y-3 pt-1 border-t border-slate-700">
+              <label className="flex items-center gap-2 cursor-pointer pt-1">
+                <input type="checkbox" checked={form.managed} onChange={e => setForm(f => ({ ...f, managed: e.target.checked }))}
                   className="rounded border-slate-600 bg-slate-700 accent-[#FFDC28]" />
-                Skip upstream updates
+                <span className="font-mono text-xs uppercase tracking-widest text-slate-400">Standing schedule — recurring staging</span>
               </label>
-              <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
-                <input type="checkbox" checked={form.skip_plugins_themes} onChange={e => setForm(f => ({ ...f, skip_plugins_themes: e.target.checked }))}
-                  className="rounded border-slate-600 bg-slate-700 accent-[#FFDC28]" />
-                Skip plugins &amp; themes
-              </label>
+
+              {form.managed && (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <label className={labelCls}>Cadence</label>
+                      <select value={form.cadence} onChange={e => setForm(f => ({ ...f, cadence: e.target.value as UiCadence }))}
+                        className={inputCls}>
+                        {(Object.keys(UI_CADENCE_LABELS) as UiCadence[]).map(c => (
+                          <option key={c} value={c}>{c === 'custom' ? 'Custom' : UI_CADENCE_LABELS[c]}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className={labelCls}>Day of week</label>
+                      <select value={form.day_of_week} onChange={e => setForm(f => ({ ...f, day_of_week: Number(e.target.value) }))}
+                        className={inputCls}>
+                        {DAYS.map((d, i) => <option key={i} value={i}>{d}</option>)}
+                      </select>
+                    </div>
+                  </div>
+
+                  {form.cadence === 'monthly' && (
+                    <div className="space-y-1.5">
+                      <label className={labelCls}>Which occurrence</label>
+                      <select value={form.week_of_month} onChange={e => setForm(f => ({ ...f, week_of_month: Number(e.target.value) }))}
+                        className={inputCls}>
+                        {WEEKS.map(w => <option key={w.v} value={w.v}>{w.l}</option>)}
+                      </select>
+                      <p className="text-xs text-slate-500">e.g. &quot;Last&quot; + &quot;Thursday&quot; = last Thursday of each month.</p>
+                    </div>
+                  )}
+
+                  {form.cadence === 'custom' && (
+                    <p className="text-xs text-slate-500">Runs on the chosen day in the week of the 15th, every other month.</p>
+                  )}
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <label className={labelCls}>Deploy to</label>
+                      <select value={form.deploy_destination} onChange={e => setForm(f => ({ ...f, deploy_destination: e.target.value as SiteFormState['deploy_destination'] }))}
+                        className={inputCls}>
+                        <option value="live">Live</option>
+                        <option value="test">Test</option>
+                        <option value="dev">Dev</option>
+                        <option value="multidev">Multidev (no deploy)</option>
+                      </select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className={labelCls}>Deploy after</label>
+                      <select value={form.deploy_days} onChange={e => setForm(f => ({ ...f, deploy_days: Number(e.target.value) }))}
+                        className={inputCls}>
+                        <option value={1}>1 business day</option>
+                        <option value={2}>2 business days</option>
+                        <option value={3}>3 business days</option>
+                        <option value={5}>5 business days</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
+                      <input type="checkbox" checked={form.skip_upstream} onChange={e => setForm(f => ({ ...f, skip_upstream: e.target.checked }))}
+                        className="rounded border-slate-600 bg-slate-700 accent-[#FFDC28]" />
+                      Skip upstream updates
+                    </label>
+                    <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
+                      <input type="checkbox" checked={form.skip_plugins_themes} onChange={e => setForm(f => ({ ...f, skip_plugins_themes: e.target.checked }))}
+                        className="rounded border-slate-600 bg-slate-700 accent-[#FFDC28]" />
+                      Skip plugins &amp; themes
+                    </label>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="space-y-1.5 pt-1 border-t border-slate-700">
@@ -974,7 +1106,17 @@ function SitesTab() {
                 <span className="text-xs rounded bg-slate-700 px-2 py-0.5 text-slate-300">{PLATFORM_LABELS[s.platform]}</span>
                 {s.php_version && <span className="text-xs rounded bg-slate-700 px-2 py-0.5 text-slate-400">PHP {s.php_version}</span>}
                 {s.upstream && <span className="text-xs rounded bg-slate-700 px-2 py-0.5 text-slate-400">{s.upstream}</span>}
-                <span className="text-xs rounded bg-slate-700 px-2 py-0.5 text-slate-400">→ {s.deploy_destination} · +{s.deploy_days}bd</span>
+                {(() => {
+                  const sched = scheduleForSite(s.site)
+                  return sched ? (
+                    <>
+                      <span className="text-xs rounded bg-slate-700 px-2 py-0.5 text-slate-300">{formatStandingSchedule(sched)}</span>
+                      <span className="text-xs rounded bg-slate-700 px-2 py-0.5 text-slate-400">→ {sched.deploy_destination ?? 'live'} · +{sched.deploy_days ?? 1}bd</span>
+                    </>
+                  ) : (
+                    <span className="text-xs rounded bg-slate-700/50 px-2 py-0.5 text-slate-500">no schedule</span>
+                  )
+                })()}
                 {(s.vrt_paths?.length ?? 0) > 0 && <span className="text-xs rounded bg-slate-700 px-2 py-0.5 text-slate-400">{s.vrt_paths.length} VRT</span>}
               </div>
             </div>
