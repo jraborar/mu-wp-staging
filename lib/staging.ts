@@ -1,5 +1,6 @@
 import { type StagingJob, appendLog, finishJob, setStep, waitForApproval } from '@/lib/jobStore'
-import { run, runStream, shellEscape, cleanJson } from '@/lib/terminus'
+import { run, runStream, shellEscape, cleanJson, terminusPhp } from '@/lib/terminus'
+import { getSite } from '@/lib/sites'
 import { prebookDeployment, reconcileDeployment } from '@/lib/schedule'
 import {
   buildUpdateSummary,
@@ -259,6 +260,12 @@ function buildStepList(job: StagingJob): string[] {
 }
 
 export async function executeJob(job: StagingJob): Promise<void> {
+  // Bind this job's PHP context so every terminus command picks the matching php + terminus
+  // binary (per-command, no global switch). Seed from the registry; refined after env:info.
+  const registrySite = await getSite(job.site).catch(() => null)
+  const phpCtx = { php: registrySite?.php_version ?? '8.2' }
+  terminusPhp.enterWith(phpCtx)
+
   const log   = (logType: Parameters<typeof appendLog>[1], m: string) => appendLog(job, logType, m)
   const STEPS = buildStepList(job)
   const step  = (name: string) => setStep(job, name, STEPS.indexOf(name) + 1, STEPS.length)
@@ -536,20 +543,15 @@ export async function executeJob(job: StagingJob): Promise<void> {
     job.upstream = upstream
 
     const envInfoResult = await run(`terminus env:info ${env(job)} --format=json 2>&1`)
-    let phpVersion = '8.2'
+    let phpVersion = phpCtx.php
     try {
       const envData = JSON.parse(cleanJson(envInfoResult.stdout))
-      phpVersion = envData?.php_version ?? '8.2'
+      phpVersion = envData?.php_version ?? phpCtx.php
     } catch {}
-    // Switch PHP to match the site. The terminus wrapper (/usr/local/bin/terminus)
-    // auto-selects terminus-3 for PHP ≤8.1 and terminus-4 for PHP 8.2+ — no clamping needed.
-    log('info', `PHP version: ${phpVersion} — switching terminus to match`)
-    const phpSwitch = await run(`update-alternatives --set php /usr/bin/php${phpVersion} 2>&1`)
-    if (phpSwitch.code !== 0) {
-      log('warn', `Could not switch to PHP ${phpVersion} — continuing with default`)
-    } else {
-      log('info', `PHP ${phpVersion} active — terminus wrapper will use ${parseFloat(phpVersion) >= 8.2 ? 'terminus-4' : 'terminus-3'}`)
-    }
+    // Refine the PHP context from the live env. The terminus wrapper reads MU_TERMINUS_PHP
+    // per command → php8.1+terminus-3 for ≤8.1, php8.2+terminus-4 for 8.2+ (no global switch).
+    phpCtx.php = phpVersion
+    log('info', `PHP version: ${phpVersion} — terminus will use ${parseFloat(phpVersion) >= 8.2 ? 'terminus-4' : 'terminus-3'} per command`)
 
     const isWordPress = SUPPORTED_UPSTREAMS.some((u) => upstream.includes(u))
     if (!isWordPress) {

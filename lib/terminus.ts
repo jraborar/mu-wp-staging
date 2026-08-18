@@ -1,4 +1,5 @@
 import { exec, spawn } from 'child_process'
+import { AsyncLocalStorage } from 'async_hooks'
 
 export interface RunResult {
   stdout: string
@@ -7,6 +8,17 @@ export interface RunResult {
 }
 
 const ENV = { ...process.env, TERMINUS_HIDE_UPDATE_MESSAGE: '1' }
+
+// Per-job PHP context. executeJob sets this to the site's php_version (mutable so it can
+// be refined after env:info); the terminus wrapper reads MU_TERMINUS_PHP to pick the
+// matching php + terminus binary PER COMMAND — no global `update-alternatives`, no races
+// between concurrent jobs on different PHP versions.
+export const terminusPhp = new AsyncLocalStorage<{ php: string }>()
+
+function envForRun(): NodeJS.ProcessEnv {
+  const ctx = terminusPhp.getStore()
+  return ctx?.php ? { ...ENV, MU_TERMINUS_PHP: ctx.php } : ENV
+}
 
 function stripAnsi(s: string): string {
   return s.replace(/\x1B\[[0-9;]*[mGKHF]/g, '')
@@ -19,7 +31,7 @@ function isNoise(line: string): boolean {
 
 export function run(cmd: string): Promise<RunResult> {
   return new Promise((resolve) => {
-    exec(cmd, { env: ENV }, (err, stdout, stderr) => {
+    exec(cmd, { env: envForRun() }, (err, stdout, stderr) => {
       resolve({
         stdout: stripAnsi(stdout ?? ''),
         stderr: stripAnsi(stderr ?? ''),
@@ -37,7 +49,7 @@ export function runStream(
   onLine: (line: string) => void,
 ): Promise<{ code: number }> {
   return new Promise((resolve) => {
-    const child = spawn('sh', ['-c', cmd], { env: ENV })
+    const child = spawn('sh', ['-c', cmd], { env: envForRun() })
 
     const timer = setTimeout(() => {
       child.kill('SIGTERM')
