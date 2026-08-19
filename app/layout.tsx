@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import { Toaster } from 'sonner'
 import UserMenu from '@/app/components/UserMenu'
+import Footer from '@/app/components/Footer'
 import './globals.css'
 
 export const metadata: Metadata = {
@@ -19,6 +20,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </div>
 
         {children}
+
+        <Footer />
 
         <Toaster theme="dark" position="bottom-right" />
       </body>
