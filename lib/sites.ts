@@ -33,6 +33,8 @@ export interface Site {
   deploy_destination: DeployDestination
   deploy_approval: DeployApproval
   security_deploy_hours: number
+  vrt_enabled: boolean
+  vrt_threshold: number
   vrt_paths: string[]
   active: boolean
   notes?: string | null
@@ -144,7 +146,7 @@ export async function updateSite(site: string, patch: Partial<Site>): Promise<Si
     'site_name', 'site_uuid', 'platform', 'parent_site', 'php_version', 'upstream',
     'update_mode', 'skip_upstream', 'skip_plugins_themes',
     'deploy_days', 'deploy_destination', 'deploy_approval', 'security_deploy_hours',
-    'vrt_paths', 'active', 'notes',
+    'vrt_enabled', 'vrt_threshold', 'vrt_paths', 'active', 'notes',
   ]
   const updates: Record<string, unknown> = {}
   for (const k of allowed) if (k in patch && patch[k] !== undefined) updates[k] = patch[k]
