@@ -7,6 +7,10 @@ import {
   Calendar, CalendarClock, Trash2, Plus, Pause, X, Check, Globe,
 } from 'lucide-react'
 
+// mu-vrt hosts the per-site VRT config (paths + threshold). The registry rows
+// link out to it; override per environment if the service URL changes.
+const MU_VRT_URL = process.env.NEXT_PUBLIC_MU_VRT_URL || 'https://mu-vrt-production.up.railway.app'
+
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 type Tab = 'stage' | 'sites' | 'history' | 'schedule' | 'upcoming' | 'options'
@@ -1156,6 +1160,10 @@ function SitesTab() {
               <RefreshCw className={`w-4 h-4 ${busy === s.site ? 'animate-spin' : ''}`} />
             </button>
             <button onClick={() => openEdit(s)} className="text-xs text-slate-400 hover:text-white transition-colors">Edit</button>
+            <a href={`${MU_VRT_URL}/vrt/${encodeURIComponent(s.site)}`} target="_blank" rel="noopener noreferrer"
+              className="text-xs text-slate-400 hover:text-sky-300 transition-colors inline-flex items-center gap-1" title="Configure VRT (paths + threshold)">
+              <Globe className="w-3.5 h-3.5" /> VRT
+            </a>
             <button onClick={() => toggleActive(s)} disabled={busy === s.site}
               className={`text-xs px-2 py-0.5 rounded border transition-colors ${s.active ? 'border-green-700 text-green-400 hover:bg-green-900/30' : 'border-slate-600 text-slate-500 hover:bg-slate-700'}`}>
               {s.active ? 'Active' : 'Paused'}
