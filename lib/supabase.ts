@@ -121,6 +121,23 @@ export async function saveSiteUpdatePrefs(site: string, pluginSkips: string[], t
   if (error) console.error('[supabase] saveSiteUpdatePrefs:', error.message)
 }
 
+// ── VRT gate ──────────────────────────────────────────────────────────────────
+// Reads the shared `sites` registry (also written by mu-vrt) to decide whether a
+// staging run should trigger a Model-B before/after VRT comparison. Returns false
+// on any error so VRT is strictly opt-in and never blocks staging.
+export async function getSiteVrtEnabled(site: string): Promise<boolean> {
+  const db = getClient()
+  if (!db) return false
+  const { data, error } = await db
+    .from('sites')
+    .select('vrt_enabled, vrt_targets')
+    .eq('site', site)
+    .single()
+  if (error || !data) return false
+  const hasTargets = Array.isArray(data.vrt_targets) && data.vrt_targets.some((t: { path?: string }) => t?.path?.trim())
+  return Boolean(data.vrt_enabled) && hasTargets
+}
+
 // ── Queries the shared scheduled_deployments table (mu_deployment uses same Supabase project)
 // and returns the scheduled_for timestamps of all pending deployments on the given Manila date.
 export async function getScheduledDeploymentTimes(manilaDateStr: string): Promise<string[]> {
