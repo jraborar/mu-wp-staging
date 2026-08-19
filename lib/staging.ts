@@ -8,7 +8,8 @@ import {
   parseWpJson,
   type UpdateSummary,
 } from '@/lib/wordpress'
-import { createStagingRecord, finalizeStagingRecord, getSiteUpdatePrefs } from '@/lib/supabase'
+import { createStagingRecord, finalizeStagingRecord, getSiteUpdatePrefs, getSiteVrtEnabled } from '@/lib/supabase'
+import { startBaseline, finishCompare } from '@/lib/vrt'
 import {
   startStagingThread,
   postThreadStep,
@@ -530,6 +531,23 @@ export async function executeJob(job: StagingJob): Promise<void> {
     // without waiting for staging to finish; reconciled (kept/cancelled) at the end.
     await prebookDeployment(job)
 
+    // ── VRT baseline (Model B, phase 1) ───────────────────────────────────────
+    // The multidev is fresh from live and not yet touched — capture it now as the
+    // "before" state. mu-vrt self-calibrates per run on this env, so the later
+    // compare isolates exactly what the updates changed. Best-effort; a VRT
+    // failure never blocks staging.
+    if (await getSiteVrtEnabled(job.site).catch(() => false)) {
+      log('status', 'Capturing VRT baseline (pre-update)...')
+      const vrt = await startBaseline(job.site, job.multidev)
+      if (vrt) {
+        job.vrtRunId = vrt.run_id
+        job.vrtReportUrl = vrt.report_url
+        log('info', `VRT baseline started — report: ${vrt.report_url}`)
+      } else {
+        log('warn', 'VRT baseline could not be started — skipping visual regression for this run')
+      }
+    }
+
     // ── 6. Site info + upstream ───────────────────────────────────────────────
     checkCancelled(job)
     step('Checking site info')
@@ -779,6 +797,29 @@ export async function executeJob(job: StagingJob): Promise<void> {
       log('success', 'Pantheon edge cache cleared')
     }
 
+    // ── VRT compare (Model B, phase 2) ────────────────────────────────────────
+    // Capture the now-updated multidev and diff after-vs-before. Surfaces a
+    // shareable report + flagged-path count for human review; does not block.
+    let vrtSummary = ''
+    if (job.vrtRunId) {
+      step('Running VRT comparison')
+      log('status', 'Capturing VRT candidate (post-update) and diffing vs baseline...')
+      const result = await finishCompare(job.site, job.multidev, job.vrtRunId)
+      if (!result) {
+        log('warn', 'VRT comparison did not complete — see the report for status')
+        vrtSummary = job.vrtReportUrl ? `\n🔍 VRT: comparison incomplete — <${job.vrtReportUrl}|open report>` : ''
+      } else if (result.status === 'failed') {
+        log('warn', 'VRT comparison failed')
+        vrtSummary = job.vrtReportUrl ? `\n🔍 VRT: comparison failed — <${job.vrtReportUrl}|open report>` : ''
+      } else {
+        const n = result.flagged_count
+        log(n > 0 ? 'warn' : 'success', `VRT: ${n} path(s) flagged — ${job.vrtReportUrl}`)
+        vrtSummary = n > 0
+          ? `\n🔍 *VRT: ${n} path(s) flagged for review* — <${job.vrtReportUrl}|open report>`
+          : `\n🔍 VRT: no visual changes detected — <${job.vrtReportUrl}|open report>`
+      }
+    }
+
     // ── Done ─────────────────────────────────────────────────────────────────
     const upstreamNote = job.upstreamUpdated
       ? 'upstream updated, '
@@ -796,7 +837,7 @@ export async function executeJob(job: StagingJob): Promise<void> {
 
     if (job.deployDestination === 'multidev') {
       // Keep in Multidev — notify in thread, skip deployment scheduling
-      postStep(`✅ *Staging complete* — multidev \`${job.multidev}\` is ready for client review`)
+      postStep(`✅ *Staging complete* — multidev \`${job.multidev}\` is ready for client review${vrtSummary}`)
       void notifyInThread(
         slackThreadTs,
         buildMultidevReadyBlocks(siteLabel, job.multidev, job.site !== siteLabel ? job.site : undefined),
@@ -804,7 +845,7 @@ export async function executeJob(job: StagingJob): Promise<void> {
       )
     } else {
       postStep(
-        `✅ *Staging complete* — ${job.plugins.updated.length} plugin(s) · ${job.themes.updated.length} theme(s) updated`,
+        `✅ *Staging complete* — ${job.plugins.updated.length} plugin(s) · ${job.themes.updated.length} theme(s) updated${vrtSummary}`,
       )
       void notifyInThread(
         slackThreadTs,

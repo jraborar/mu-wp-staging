@@ -59,6 +59,9 @@ export interface StagingJob {
   multidevCreated: boolean
   deployDays?: number
   deployDestination?: string
+  // VRT (Model B) — set when the site has VRT enabled; baseline run id + report link
+  vrtRunId?: string
+  vrtReportUrl?: string
 }
 
 export interface CreateJobOptions {
