@@ -62,6 +62,8 @@ export interface StagingJob {
   // VRT (Model B) — set when the site has VRT enabled; baseline run id + report link
   vrtRunId?: string
   vrtReportUrl?: string
+  vrtFlaggedCount?: number | null   // flagged paths after compare (null = ran but no count)
+  vrtStatus?: 'completed' | 'failed' | 'incomplete'
 }
 
 export interface CreateJobOptions {

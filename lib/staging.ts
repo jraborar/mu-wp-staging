@@ -802,17 +802,23 @@ export async function executeJob(job: StagingJob): Promise<void> {
     // shareable report + flagged-path count for human review; does not block.
     let vrtSummary = ''
     if (job.vrtRunId) {
-      step('Running VRT comparison')
+      // Runs after the last numbered step (edge-cache clear) — show it pinned to
+      // the final index rather than resetting the progress bar to 0/N.
+      setStep(job, 'Running VRT comparison', STEPS.length, STEPS.length)
       log('status', 'Capturing VRT candidate (post-update) and diffing vs baseline...')
       const result = await finishCompare(job.site, job.multidev, job.vrtRunId)
       if (!result) {
+        job.vrtStatus = 'incomplete'
         log('warn', 'VRT comparison did not complete — see the report for status')
         vrtSummary = job.vrtReportUrl ? `\n🔍 VRT: comparison incomplete — <${job.vrtReportUrl}|open report>` : ''
       } else if (result.status === 'failed') {
+        job.vrtStatus = 'failed'
         log('warn', 'VRT comparison failed')
         vrtSummary = job.vrtReportUrl ? `\n🔍 VRT: comparison failed — <${job.vrtReportUrl}|open report>` : ''
       } else {
         const n = result.flagged_count
+        job.vrtStatus = 'completed'
+        job.vrtFlaggedCount = n
         log(n > 0 ? 'warn' : 'success', `VRT: ${n} path(s) flagged — ${job.vrtReportUrl}`)
         vrtSummary = n > 0
           ? `\n🔍 *VRT: ${n} path(s) flagged for review* — <${job.vrtReportUrl}|open report>`
@@ -877,6 +883,9 @@ export async function executeJob(job: StagingJob): Promise<void> {
       plugins_skipped: job.plugins.skipped,
       themes_updated: job.themes.updated,
       themes_skipped: job.themes.skipped,
+      vrt_report_url: job.vrtReportUrl ?? undefined,
+      vrt_flagged_count: job.vrtFlaggedCount ?? undefined,
+      vrt_status: job.vrtStatus ?? undefined,
       status: 'completed',
       completed_at: new Date().toISOString(),
       logs: job.logs,
@@ -919,6 +928,9 @@ export async function executeJob(job: StagingJob): Promise<void> {
       plugins_skipped: job.plugins.skipped,
       themes_updated: job.themes.updated,
       themes_skipped: job.themes.skipped,
+      vrt_report_url: job.vrtReportUrl ?? undefined,
+      vrt_flagged_count: job.vrtFlaggedCount ?? undefined,
+      vrt_status: job.vrtStatus ?? undefined,
       status,
       completed_at: new Date().toISOString(),
       logs: job.logs,
