@@ -3,6 +3,7 @@ import { listSites, getSite } from '@/lib/sites'
 import {
   type StagingSchedule,
   getDueSchedules,
+  listSchedules,
   updateSchedule,
   updateScheduleAfterRun,
   getSecurityCheckSites,
@@ -200,6 +201,36 @@ export function computeNextOccurrence(sched: StagingSchedule, after: Date): Date
   return null
 }
 
+// Run-now rule (PR-2): a weekly/biweekly site is "due this week" when we're in an
+// on-parity ISO week (Mon–Sun), it hasn't run this week, AND the preferred weekday
+// has ALREADY passed this week — so we fire at the next tick instead of skipping to
+// the next parity week. (When the preferred day is still ahead, next_staging_at
+// fires it on the day, so this returns false and we don't run early.) Paused weeks
+// never make up: the anchor doesn't advance, parity just rolls to the next on-week.
+export function isDueThisWeek(sched: StagingSchedule, now: Date): boolean {
+  if (sched.cadence !== 'weekly' && sched.cadence !== 'biweekly') return false
+  if (sched.day_of_week == null) return false
+
+  const thisMonday = isoWeekMonday(now)
+
+  // Already staged this ISO week (or later)? Not due.
+  if (sched.last_staged_at) {
+    const lastMonday = isoWeekMonday(new Date(sched.last_staged_at))
+    if (lastMonday.getTime() >= thisMonday.getTime()) return false
+  }
+
+  // Biweekly parity — only "on" weeks (anchored on biweekly_reference_date, which
+  // PR-1 seeds from the site's last_deployment).
+  if (sched.cadence === 'biweekly') {
+    if (!sched.biweekly_reference_date) return false
+    if (weeksSince(new Date(sched.biweekly_reference_date), now) % 2 !== 0) return false
+  }
+
+  // Only fire early when the preferred weekday already passed this week.
+  const isoIdx = (d: number) => (d + 6) % 7 // Sun=0..Sat=6 → Mon=0..Sun=6
+  return isoIdx(getDayOfWeek(now)) > isoIdx(sched.day_of_week)
+}
+
 // ── Main scheduler loop ───────────────────────────────────────────────────────
 
 let schedulerStarted = false
@@ -231,6 +262,32 @@ async function runDueJobs(): Promise<void> {
       if (sched.cadence === 'once') await updateSchedule(sched.id, { active: false })
       void broadcastText(`◈ Auto-staging *${site.machine_name ?? sched.site}* — scheduled ${sched.cadence} run (\`${multidev}\`).`)
       console.log(`[scheduler] Triggered staging for ${sched.site} (${multidev}); next at ${next?.toISOString() ?? 'none'}`)
+    }
+
+    // Run-now pass (PR-2): catch weekly/biweekly sites that are due THIS on-parity
+    // week but whose preferred weekday already passed (so next_staging_at points at
+    // the next parity week). Deduped against the pass above + same-day/in-flight runs.
+    const activeStatuses = new Set(['running', 'paused', 'awaiting-approval'])
+    const multidevToday = `mu-${getPacificYYMMDD()}`
+    const dueIds = new Set(due.map((d) => d.id))
+    const now = new Date()
+    for (const sched of await listSchedules()) {
+      if (sched.active === false || dueIds.has(sched.id)) continue
+      if (!isDueThisWeek(sched, now)) continue
+      if (getAllJobs().some((j) => j.site === sched.site && activeStatuses.has(j.status))) continue
+      if (await hasRunForMultidev(sched.site, multidevToday)) continue
+
+      const site = await getSite(sched.site)
+      const job = createJob(sched.site, multidevToday, {
+        skipUpstream: site?.skip_upstream ?? sched.skip_upstream,
+        skipPluginsThemes: site?.skip_plugins_themes ?? sched.skip_plugins_themes,
+        scheduleId: sched.id,
+        deployDays: sched.deploy_days,
+        deployDestination: sched.deploy_destination,
+      })
+      void executeJob(job)
+      await updateScheduleAfterRun(sched.id, computeNextOccurrence(sched, now))
+      console.log(`[scheduler] Run-now (due this week, preferred day passed) staging for ${sched.site} (${multidevToday})`)
     }
   } catch (err) {
     console.error('[scheduler] Error in runDueJobs:', err)
