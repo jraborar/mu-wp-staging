@@ -50,6 +50,7 @@ interface UpstreamUpdateEntry { message: string; hash?: string }
 interface HistoryItem {
   id: string
   site: string
+  machine_name?: string
   site_name?: string
   multidev: string
   upstream?: string
@@ -74,6 +75,7 @@ interface StagingSchedule {
   id: string
   site: string
   site_name?: string
+  machine_name?: string | null
   cadence: Cadence
   day_of_week?: number
   week_of_month?: number
@@ -95,6 +97,7 @@ interface UpcomingEntry {
   id: string
   site: string
   site_name?: string
+  machine_name?: string | null
   cadence: string
   at: string
   skip_upstream: boolean
@@ -106,6 +109,7 @@ type UpdateMode = 'upstream' | 'composer' | 'none'
 
 interface Site {
   site: string
+  machine_name?: string | null
   site_name?: string | null
   site_uuid?: string | null
   platform: Platform
@@ -267,6 +271,7 @@ function UpdateSection({ label, updated, skipped }: {
 }
 
 function HistoryRow({ item, vrtVisible }: { item: HistoryItem; vrtVisible: boolean }) {
+  const machineName = item.machine_name ?? item.site
   const [open, setOpen] = useState(false)
 
   const statusColors: Record<string, string> = {
@@ -297,10 +302,10 @@ function HistoryRow({ item, vrtVisible }: { item: HistoryItem; vrtVisible: boole
       <div className="flex items-start justify-between gap-3">
         <div className="truncate">
           <span className={`font-mono text-sm font-semibold ${siteColor}`}>
-            {item.site_name ?? item.site}
+            {item.site_name ?? machineName}
           </span>
           {item.site_name && (
-            <span className="ml-1.5 font-mono font-normal text-slate-500 text-xs">· {item.site}</span>
+            <span className="ml-1.5 font-mono font-normal text-slate-500 text-xs">· {machineName}</span>
           )}
         </div>
         <span className={`font-mono text-xs font-semibold shrink-0 ${siteColor}`}>
@@ -1164,8 +1169,8 @@ function SitesTab() {
         <div key={s.site} className={`rounded-xl border bg-slate-800 overflow-hidden ${s.active ? 'border-slate-700' : 'border-slate-700/50 opacity-60'}`}>
           <div className="flex items-center gap-3 px-5 py-3">
             <div className="flex-1 min-w-0">
-              <span className="font-mono text-sm text-white">{s.site_name ?? s.site}</span>
-              {s.site_name && <span className="ml-2 text-xs text-slate-500 font-mono">{s.site}</span>}
+              <span className="font-mono text-sm text-white">{s.site_name ?? s.machine_name ?? s.site}</span>
+              {s.site_name && <span className="ml-2 text-xs text-slate-500 font-mono">{s.machine_name ?? s.site}</span>}
               <div className="flex flex-wrap gap-1.5 mt-1">
                 <span className="text-xs rounded bg-slate-700 px-2 py-0.5 text-slate-300">{PLATFORM_LABELS[s.platform]}</span>
                 {s.php_version && <span className="text-xs rounded bg-slate-700 px-2 py-0.5 text-slate-400">PHP {s.php_version}</span>}
@@ -1375,7 +1380,7 @@ function ScheduleTab() {
         <div key={j.id} className="rounded-xl border border-slate-700 bg-slate-800 overflow-hidden">
           <div className="flex items-center gap-3 px-5 py-3">
             <div className="flex-1 min-w-0">
-              <span className="font-mono text-sm text-white">{j.site_name ?? j.site}</span>
+              <span className="font-mono text-sm text-white">{j.site_name ?? j.machine_name ?? j.site}</span>
               <p className="text-xs text-slate-400 mt-0.5">
                 {fmt(j.next_staging_at)} · → {j.deploy_destination ?? 'live'} · +{j.deploy_days ?? 2}bd
                 {(j.skip_upstream || j.skip_plugins_themes) ? ` · ${[j.skip_upstream && 'skip upstream', j.skip_plugins_themes && 'skip plugins/themes'].filter(Boolean).join(' · ')}` : ''}
@@ -1537,7 +1542,7 @@ function UpcomingTab() {
             <div className="flex items-start gap-3">
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="font-mono text-sm font-semibold text-white">{u.site_name ?? u.site}</span>
+                  <span className="font-mono text-sm font-semibold text-white">{u.site_name ?? u.machine_name ?? u.site}</span>
                   {isFirst && (
                     <span className="text-xs rounded border border-yellow-500/40 text-yellow-400 px-1.5 py-0.5 font-mono">next</span>
                   )}
