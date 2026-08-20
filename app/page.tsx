@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import {
   Server, Terminal, Package, Layers, CheckCircle, AlertCircle,
   ChevronDown, ChevronUp, RefreshCw, Clock, ArrowRight, Radio,
-  Calendar, CalendarClock, Trash2, Plus, Pause, X, Check, Globe,
+  Calendar, CalendarClock, Trash2, Plus, Pause, X, Check, Globe, ExternalLink,
 } from 'lucide-react'
 import Header from '@/app/components/Header'
 
@@ -62,6 +62,9 @@ interface HistoryItem {
   plugins_skipped: SkippedItem[]
   themes_updated: UpdatedItem[]
   themes_skipped: SkippedItem[]
+  vrt_report_url?: string | null
+  vrt_flagged_count?: number | null
+  vrt_status?: string | null
   status: string
   started_at: string
   completed_at: string | null
@@ -326,6 +329,31 @@ function HistoryRow({ item }: { item: HistoryItem }) {
         )}
         {!item.upstream && updatedCount === 0 && skippedCount === 0 && item.status === 'completed' && (
           <><span className="text-slate-600">·</span><span className="text-slate-500">nothing updated</span></>
+        )}
+        {item.vrt_report_url && (
+          <>
+            <span className="text-slate-600">·</span>
+            <a
+              href={item.vrt_report_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Open the shareable visual-regression report (safe to send to the customer)"
+              className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 transition-colors ${
+                (item.vrt_flagged_count ?? 0) > 0
+                  ? 'text-orange-400 hover:bg-orange-400/10'
+                  : item.vrt_status === 'completed'
+                    ? 'text-green-400 hover:bg-green-400/10'
+                    : 'text-slate-400 hover:bg-slate-400/10'
+              }`}
+            >
+              🔍 VRT: {(item.vrt_flagged_count ?? 0) > 0
+                ? `${item.vrt_flagged_count} flagged`
+                : item.vrt_status === 'completed'
+                  ? 'all clear'
+                  : 'report'}
+              <ExternalLink className="w-3 h-3" />
+            </a>
+          </>
         )}
       </div>
 

@@ -30,6 +30,9 @@ export interface StagingRecord {
   plugins_skipped: UpdateSummary['skipped']
   themes_updated: UpdateSummary['updated']
   themes_skipped: UpdateSummary['skipped']
+  vrt_report_url?: string | null
+  vrt_flagged_count?: number | null
+  vrt_status?: string | null
   status: string
   started_at: string
   completed_at: string | null
@@ -89,7 +92,7 @@ export async function listStagingHistory(limit = 30): Promise<Omit<StagingRecord
   if (!db) return []
   const { data, error } = await db
     .from('staging_history')
-    .select('id, site, site_name, multidev, upstream, upstream_updated, upstream_skipped_reason, plugins_updated, plugins_skipped, themes_updated, themes_skipped, status, started_at, completed_at')
+    .select('id, site, site_name, multidev, upstream, upstream_updated, upstream_skipped_reason, plugins_updated, plugins_skipped, themes_updated, themes_skipped, vrt_report_url, vrt_flagged_count, vrt_status, status, started_at, completed_at')
     .order('started_at', { ascending: false })
     .limit(limit)
   if (error) console.error('[supabase] listStagingHistory:', error.message)
