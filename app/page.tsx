@@ -139,8 +139,6 @@ const UPDATE_MODE_LABELS: Record<UpdateMode, string> = {
   none:     'No core updates',
 }
 
-const MAX_VRT_PATHS = 70
-
 const PLATFORM_LABELS: Record<Platform, string> = {
   'wp-single':    'WordPress',
   'wp-multisite': 'WP Multisite',
@@ -882,8 +880,8 @@ function SitesTab() {
     [schedules],
   )
 
+  // Read-only display of the VRT paths (owned by the VRT app). Not written from here.
   const vrtPaths = form.vrt_paths_text.split('\n').map(p => p.trim()).filter(Boolean)
-  const vrtOver  = vrtPaths.length > MAX_VRT_PATHS
 
   const openNew  = () => { setForm(emptySiteForm); setEditing('__new__'); setError(null) }
   const openEdit = (s: Site) => {
@@ -910,7 +908,7 @@ function SitesTab() {
   }
 
   const save = async () => {
-    if (!form.site.trim() || vrtOver) return
+    if (!form.site.trim()) return
     setSaving(true); setError(null)
     try {
       const site = form.site.trim()
@@ -924,8 +922,10 @@ function SitesTab() {
           site, platform: form.platform,
           update_mode: form.update_mode,
           skip_upstream: form.skip_upstream, skip_plugins_themes: form.skip_plugins_themes,
+          // auto_stage from #148; vrt_paths deliberately NOT sent — the VRT app
+          // owns that config now and this form only displays it.
           auto_stage: form.auto_stage,
-          vrt_paths: vrtPaths, notes: form.notes.trim() || null,
+          notes: form.notes.trim() || null,
           last_deployment: form.last_deployment ? new Date(form.last_deployment).toISOString() : null,
         }),
       })
@@ -1141,13 +1141,21 @@ function SitesTab() {
 
             <div className="space-y-1.5 pt-1 border-t border-slate-700">
               <label className={labelCls}>
-                VRT paths <span className="text-slate-600 normal-case">(one relative URL per line — e.g. <span className="font-mono">/</span>, <span className="font-mono">/about</span>)</span>
+                VRT paths <span className="text-slate-600 normal-case">(managed in the VRT app — read-only here)</span>
               </label>
-              <textarea value={form.vrt_paths_text} onChange={e => setForm(f => ({ ...f, vrt_paths_text: e.target.value }))}
-                rows={6} placeholder={'/\n/about\n/blog'} className={`${inputCls} resize-y`} />
-              <p className={`text-xs ${vrtOver ? 'text-red-400' : 'text-slate-500'}`}>
-                {vrtPaths.length} / {MAX_VRT_PATHS} paths{vrtOver ? ' — over the limit' : ''}
-              </p>
+              {vrtPaths.length > 0 ? (
+                <div className="rounded-lg border border-slate-700 bg-slate-900/40 px-3 py-2 font-mono text-xs text-slate-300 max-h-32 overflow-y-auto space-y-0.5">
+                  {vrtPaths.map((p, i) => <div key={i}>{p}</div>)}
+                </div>
+              ) : (
+                <p className="font-mono text-xs text-slate-500">No VRT paths configured.</p>
+              )}
+              {editing !== '__new__' && (
+                <a href={`${MU_VRT_URL}/vrt/${encodeURIComponent(form.site)}`} target="_blank" rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-xs text-[#FFDC28] hover:underline">
+                  Edit paths, thresholds &amp; exclusions in the VRT app <ExternalLink className="w-3 h-3" />
+                </a>
+              )}
             </div>
 
             <div className="space-y-1.5">
@@ -1168,7 +1176,7 @@ function SitesTab() {
             )}
 
             <div className="flex gap-2 pt-2">
-              <button onClick={save} disabled={saving || !form.site.trim() || vrtOver}
+              <button onClick={save} disabled={saving || !form.site.trim()}
                 className="flex-1 rounded-lg bg-[#FFDC28] hover:bg-[#E6C625] px-4 py-2.5 text-sm font-semibold text-slate-900 transition-colors disabled:opacity-40">
                 {saving ? 'Saving…' : editing === '__new__' ? 'Register Site' : 'Save Changes'}
               </button>
