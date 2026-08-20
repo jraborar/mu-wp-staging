@@ -817,17 +817,35 @@ export async function executeJob(job: StagingJob): Promise<void> {
         log('warn', 'VRT comparison did not complete — see the report for status')
         vrtSummary = job.vrtReportUrl ? `\n🔍 VRT: comparison incomplete — <${job.vrtReportUrl}|open report>` : ''
       } else if (result.status === 'failed') {
+        // Includes the case where the baseline captured nothing at all (mu-vrt
+        // fails such a run instead of parking it), so name the per-path count.
         job.vrtStatus = 'failed'
-        log('warn', 'VRT comparison failed')
-        vrtSummary = job.vrtReportUrl ? `\n🔍 VRT: comparison failed — <${job.vrtReportUrl}|open report>` : ''
+        const total  = result.results?.length ?? 0
+        const errors = result.results?.filter(r => r.error).length ?? 0
+        const detail = errors > 0 ? ` — ${errors} of ${total} path(s) could not be captured` : ''
+        log('warn', `VRT could not compare${detail}`)
+        vrtSummary = job.vrtReportUrl
+          ? `\n🔍 *VRT: no comparison ran*${detail} — <${job.vrtReportUrl}|open report>`
+          : ''
       } else {
-        const n = result.flagged_count
-        job.vrtStatus = 'completed'
+        // A path that errored is not a path that matched: it contributes 0 to
+        // flagged_count, so "0 flagged" alone cannot tell "nothing changed" from
+        // "nothing was compared". Report both numbers and only claim a clean
+        // result when every path actually produced a diff.
+        const n      = result.flagged_count
+        const total  = result.results?.length ?? 0
+        const errors = result.results?.filter(r => r.error).length ?? 0
+        job.vrtStatus = errors > 0 ? 'incomplete' : 'completed'
         job.vrtFlaggedCount = n
-        log(n > 0 ? 'warn' : 'success', `VRT: ${n} path(s) flagged — ${job.vrtReportUrl}`)
-        vrtSummary = n > 0
-          ? `\n🔍 *VRT: ${n} path(s) flagged for review* — <${job.vrtReportUrl}|open report>`
-          : `\n🔍 VRT: no visual changes detected — <${job.vrtReportUrl}|open report>`
+        log(
+          n > 0 || errors > 0 ? 'warn' : 'success',
+          `VRT: ${n} path(s) flagged, ${errors} of ${total} failed to capture — ${job.vrtReportUrl}`,
+        )
+        const parts: string[] = []
+        if (n > 0)      parts.push(`*${n} path(s) flagged for review*`)
+        if (errors > 0) parts.push(`*${errors} of ${total} path(s) failed to capture*`)
+        vrtSummary = `\n🔍 VRT: ${parts.length ? parts.join(' · ') : 'no visual changes detected'}` +
+                     ` — <${job.vrtReportUrl}|open report>`
       }
     }
 
