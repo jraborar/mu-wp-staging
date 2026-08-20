@@ -85,7 +85,7 @@ export async function prebookDeployment(job: StagingJob): Promise<void> {
     const res = await fetch(`${deployUrl}/api/schedule`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ site: job.site, source: job.multidev, destination, scheduled_for: scheduledFor, notes, consultant: 'WP Staging' }),
+      body: JSON.stringify({ site: job.site, source: job.multidev, destination, scheduled_for: scheduledFor, notes, consultant: 'WP Staging', anchor_advance: !isFastTrack(job) }),
     })
     if (res.ok) {
       appendLog(job, 'info', `Deploy pre-booked — ${job.multidev} → ${destination} on ${scheduledFor.slice(0, 10)} at ${scheduledFor.slice(11, 16)} PHT (pending staging${isFastTrack(job) ? ', fast-track' : ''})`)
