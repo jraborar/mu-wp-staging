@@ -266,7 +266,7 @@ function UpdateSection({ label, updated, skipped }: {
   )
 }
 
-function HistoryRow({ item }: { item: HistoryItem }) {
+function HistoryRow({ item, vrtVisible }: { item: HistoryItem; vrtVisible: boolean }) {
   const [open, setOpen] = useState(false)
 
   const statusColors: Record<string, string> = {
@@ -330,7 +330,7 @@ function HistoryRow({ item }: { item: HistoryItem }) {
         {!item.upstream && updatedCount === 0 && skippedCount === 0 && item.status === 'completed' && (
           <><span className="text-slate-600">·</span><span className="text-slate-500">nothing updated</span></>
         )}
-        {item.vrt_report_url && (
+        {vrtVisible && item.vrt_report_url && (
           <>
             <span className="text-slate-600">·</span>
             <a
@@ -2202,7 +2202,26 @@ export default function Page() {
                 </div>
               )}
 
-              {pastJobs.map((item) => <HistoryRow key={item.id} item={item} />)}
+              {(() => {
+                // A VRT link stays visible only on the newest run per site and for
+                // 14 days — older/superseded reports are purged by the cleanup sweep.
+                const TTL = 14 * 24 * 60 * 60 * 1000
+                const now = Date.now()
+                const latestVrt = new Map<string, { id: string; ts: number }>()
+                for (const it of pastJobs) {
+                  if (!it.vrt_report_url) continue
+                  const ts = new Date(it.started_at).getTime()
+                  const cur = latestVrt.get(it.site)
+                  if (!cur || ts > cur.ts) latestVrt.set(it.site, { id: it.id, ts })
+                }
+                return pastJobs.map((item) => {
+                  const isLatest = latestVrt.get(item.site)?.id === item.id
+                  const ref = item.completed_at ?? item.started_at
+                  const fresh = now - new Date(ref).getTime() <= TTL
+                  const vrtVisible = Boolean(item.vrt_report_url) && isLatest && fresh
+                  return <HistoryRow key={item.id} item={item} vrtVisible={vrtVisible} />
+                })
+              })()}
             </div>
           </div>
         )}

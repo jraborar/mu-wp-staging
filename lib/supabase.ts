@@ -99,6 +99,48 @@ export async function listStagingHistory(limit = 30): Promise<Omit<StagingRecord
   return data ?? []
 }
 
+// True if a staging run already exists for this site + multidev name. Used by the
+// auto upstream scan to avoid a duplicate run when the site was already staged
+// today (manual, scheduled, or security — all now use the same mu-YYMMDD name).
+export async function hasRunForMultidev(site: string, multidev: string): Promise<boolean> {
+  const db = getClient()
+  if (!db) return false
+  const { data } = await db
+    .from('staging_history')
+    .select('id')
+    .eq('site', site)
+    .eq('multidev', multidev)
+    .limit(1)
+  return (data?.length ?? 0) > 0
+}
+
+// ── VRT report link expiry ──────────────────────────────────────────────────
+// Runs with a shareable VRT report, newest first, for the cleanup sweep.
+export async function listStagingWithVrt(): Promise<
+  { id: string; site: string; started_at: string; vrt_report_url: string }[]
+> {
+  const db = getClient()
+  if (!db) return []
+  const { data, error } = await db
+    .from('staging_history')
+    .select('id, site, started_at, vrt_report_url')
+    .not('vrt_report_url', 'is', null)
+    .order('started_at', { ascending: false })
+  if (error) { console.error('[supabase] listStagingWithVrt:', error.message); return [] }
+  return (data ?? []) as { id: string; site: string; started_at: string; vrt_report_url: string }[]
+}
+
+// Null out the VRT link fields once the report is expired + its screenshots purged.
+export async function clearStagingVrt(id: string): Promise<void> {
+  const db = getClient()
+  if (!db) return
+  const { error } = await db
+    .from('staging_history')
+    .update({ vrt_report_url: null, vrt_flagged_count: null, vrt_status: null })
+    .eq('id', id)
+  if (error) console.error('[supabase] clearStagingVrt:', error.message)
+}
+
 // ── Per-site update preferences ───────────────────────────────────────────────
 
 export interface SiteUpdatePrefs {

@@ -12,10 +12,12 @@ import {
   getSchedulerState,
   setSchedulerState,
 } from '@/lib/scheduleStore'
-import { createJob } from '@/lib/jobStore'
+import { createJob, getAllJobs } from '@/lib/jobStore'
 import { executeJob } from '@/lib/staging'
 import { run, cleanJson } from '@/lib/terminus'
 import { parseWpJson } from '@/lib/wordpress'
+import { hasRunForMultidev, listStagingWithVrt, clearStagingVrt } from '@/lib/supabase'
+import { deleteVrtRun, runIdFromReportUrl } from '@/lib/vrt'
 
 // ── Next occurrence computation (Manila timezone, pure date math) ─────────────
 
@@ -295,11 +297,27 @@ async function runUpstreamCheck(): Promise<void> {
     const eligible = sites.filter(s => s.active && !s.skip_upstream)
     if (eligible.length === 0) return
 
+    const activeStatuses = new Set(['running', 'paused', 'awaiting-approval'])
+    const multidev = `mu-${today}`
+
     for (const site of eligible) {
       // Skip if we already staged upstream for this site today
       const stateKey = `upstream_staged_${site.site}`
       const lastStaged = await getSchedulerState(stateKey)
       if (lastStaged === today) continue
+
+      // Dedupe across lanes: don't create a second run when the site already has
+      // one today (manual/scheduled/security — all share the mu-YYMMDD name) or an
+      // in-flight job. This is what prevented the duplicate up-/mu- History entries.
+      if (getAllJobs().some(j => j.site === site.site && activeStatuses.has(j.status))) {
+        console.log(`[scheduler] Skipping upstream scan for ${site.site} — a run is already in flight`)
+        continue
+      }
+      if (await hasRunForMultidev(site.site, multidev)) {
+        await setSchedulerState(stateKey, today)
+        console.log(`[scheduler] Skipping upstream scan for ${site.site} — already staged today (${multidev})`)
+        continue
+      }
 
       const result = await run(`terminus upstream:updates:list ${site.site}.dev --format=json 2>&1`)
       let hasUpdates = false
@@ -310,12 +328,13 @@ async function runUpstreamCheck(): Promise<void> {
 
       if (!hasUpdates) continue
 
-      const multidev = `up-${today}`
+      // Upstream-only fast-track run — unified mu- name so slot-reclaim recognizes it.
       const job = createJob(site.site, multidev, {
         skipUpstream: false,
         skipPluginsThemes: true,
         deployDays: site.deploy_days,
         deployDestination: site.deploy_destination,
+        securityFastTrack: true,
       })
       void executeJob(job)
       await setSchedulerState(stateKey, today)
@@ -323,6 +342,35 @@ async function runUpstreamCheck(): Promise<void> {
     }
   } catch (err) {
     console.error('[scheduler] Error in upstream check:', err)
+  }
+}
+
+const VRT_LINK_TTL_MS = 14 * 24 * 60 * 60 * 1000 // 14 days
+
+// Expire shareable VRT report links: a report is stale once it's >14 days old OR
+// superseded by a newer run on the same site (a later code update). Expired reports
+// have their screenshots purged in mu-vrt and their link fields nulled here, so the
+// History tab stops offering the link.
+async function runVrtLinkExpiry(): Promise<void> {
+  try {
+    const rows = await listStagingWithVrt() // newest first
+    if (rows.length === 0) return
+    const now = Date.now()
+    const seenSite = new Set<string>()
+
+    for (const row of rows) {
+      const superseded = seenSite.has(row.site) // a newer run for this site came first
+      seenSite.add(row.site)
+      const tooOld = now - new Date(row.started_at).getTime() > VRT_LINK_TTL_MS
+      if (!superseded && !tooOld) continue
+
+      const runId = runIdFromReportUrl(row.vrt_report_url)
+      if (runId) await deleteVrtRun(runId)
+      await clearStagingVrt(row.id)
+      console.log(`[scheduler] Expired VRT report for ${row.site} (${superseded ? 'superseded' : '>14d'})`)
+    }
+  } catch (err) {
+    console.error('[scheduler] Error in VRT link expiry:', err)
   }
 }
 
@@ -345,6 +393,10 @@ export function startScheduler(): void {
   // Upstream check for all active sites — every 12 hours
   void runUpstreamCheck()
   setInterval(runUpstreamCheck, 12 * 60 * 60 * 1000)
+
+  // VRT report link expiry (14 days / superseded) — every 6 hours
+  void runVrtLinkExpiry()
+  setInterval(runVrtLinkExpiry, 6 * 60 * 60 * 1000)
 
   console.log('[scheduler] Started')
 }

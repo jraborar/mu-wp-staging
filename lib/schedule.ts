@@ -3,10 +3,11 @@ import { addBusinessDays, getManilaToday, manilaThreePM, formatAsManilaISO } fro
 import { getScheduledDeploymentTimes } from '@/lib/supabase'
 import { getSite } from '@/lib/sites'
 
-// A staging run triggered by the upstream/security auto-check uses an `up-YYMMDD`
-// multidev (see runUpstreamCheck) — those deploy on the fast-track window.
+// A staging run triggered by the upstream/security auto-scan deploys on the
+// fast-track window (now + security_deploy_hours). All runs now use the `mu-`
+// multidev name, so this is an explicit job flag rather than a name prefix.
 function isFastTrack(job: StagingJob): boolean {
-  return job.multidev.startsWith('up-')
+  return job.securityFastTrack === true
 }
 
 function buildNotes(job: StagingJob, planned = false): string {
