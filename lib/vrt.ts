@@ -21,6 +21,7 @@ export interface VrtRunResult {
   candidate_url: string | null
   diff_url: string | null
   error: string | null
+  note?: string | null   // e.g. "page height changed 3054px → 3210px"
 }
 
 export interface VrtRun {
@@ -121,9 +122,16 @@ export async function finishCompare(multidev: string, machineName: string, runId
   // The baseline capture almost always finished during the (multi-minute) update
   // cycle, but confirm it reached awaiting_candidate before comparing.
   const ready = await waitForStatus(runId, 'awaiting_candidate', { timeoutMs: 120_000 })
-  if (!ready || ready.status !== 'awaiting_candidate') {
-    console.error('[vrt] baseline never reached awaiting_candidate — skipping compare')
+  if (!ready) {
+    console.error('[vrt] baseline never reported a terminal status — skipping compare')
     return null
+  }
+  if (ready.status !== 'awaiting_candidate') {
+    // mu-vrt finalizes a baseline that captured NOTHING as 'failed' rather than
+    // parking it. Hand that run back (not null) so the caller can report why no
+    // comparison ran, per path, instead of implying one succeeded.
+    console.error(`[vrt] baseline ended '${ready.status}' — skipping compare`)
+    return ready
   }
 
   const base = multidevUrl(machineName, multidev)
