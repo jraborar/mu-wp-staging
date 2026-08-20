@@ -100,6 +100,7 @@ interface UpcomingEntry {
   machine_name?: string | null
   cadence: string
   at: string
+  due_now?: boolean   // slot already passed inside an on-cadence week — fires next tick
   skip_upstream: boolean
   skip_plugins_themes: boolean
 }
@@ -1153,7 +1154,7 @@ function SitesTab() {
               <label className={labelCls}>Last deployment <span className="text-slate-600 normal-case">(optional — cadence anchor)</span></label>
               <input type="date" value={form.last_deployment} onChange={e => setForm(f => ({ ...f, last_deployment: e.target.value }))}
                 className={inputCls} />
-              <p className="text-[0.7rem] text-slate-500 font-mono">When this site was last deployed. The recurring cadence counts from this week — set it for sites deployed before onboarding so the first run lands on the right week.</p>
+              <p className="text-[0.7rem] text-slate-500 font-mono">When this site was last deployed. The recurring cadence counts ISO weeks from this one — set it for sites deployed before onboarding so the first run lands on the right week. Left blank, the cycle counts from the schedule&apos;s creation week, which (with auto-staging on) can mean a run today.</p>
             </div>
 
             <div className="space-y-1.5">
@@ -1495,13 +1496,15 @@ function UpcomingTab() {
   }
 
   const skipOccurrence = async (u: UpcomingEntry) => {
-    // Advance next_staging_at past this occurrence so it skips to the next cycle
+    // Skip the ISO week this occurrence falls in — cadence parity is untouched, so the
+    // cycle resumes on its next on-parity week. Sending the occurrence lets a later
+    // entry (not just the first) be the one skipped.
     setSaving(true)
     try {
       await fetch(`/api/schedules/${u.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ skip_next: true }),
+        body: JSON.stringify({ skip_next: true, occurrence_at: u.at }),
       })
       setSkippingKey(null)
       void load()
@@ -1570,7 +1573,9 @@ function UpcomingTab() {
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="font-mono text-sm font-semibold text-white">{u.site_name ?? u.machine_name ?? u.site}</span>
-                  {isFirst && (
+                  {u.due_now ? (
+                    <span className="text-xs rounded border border-green-500/40 text-green-400 px-1.5 py-0.5 font-mono">due now</span>
+                  ) : isFirst && (
                     <span className="text-xs rounded border border-yellow-500/40 text-yellow-400 px-1.5 py-0.5 font-mono">next</span>
                   )}
                   {(u.skip_upstream || u.skip_plugins_themes) && (

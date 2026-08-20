@@ -6,7 +6,8 @@
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "ship": "bash scripts/ship.sh"
+    "ship": "bash scripts/ship.sh",
+    "check:cadence": "node scripts/cadence-check.ts"
   },
   "dependencies": {
     "@slack/socket-mode": "^3.0.0",

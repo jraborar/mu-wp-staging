@@ -1,7 +1,7 @@
 import { type NextRequest } from 'next/server'
 import { listSchedules, createSchedule, type Cadence } from '@/lib/scheduleStore'
-import { computeNextOccurrence } from '@/lib/scheduler'
-import { listSites } from '@/lib/sites'
+import { computeNextOccurrence } from '@/lib/cadence'
+import { listSites, getSite } from '@/lib/sites'
 
 export const runtime = 'nodejs'
 
@@ -9,14 +9,22 @@ export async function GET() {
   const [schedules, sites] = await Promise.all([listSchedules(), listSites()])
   const now = new Date()
   // Registry is the source of truth for friendly name + machine name (schedule rows
-  // carry neither; site key is the UUID).
+  // carry neither; site key is the UUID) and for the cadence anchor.
   const bySite = new Map(sites.map(s => [s.site, s]))
-  const withNext = schedules.map(s => ({
-    ...s,
-    site_name: bySite.get(s.site)?.site_name ?? s.site_name,
-    machine_name: bySite.get(s.site)?.machine_name ?? null,
-    next_staging_at: s.next_staging_at ?? computeNextOccurrence(s, now)?.toISOString() ?? null,
-  }))
+  const withNext = schedules.map(s => {
+    const site = bySite.get(s.site)
+    // Recompute rather than trust the stored projection — the anchor moves whenever a
+    // cycle completes, so a stored next_staging_at can be a cycle out of date.
+    const projected = s.cadence === 'once'
+      ? s.next_staging_at ?? null
+      : s.override_at ?? computeNextOccurrence(s, now, site?.last_deployment)?.toISOString() ?? null
+    return {
+      ...s,
+      site_name: site?.site_name ?? s.site_name,
+      machine_name: site?.machine_name ?? null,
+      next_staging_at: projected,
+    }
+  })
   return Response.json(withNext)
 }
 
@@ -41,10 +49,19 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: 'scheduled_for is required for a one-off (once) schedule' }, { status: 400 })
   }
 
-  // 'once' fires at the explicit datetime; recurring cadences compute the next occurrence.
+  // 'once' fires at the explicit datetime; recurring cadences project the next
+  // occurrence off the site's cadence anchor (`sites.last_deployment`). Note this is
+  // display only — if the current ISO week is already on-parity and its slot has
+  // passed, the scheduler fires on the next tick (run-now) rather than waiting for
+  // the projected date.
+  const anchor = (await getSite(site))?.last_deployment
   const nextStagingAt = cadence === 'once'
     ? new Date(scheduled_for).toISOString()
-    : computeNextOccurrence({ cadence, day_of_week, week_of_month, biweekly_reference_date, bimonthly_ref_month, bimonthly_day_of_week } as never, new Date())?.toISOString()
+    : computeNextOccurrence(
+        { cadence, day_of_week, week_of_month, biweekly_reference_date, bimonthly_ref_month, bimonthly_day_of_week, created_at: new Date().toISOString() } as never,
+        new Date(),
+        anchor,
+      )?.toISOString()
 
   const record = await createSchedule({
     site,
