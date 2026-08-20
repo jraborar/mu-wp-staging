@@ -33,6 +33,10 @@ export interface StagingSchedule {
   created_at: string
   last_staged_at?: string
   next_staging_at?: string
+  // Manual overrides (sql/010). Due-ness is computed from the cadence + the site's
+  // last_deployment anchor; these two are how the Upcoming tab overrides it.
+  override_at?: string | null   // explicit pin — fires at this moment, then clears
+  skip_week?: string | null     // Monday (Manila) of an ISO week to skip
 }
 
 export async function listSchedules(): Promise<StagingSchedule[]> {
@@ -95,20 +99,22 @@ export async function deleteSchedule(id: string): Promise<void> {
   if (error) console.error('[supabase] deleteSchedule:', error.message)
 }
 
-export async function getDueSchedules(): Promise<StagingSchedule[]> {
+// Candidates for the scheduler loop. Due-ness itself is computed per schedule by
+// isDueNow() (cadence parity + the site's last_deployment anchor), so this no longer
+// filters on next_staging_at — that column is a display projection now.
+export async function getActiveSchedules(): Promise<StagingSchedule[]> {
   const db = getClient()
   if (!db) return []
-  const now = new Date().toISOString()
   const { data, error } = await db
     .from('staging_schedules')
     .select('*')
     .eq('active', true)
-    .lte('next_staging_at', now)
     .not('cadence', 'eq', 'security-only')
-  if (error) console.error('[supabase] getDueSchedules:', error.message)
+  if (error) console.error('[supabase] getActiveSchedules:', error.message)
   return data ?? []
 }
 
+// Firing consumes an explicit pin (override_at) — the cadence takes over again after.
 export async function updateScheduleAfterRun(id: string, nextAt: Date | null): Promise<void> {
   const db = getClient()
   if (!db) return
@@ -117,6 +123,7 @@ export async function updateScheduleAfterRun(id: string, nextAt: Date | null): P
     .update({
       last_staged_at: new Date().toISOString(),
       next_staging_at: nextAt?.toISOString() ?? null,
+      override_at: null,
     })
     .eq('id', id)
   if (error) console.error('[supabase] updateScheduleAfterRun:', error.message)
