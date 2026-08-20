@@ -39,6 +39,7 @@ export interface Site {
   vrt_paths: string[]
   active: boolean
   notes?: string | null
+  last_deployment?: string | null   // cadence anchor — see sql/009
   created_at?: string
   updated_at?: string
 }
@@ -135,6 +136,7 @@ export async function registerSite(input: Partial<Site> & { site: string }): Pro
                            : existing?.vrt_paths ?? [],
     active:              input.active              ?? existing?.active              ?? true,
     notes:               input.notes               ?? existing?.notes               ?? null,
+    last_deployment:     input.last_deployment     ?? existing?.last_deployment     ?? null,
   }
 
   const { data, error } = await db.from('sites').upsert(row, { onConflict: 'site' }).select().single()
@@ -149,7 +151,7 @@ export async function updateSite(site: string, patch: Partial<Site>): Promise<Si
     'machine_name', 'site_name', 'site_uuid', 'platform', 'parent_site', 'php_version', 'upstream',
     'update_mode', 'skip_upstream', 'skip_plugins_themes',
     'deploy_days', 'deploy_destination', 'deploy_approval', 'security_deploy_hours',
-    'vrt_enabled', 'vrt_threshold', 'vrt_paths', 'active', 'notes',
+    'vrt_enabled', 'vrt_threshold', 'vrt_paths', 'active', 'notes', 'last_deployment',
   ]
   const updates: Record<string, unknown> = {}
   for (const k of allowed) if (k in patch && patch[k] !== undefined) updates[k] = patch[k]

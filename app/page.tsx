@@ -126,6 +126,7 @@ interface Site {
   vrt_paths: string[]
   active: boolean
   notes?: string | null
+  last_deployment?: string | null
   created_at?: string
   updated_at?: string
 }
@@ -835,6 +836,7 @@ interface SiteFormState {
   deploy_destination: 'dev' | 'test' | 'live' | 'multidev'
   scheduleId: string | null
   biweekly_reference_date: string
+  last_deployment: string          // YYYY-MM-DD — cadence anchor (last completed cycle)
 }
 
 const emptySiteForm: SiteFormState = {
@@ -842,7 +844,7 @@ const emptySiteForm: SiteFormState = {
   skip_upstream: false, skip_plugins_themes: false, vrt_paths_text: '', notes: '',
   managed: false, cadence: 'weekly', day_of_week: 1, week_of_month: 1,
   deploy_days: 1, deploy_destination: 'live',
-  scheduleId: null, biweekly_reference_date: '',
+  scheduleId: null, biweekly_reference_date: '', last_deployment: '',
 }
 
 function SitesTab() {
@@ -898,6 +900,7 @@ function SitesTab() {
       deploy_destination: (sched?.deploy_destination as SiteFormState['deploy_destination']) ?? 'live',
       scheduleId: sched?.id ?? null,
       biweekly_reference_date: sched?.biweekly_reference_date ?? '',
+      last_deployment: (s.last_deployment ?? '').slice(0, 10),
     })
     setEditing(s.site); setError(null)
   }
@@ -918,6 +921,7 @@ function SitesTab() {
           update_mode: form.update_mode,
           skip_upstream: form.skip_upstream, skip_plugins_themes: form.skip_plugins_themes,
           vrt_paths: vrtPaths, notes: form.notes.trim() || null,
+          last_deployment: form.last_deployment ? new Date(form.last_deployment).toISOString() : null,
         }),
       })
       if (!siteRes.ok) { setError((await siteRes.json().catch(() => ({}))).error ?? `Site save failed (HTTP ${siteRes.status})`); return }
@@ -931,7 +935,9 @@ function SitesTab() {
         }
         if (store === 'weekly' || store === 'biweekly' || store === 'monthly') body.day_of_week = form.day_of_week
         if (store === 'monthly') body.week_of_month = form.week_of_month
-        if (store === 'biweekly') body.biweekly_reference_date = form.biweekly_reference_date || manilaTodayDate()
+        // Anchor biweekly parity on the real last-deployment week when known,
+        // so a back-dated site lands on the correct next week (not registration day).
+        if (store === 'biweekly') body.biweekly_reference_date = form.biweekly_reference_date || form.last_deployment || manilaTodayDate()
         if (store === 'bimonthly-week-of-15') { body.bimonthly_ref_month = manilaMonth(); body.bimonthly_day_of_week = form.day_of_week }
 
         const schedRes = form.scheduleId
@@ -1130,6 +1136,13 @@ function SitesTab() {
               <p className={`text-xs ${vrtOver ? 'text-red-400' : 'text-slate-500'}`}>
                 {vrtPaths.length} / {MAX_VRT_PATHS} paths{vrtOver ? ' — over the limit' : ''}
               </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className={labelCls}>Last deployment <span className="text-slate-600 normal-case">(optional — cadence anchor)</span></label>
+              <input type="date" value={form.last_deployment} onChange={e => setForm(f => ({ ...f, last_deployment: e.target.value }))}
+                className={inputCls} />
+              <p className="text-[0.7rem] text-slate-500 font-mono">When this site was last deployed. The recurring cadence counts from this week — set it for sites deployed before onboarding so the first run lands on the right week.</p>
             </div>
 
             <div className="space-y-1.5">

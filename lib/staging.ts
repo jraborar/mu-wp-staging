@@ -1,6 +1,6 @@
 import { type StagingJob, appendLog, finishJob, setStep, waitForApproval } from '@/lib/jobStore'
 import { run, runStream, shellEscape, cleanJson, terminusPhp } from '@/lib/terminus'
-import { getSite } from '@/lib/sites'
+import { getSite, updateSite } from '@/lib/sites'
 import { prebookDeployment, reconcileDeployment } from '@/lib/schedule'
 import {
   buildUpdateSummary,
@@ -847,6 +847,12 @@ export async function executeJob(job: StagingJob): Promise<void> {
     )
 
     if (job.deployDestination === 'multidev') {
+      // Multidev-only: mu_deploy never deploys (customer promotes it), so THIS
+      // completion is the terminal cycle event — advance the cadence anchor.
+      // Fast-track (security/upstream) runs are out-of-band and never reset it.
+      if (!job.securityFastTrack) {
+        await updateSite(job.site, { last_deployment: new Date().toISOString() }).catch(() => {})
+      }
       // Keep in Multidev — notify in thread, skip deployment scheduling
       postStep(`✅ *Staging complete* — multidev \`${job.multidev}\` is ready for client review${vrtSummary}`)
       void notifyInThread(
