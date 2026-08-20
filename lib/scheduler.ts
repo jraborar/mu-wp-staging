@@ -18,6 +18,7 @@ import { run, cleanJson } from '@/lib/terminus'
 import { parseWpJson } from '@/lib/wordpress'
 import { hasRunForMultidev, listStagingWithVrt, clearStagingVrt } from '@/lib/supabase'
 import { deleteVrtRun, runIdFromReportUrl } from '@/lib/vrt'
+import { broadcastText } from '@/lib/slack'
 
 // ── Next occurrence computation (Manila timezone, pure date math) ─────────────
 
@@ -210,6 +211,12 @@ async function runDueJobs(): Promise<void> {
       const multidev = `mu-${getPacificYYMMDD()}`
       // Skip flags are SITE FACTS (registry) — same source runUpstreamCheck uses.
       const site = await getSite(sched.site)
+      // Guardrail: only auto-stage sites explicitly opted in (auto_stage). A due
+      // schedule on a non-opted site does NOT fire — prevents surprise staging.
+      if (!site?.auto_stage) {
+        console.log(`[scheduler] Skipping scheduled staging for ${sched.site} — auto_stage is off`)
+        continue
+      }
       const job = createJob(sched.site, multidev, {
         skipUpstream: site?.skip_upstream ?? sched.skip_upstream,
         skipPluginsThemes: site?.skip_plugins_themes ?? sched.skip_plugins_themes,
@@ -222,6 +229,7 @@ async function runDueJobs(): Promise<void> {
       await updateScheduleAfterRun(sched.id, next)
       // A one-off ('once') has no next occurrence — retire it so it can't linger active.
       if (sched.cadence === 'once') await updateSchedule(sched.id, { active: false })
+      void broadcastText(`◈ Auto-staging *${site.machine_name ?? sched.site}* — scheduled ${sched.cadence} run (\`${multidev}\`).`)
       console.log(`[scheduler] Triggered staging for ${sched.site} (${multidev}); next at ${next?.toISOString() ?? 'none'}`)
     }
   } catch (err) {
@@ -262,6 +270,12 @@ async function runPendingSecurityChecks(): Promise<void> {
     if (pending.length === 0) return
 
     for (const sched of pending) {
+      // Guardrail: never security-stage a site that isn't opted in.
+      const site = await getSite(sched.site)
+      if (!site?.auto_stage) {
+        console.log(`[scheduler] Skipping security staging for ${sched.site} — auto_stage is off`)
+        continue
+      }
       // Check if Pantheon has propagated the upstream update yet
       const result = await run(`terminus upstream:updates:list ${sched.site}.dev --format=json 2>&1`)
       let hasUpdates = false
@@ -276,10 +290,12 @@ async function runPendingSecurityChecks(): Promise<void> {
           skipPluginsThemes: true, // security runs apply upstream only
           scheduleId: sched.id,
           deployDays: sched.deploy_days,
+          securityFastTrack: true,
         })
         void executeJob(job)
         await clearSecurityCheckPending(sched.id)
         await updateScheduleAfterRun(sched.id, computeNextOccurrence(sched, new Date()))
+        void broadcastText(`🔐 Auto-staging *${site.machine_name ?? sched.site}* — security update confirmed (\`${multidev}\`).`)
         console.log(`[scheduler] Security staging triggered for ${sched.site} — upstream updates confirmed on Pantheon`)
       } else {
         console.log(`[scheduler] No upstream updates yet on Pantheon for ${sched.site} — will check again`)
@@ -294,7 +310,10 @@ async function runUpstreamCheck(): Promise<void> {
   try {
     const today = getPacificYYMMDD()
     const sites = await listSites()
-    const eligible = sites.filter(s => s.active && !s.skip_upstream)
+    // Guardrail: auto_stage gates enrollment — a merely-registered site is never
+    // auto-staged by the scan until explicitly opted in. skip_upstream still means
+    // "skip the upstream step when we do stage".
+    const eligible = sites.filter(s => s.active && s.auto_stage && !s.skip_upstream)
     if (eligible.length === 0) return
 
     const activeStatuses = new Set(['running', 'paused', 'awaiting-approval'])
@@ -338,6 +357,7 @@ async function runUpstreamCheck(): Promise<void> {
       })
       void executeJob(job)
       await setSchedulerState(stateKey, today)
+      void broadcastText(`🔐 Auto-staging *${site.machine_name ?? site.site}* — upstream/security update detected (\`${multidev}\`, upstream-only fast-track).`)
       console.log(`[scheduler] Upstream updates found for ${site.site} — staging upstream only (${multidev})`)
     }
   } catch (err) {
