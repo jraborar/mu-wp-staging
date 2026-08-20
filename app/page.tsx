@@ -125,6 +125,7 @@ interface Site {
   security_deploy_hours?: number
   vrt_paths: string[]
   active: boolean
+  auto_stage?: boolean
   notes?: string | null
   last_deployment?: string | null
   created_at?: string
@@ -825,6 +826,7 @@ interface SiteFormState {
   update_mode: UpdateMode
   skip_upstream: boolean
   skip_plugins_themes: boolean
+  auto_stage: boolean
   vrt_paths_text: string
   notes: string
   // standing schedule (timing) — writes to staging_schedules
@@ -841,7 +843,7 @@ interface SiteFormState {
 
 const emptySiteForm: SiteFormState = {
   site: '', platform: 'wp-single', update_mode: 'upstream',
-  skip_upstream: false, skip_plugins_themes: false, vrt_paths_text: '', notes: '',
+  skip_upstream: false, skip_plugins_themes: false, auto_stage: false, vrt_paths_text: '', notes: '',
   managed: false, cadence: 'weekly', day_of_week: 1, week_of_month: 1,
   deploy_days: 1, deploy_destination: 'live',
   scheduleId: null, biweekly_reference_date: '', last_deployment: '',
@@ -891,6 +893,7 @@ function SitesTab() {
       update_mode: s.update_mode ?? 'upstream',
       skip_upstream: s.skip_upstream ?? false,          // site fact (registry)
       skip_plugins_themes: s.skip_plugins_themes ?? false,
+      auto_stage: s.auto_stage ?? false,
       vrt_paths_text: (s.vrt_paths ?? []).join('\n'), notes: s.notes ?? '',
       managed: Boolean(sched) && sched?.active !== false,
       cadence: storeToUiCadence(sched?.cadence),
@@ -920,6 +923,7 @@ function SitesTab() {
           site, platform: form.platform,
           update_mode: form.update_mode,
           skip_upstream: form.skip_upstream, skip_plugins_themes: form.skip_plugins_themes,
+          auto_stage: form.auto_stage,
           vrt_paths: vrtPaths, notes: form.notes.trim() || null,
           last_deployment: form.last_deployment ? new Date(form.last_deployment).toISOString() : null,
         }),
@@ -1055,6 +1059,13 @@ function SitesTab() {
                   className="rounded border-slate-600 bg-slate-700 accent-[#FFDC28]" />
                 Skip plugins &amp; themes
               </label>
+              <label className="flex items-start gap-2 text-sm text-slate-300 cursor-pointer">
+                <input type="checkbox" checked={form.auto_stage} onChange={e => setForm(f => ({ ...f, auto_stage: e.target.checked }))}
+                  className="mt-0.5 rounded border-slate-600 bg-slate-700 accent-[#FFDC28]" />
+                <span>Enable auto-staging
+                  <span className="block text-[0.7rem] text-slate-500 font-mono">Off = registered but never auto-staged (scan / schedule / security). Turn on only when the site is ready.</span>
+                </span>
+              </label>
             </div>
 
             {/* ── Standing schedule ── */}
@@ -1186,6 +1197,9 @@ function SitesTab() {
               {s.site_name && <span className="ml-2 text-xs text-slate-500 font-mono">{s.machine_name ?? s.site}</span>}
               <div className="flex flex-wrap gap-1.5 mt-1">
                 <span className="text-xs rounded bg-slate-700 px-2 py-0.5 text-slate-300">{PLATFORM_LABELS[s.platform]}</span>
+                {s.auto_stage
+                  ? <span className="text-xs rounded bg-green-500/15 px-2 py-0.5 text-green-400">auto-stage on</span>
+                  : <span className="text-xs rounded bg-slate-700 px-2 py-0.5 text-slate-500">auto-stage off</span>}
                 {s.php_version && <span className="text-xs rounded bg-slate-700 px-2 py-0.5 text-slate-400">PHP {s.php_version}</span>}
                 {s.upstream && <span className="text-xs rounded bg-slate-700 px-2 py-0.5 text-slate-400">{s.upstream}</span>}
                 {(() => {

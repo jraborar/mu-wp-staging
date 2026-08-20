@@ -118,6 +118,11 @@ export async function broadcastMessage(blocks: (Block | KnownBlock)[], text: str
   ])
 }
 
+// Convenience: broadcast a plain markdown line (no custom block layout needed).
+export async function broadcastText(message: string): Promise<void> {
+  await broadcastMessage([{ type: 'section', text: { type: 'mrkdwn', text: message } }], message)
+}
+
 // Posts to the Slack thread if one exists; always notifies Pumble.
 // Falls back to a top-level channel message when there is no thread.
 export async function notifyInThread(
