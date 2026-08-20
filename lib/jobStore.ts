@@ -59,6 +59,9 @@ export interface StagingJob {
   multidevCreated: boolean
   deployDays?: number
   deployDestination?: string
+  // Security/upstream fast-track: deploy on the security window (now + security_deploy_hours)
+  // rather than the normal deploy_days schedule. Set by the auto upstream scan.
+  securityFastTrack?: boolean
   // VRT (Model B) — set when the site has VRT enabled; baseline run id + report link
   vrtRunId?: string
   vrtReportUrl?: string
@@ -72,6 +75,7 @@ export interface CreateJobOptions {
   scheduleId?: string
   deployDays?: number
   deployDestination?: string
+  securityFastTrack?: boolean
 }
 
 const MAX_JOBS = 20
@@ -108,6 +112,7 @@ export function createJob(site: string, multidev: string, opts: CreateJobOptions
     multidevCreated: false,
     deployDays: opts.deployDays,
     deployDestination: opts.deployDestination,
+    securityFastTrack: opts.securityFastTrack ?? false,
   }
   job.emitter.setMaxListeners(50)
   store.set(job.id, job)

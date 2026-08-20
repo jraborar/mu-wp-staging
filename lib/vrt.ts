@@ -65,6 +65,26 @@ export async function startBaseline(
   }
 }
 
+// Expire a report: tell mu-vrt to purge the run's screenshots + row. Best-effort;
+// a 404 (already gone) counts as success. Returns true if it's gone afterwards.
+export async function deleteVrtRun(runId: string): Promise<boolean> {
+  try {
+    const r = await fetch(`${MU_VRT_URL}/api/runs/${runId}`, { method: 'DELETE' })
+    if (r.ok || r.status === 404) return true
+    console.error('[vrt] deleteVrtRun failed:', r.status)
+    return false
+  } catch (e) {
+    console.error('[vrt] deleteVrtRun error:', e instanceof Error ? e.message : String(e))
+    return false
+  }
+}
+
+// Extract the run id from a stored report URL (…/report/<id>).
+export function runIdFromReportUrl(url: string): string | null {
+  const m = url.match(/\/report\/([0-9a-f-]{6,})/i)
+  return m ? m[1] : null
+}
+
 async function getRun(runId: string): Promise<VrtRun | null> {
   try {
     const r = await fetch(`${MU_VRT_URL}/api/runs/${runId}`, { cache: 'no-store' })
