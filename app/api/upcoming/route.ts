@@ -15,6 +15,7 @@ export async function GET() {
     id: string
     site: string
     site_name?: string
+    machine_name?: string | null
     cadence: string
     at: string
     skip_upstream: boolean
@@ -36,6 +37,7 @@ export async function GET() {
         id: sched.id,
         site: sched.site,
         site_name: site?.site_name ?? sched.site_name,
+        machine_name: site?.machine_name ?? null,
         cadence: sched.cadence,
         at: next.toISOString(),
         skip_upstream: site?.skip_upstream ?? sched.skip_upstream,

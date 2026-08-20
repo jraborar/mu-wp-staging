@@ -536,9 +536,14 @@ export async function executeJob(job: StagingJob): Promise<void> {
     // "before" state. mu-vrt self-calibrates per run on this env, so the later
     // compare isolates exactly what the updates changed. Best-effort; a VRT
     // failure never blocks staging.
+    // job.site is the registry key (UUID); the pantheonsite.io host needs the
+    // machine name — resolve it (fallback to job.site covers pre-migration rows).
+    let vrtMachineName = job.site
     if (await getSiteVrtEnabled(job.site).catch(() => false)) {
+      const vrec = await getSite(job.site).catch(() => null)
+      vrtMachineName = vrec?.machine_name ?? job.site
       log('status', 'Capturing VRT baseline (pre-update)...')
-      const vrt = await startBaseline(job.site, job.multidev)
+      const vrt = await startBaseline(job.site, job.multidev, vrtMachineName)
       if (vrt) {
         job.vrtRunId = vrt.run_id
         job.vrtReportUrl = vrt.report_url
@@ -806,7 +811,7 @@ export async function executeJob(job: StagingJob): Promise<void> {
       // the final index rather than resetting the progress bar to 0/N.
       setStep(job, 'Running VRT comparison', STEPS.length, STEPS.length)
       log('status', 'Capturing VRT candidate (post-update) and diffing vs baseline...')
-      const result = await finishCompare(job.site, job.multidev, job.vrtRunId)
+      const result = await finishCompare(job.multidev, vrtMachineName, job.vrtRunId)
       if (!result) {
         job.vrtStatus = 'incomplete'
         log('warn', 'VRT comparison did not complete — see the report for status')

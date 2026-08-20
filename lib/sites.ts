@@ -19,8 +19,9 @@ export type UpdateMode = 'upstream' | 'composer' | 'none'
 export type DeployApproval = 'manual' | 'auto'
 
 export interface Site {
-  site: string
-  site_name?: string | null
+  site: string                    // primary key — Pantheon site UUID
+  machine_name?: string | null    // Pantheon machine name — what UIs display
+  site_name?: string | null       // friendly label
   site_uuid?: string | null
   platform: Platform
   parent_site?: string | null
@@ -78,9 +79,9 @@ export async function getSite(site: string): Promise<Site | null> {
 // Best-effort resolve of site_name / upstream / php_version from terminus.
 export async function resolveSiteMeta(
   site: string,
-): Promise<{ site_name?: string; upstream?: string; php_version?: string }> {
+): Promise<{ site_name?: string; machine_name?: string; upstream?: string; php_version?: string }> {
   if (!SITE_RE.test(site)) return {}
-  const meta: { site_name?: string; upstream?: string; php_version?: string } = {}
+  const meta: { site_name?: string; machine_name?: string; upstream?: string; php_version?: string } = {}
   try {
     const token = process.env.TERMINUS_TOKEN
     if (token) await run(`terminus auth:login --machine-token="${token}" 2>&1`)
@@ -88,8 +89,9 @@ export async function resolveSiteMeta(
     const info = await run(`terminus site:info ${site} --format=json 2>&1`)
     try {
       const d = JSON.parse(cleanJson(info.stdout))
-      meta.site_name = d?.label ?? d?.name ?? undefined
-      meta.upstream  = d?.upstream_product_label ?? d?.upstream ?? undefined
+      meta.site_name    = d?.label ?? d?.name ?? undefined
+      meta.machine_name = d?.name ?? undefined
+      meta.upstream     = d?.upstream_product_label ?? d?.upstream ?? undefined
     } catch {}
 
     const envInfo = await run(`terminus env:info ${site}.dev --format=json 2>&1`)
@@ -114,6 +116,7 @@ export async function registerSite(input: Partial<Site> & { site: string }): Pro
 
   const row = {
     site,
+    machine_name:        input.machine_name       ?? meta.machine_name ?? existing?.machine_name ?? null,
     site_name:           input.site_name          ?? meta.site_name   ?? existing?.site_name   ?? null,
     site_uuid:           input.site_uuid          ?? existing?.site_uuid ?? null,
     platform:            input.platform           ?? existing?.platform ?? 'wp-single',
@@ -143,7 +146,7 @@ export async function updateSite(site: string, patch: Partial<Site>): Promise<Si
   const db = getClient()
   if (!db) return null
   const allowed: (keyof Site)[] = [
-    'site_name', 'site_uuid', 'platform', 'parent_site', 'php_version', 'upstream',
+    'machine_name', 'site_name', 'site_uuid', 'platform', 'parent_site', 'php_version', 'upstream',
     'update_mode', 'skip_upstream', 'skip_plugins_themes',
     'deploy_days', 'deploy_destination', 'deploy_approval', 'security_deploy_hours',
     'vrt_enabled', 'vrt_threshold', 'vrt_paths', 'active', 'notes',

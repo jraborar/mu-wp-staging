@@ -32,9 +32,11 @@ export interface VrtRun {
   report_url: string
 }
 
-// Pantheon multidev URL: https://<multidev>-<site>.pantheonsite.io
-export function multidevUrl(site: string, multidev: string): string {
-  return `https://${multidev}-${site}.pantheonsite.io`
+// Pantheon multidev URL: https://<multidev>-<machineName>.pantheonsite.io
+// NOTE: the hostname uses the Pantheon MACHINE NAME, never the site UUID (the
+// registry key). Terminus accepts UUIDs; pantheonsite.io hostnames do not.
+export function multidevUrl(machineName: string, multidev: string): string {
+  return `https://${multidev}-${machineName}.pantheonsite.io`
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -43,10 +45,11 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 // or null. Non-blocking on mu-vrt's side (202); the capture runs in background
 // there and is finished well before we reach the compare phase.
 export async function startBaseline(
-  site: string,
+  site: string,          // registry key (UUID) — how mu-vrt looks up VRT config
   multidev: string,
+  machineName: string,   // Pantheon machine name — for the capture URL host
 ): Promise<{ run_id: string; report_url: string } | null> {
-  const base = multidevUrl(site, multidev)
+  const base = multidevUrl(machineName, multidev)
   try {
     const r = await fetch(`${MU_VRT_URL}/api/baseline`, {
       method: 'POST',
@@ -114,7 +117,7 @@ async function waitForStatus(
 // Phase 2 — capture the multidev AFTER updates and diff vs the stored baseline.
 // Waits for the baseline to be ready, kicks the compare, then polls to completion.
 // Returns the finalized run (with per-path results) or null.
-export async function finishCompare(site: string, multidev: string, runId: string): Promise<VrtRun | null> {
+export async function finishCompare(multidev: string, machineName: string, runId: string): Promise<VrtRun | null> {
   // The baseline capture almost always finished during the (multi-minute) update
   // cycle, but confirm it reached awaiting_candidate before comparing.
   const ready = await waitForStatus(runId, 'awaiting_candidate', { timeoutMs: 120_000 })
@@ -123,7 +126,7 @@ export async function finishCompare(site: string, multidev: string, runId: strin
     return null
   }
 
-  const base = multidevUrl(site, multidev)
+  const base = multidevUrl(machineName, multidev)
   try {
     const r = await fetch(`${MU_VRT_URL}/api/compare`, {
       method: 'POST',
