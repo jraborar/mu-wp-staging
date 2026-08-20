@@ -278,6 +278,8 @@ async function runDueJobs(): Promise<void> {
       if (await hasRunForMultidev(sched.site, multidevToday)) continue
 
       const site = await getSite(sched.site)
+      // Guardrail: run-now must respect the opt-in gate too.
+      if (!site?.auto_stage) continue
       const job = createJob(sched.site, multidevToday, {
         skipUpstream: site?.skip_upstream ?? sched.skip_upstream,
         skipPluginsThemes: site?.skip_plugins_themes ?? sched.skip_plugins_themes,
@@ -287,6 +289,7 @@ async function runDueJobs(): Promise<void> {
       })
       void executeJob(job)
       await updateScheduleAfterRun(sched.id, computeNextOccurrence(sched, now))
+      void broadcastText(`◈ Auto-staging *${site.machine_name ?? sched.site}* — due this week (\`${multidevToday}\`).`)
       console.log(`[scheduler] Run-now (due this week, preferred day passed) staging for ${sched.site} (${multidevToday})`)
     }
   } catch (err) {
