@@ -14,7 +14,7 @@ const MU_VRT_URL = process.env.NEXT_PUBLIC_MU_VRT_URL || 'https://mu-vrt-product
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-type Tab = 'stage' | 'sites' | 'history' | 'schedule' | 'upcoming' | 'options'
+type Tab = 'sites' | 'stage' | 'schedule' | 'upcoming' | 'history'
 
 type Cadence = 'weekly' | 'biweekly' | 'monthly' | 'bimonthly-week-of-15' | 'security-only' | 'once'
 
@@ -864,6 +864,7 @@ function SitesTab() {
   const [schedules, setSchedules] = useState<StagingSchedule[]>([])
   const [loading, setLoading]     = useState(true)
   const [editing, setEditing]     = useState<string | null>(null) // site machine-name, or '__new__'
+  const [optionsFor, setOptionsFor] = useState<Site | null>(null)
   const [form, setForm]           = useState<SiteFormState>(emptySiteForm)
   const [saving, setSaving]       = useState(false)
   const [busy, setBusy]           = useState<string | null>(null)
@@ -1241,6 +1242,8 @@ function SitesTab() {
               <RefreshCw className={`w-4 h-4 ${busy === s.site ? 'animate-spin' : ''}`} />
             </button>
             <button onClick={() => openEdit(s)} className="text-xs text-slate-400 hover:text-white transition-colors">Edit</button>
+            <button onClick={() => setOptionsFor(s)}
+              className="text-xs text-slate-400 hover:text-white transition-colors" title="Plugins and themes to skip on this site">Options</button>
             <a href={`${MU_VRT_URL}/vrt/${encodeURIComponent(s.site)}`} target="_blank" rel="noopener noreferrer"
               className="text-xs text-slate-400 hover:text-sky-300 transition-colors inline-flex items-center gap-1" title="Configure VRT (paths + threshold)">
               <Globe className="w-3.5 h-3.5" /> VRT
@@ -1256,6 +1259,15 @@ function SitesTab() {
           </div>
         </div>
       ))}
+
+      {optionsFor && (
+        <Modal
+          title={optionsFor.machine_name ?? optionsFor.site_name ?? optionsFor.site}
+          onClose={() => setOptionsFor(null)}
+        >
+          <UpdateOptionsTab site={optionsFor.site} />
+        </Modal>
+      )}
     </div>
   )
 }
@@ -1849,6 +1861,35 @@ function ItemAccordion({
   )
 }
 
+// Per-site update policy opens OVER whatever you were doing. It used to be a tab,
+// which meant leaving the Stage form (and your typed site ID) to go and look.
+function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = prev }
+  }, [onClose])
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/70 p-4 sm:p-8"
+      role="dialog" aria-modal="true" aria-label={title} onClick={onClose}>
+      <div className="w-full max-w-3xl rounded-xl border border-slate-700 bg-slate-900 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between gap-4 border-b border-slate-700 px-5 py-3">
+          <h2 className="font-mono text-sm text-white">{title}</h2>
+          <button onClick={onClose} autoFocus
+            className="rounded border border-slate-600 px-2 py-1 font-mono text-xs text-slate-400 hover:border-slate-400 hover:text-white transition-colors">
+            Close
+          </button>
+        </div>
+        <div className="max-h-[75vh] overflow-y-auto p-5">{children}</div>
+      </div>
+    </div>
+  )
+}
+
 function UpdateOptionsTab({ site }: { site: string }) {
   const [loading, setLoading]         = useState(false)
   const [saving, setSaving]           = useState(false)
@@ -1979,6 +2020,7 @@ export default function Page() {
   const [stageDestination, setStageDestination] = useState('live')
   const [securityFastTrack, setSecurityFastTrack] = useState(false)
   const [testMode, setTestMode]               = useState(false)
+  const [showOptions, setShowOptions]         = useState(false)
   const [submitting, setSubmitting] = useState(false)
 
   const [liveJobs, setLiveJobs]             = useState<LiveJob[]>([])
@@ -2056,7 +2098,6 @@ export default function Page() {
   const TABS: { key: Tab; label: string }[] = [
     { key: 'sites',    label: 'Sites' },
     { key: 'stage',    label: 'Stage' },
-    { key: 'options',  label: 'Update Options' },
     { key: 'schedule', label: 'Schedule' },
     { key: 'upcoming', label: 'Upcoming' },
     { key: 'history',  label: 'History' },
@@ -2112,9 +2153,9 @@ export default function Page() {
                     className="flex-1 rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 font-mono text-sm text-white placeholder-slate-500 focus:border-[#FFDC28] focus:outline-none disabled:opacity-50"
                   />
                   <button
-                    onClick={() => site.trim() && setTab('options')}
+                    onClick={() => site.trim() && setShowOptions(true)}
                     disabled={!site.trim() || submitting}
-                    title="Configure per-site plugin/theme skip preferences"
+                    title="Plugins and themes to skip on this site"
                     className="rounded-lg border border-slate-600 px-3 py-2 text-xs font-mono text-slate-400 hover:border-[#FFDC28] hover:text-[#FFDC28] transition-colors disabled:opacity-30 disabled:cursor-not-allowed shrink-0"
                   >
                     More Options
@@ -2226,6 +2267,12 @@ export default function Page() {
                   </span>
                 ) : testMode ? `Run Test Staging (mu-${getPacificYYMMDD()}-t)` : 'Run Staging Updates'}
               </button>
+
+              {showOptions && site.trim() && (
+                <Modal title={site.trim()} onClose={() => setShowOptions(false)}>
+                  <UpdateOptionsTab site={site.trim()} />
+                </Modal>
+              )}
             </div>
           </Card>
         )}
@@ -2233,7 +2280,6 @@ export default function Page() {
         {/* ── Update Options tab ── */}
         {tab === 'sites' && <SitesTab />}
 
-        {tab === 'options' && <UpdateOptionsTab site={site} />}
 
         {/* ── History tab ── */}
         {tab === 'history' && (
