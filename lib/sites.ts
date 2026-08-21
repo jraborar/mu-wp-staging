@@ -41,6 +41,13 @@ export interface Site {
   auto_stage?: boolean               // opt-in gate: only auto-stage when true (sql/010)
   notes?: string | null
   last_deployment?: string | null   // cadence anchor — see sql/009
+  // Managed-updates hold (sql/013). Orthogonal to auto_stage: a paused site stays
+  // armed, so resuming is one click. paused_until is advisory — it drives the
+  // reminder, never an automatic resume.
+  paused_at?: string | null
+  paused_until?: string | null
+  pause_reason?: string | null
+  pause_notified_at?: string | null
   created_at?: string
   updated_at?: string
 }
@@ -60,6 +67,12 @@ function cleanVrtPaths(paths: unknown): string[] {
     throw new Error(`Too many VRT paths (${cleaned.length}); max is ${MAX_VRT_PATHS}`)
   }
   return cleaned
+}
+
+// A site is on hold until a human resumes it. An elapsed paused_until does NOT
+// clear the hold — it only makes it overdue, which the reminder pass reports.
+export function isPaused(site: Pick<Site, 'paused_at'>): boolean {
+  return !!site.paused_at
 }
 
 export async function listSites(): Promise<Site[]> {
@@ -139,6 +152,9 @@ export async function registerSite(input: Partial<Site> & { site: string }): Pro
     auto_stage:          input.auto_stage          ?? existing?.auto_stage          ?? false,
     notes:               input.notes               ?? existing?.notes               ?? null,
     last_deployment:     input.last_deployment     ?? existing?.last_deployment     ?? null,
+    paused_at:           input.paused_at           ?? existing?.paused_at           ?? null,
+    paused_until:        input.paused_until        ?? existing?.paused_until        ?? null,
+    pause_reason:        input.pause_reason        ?? existing?.pause_reason        ?? null,
   }
 
   const { data, error } = await db.from('sites').upsert(row, { onConflict: 'site' }).select().single()
@@ -154,6 +170,7 @@ export async function updateSite(site: string, patch: Partial<Site>): Promise<Si
     'update_mode', 'skip_upstream', 'skip_plugins_themes',
     'deploy_days', 'deploy_destination', 'deploy_approval', 'security_deploy_hours',
     'vrt_enabled', 'vrt_threshold', 'vrt_paths', 'active', 'auto_stage', 'notes', 'last_deployment',
+    'paused_at', 'paused_until', 'pause_reason', 'pause_notified_at',
   ]
   const updates: Record<string, unknown> = {}
   for (const k of allowed) if (k in patch && patch[k] !== undefined) updates[k] = patch[k]

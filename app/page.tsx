@@ -128,6 +128,9 @@ interface Site {
   vrt_paths: string[]
   active: boolean
   auto_stage?: boolean
+  paused_at?: string | null
+  paused_until?: string | null
+  pause_reason?: string | null
   notes?: string | null
   last_deployment?: string | null
   created_at?: string
@@ -865,6 +868,15 @@ function SitesTab() {
   const [loading, setLoading]     = useState(true)
   const [editing, setEditing]     = useState<string | null>(null) // site machine-name, or '__new__'
   const [optionsFor, setOptionsFor] = useState<Site | null>(null)
+  const [openActive, setOpenActive]   = useState(true)
+  const [openPaused, setOpenPaused]   = useState(true)
+  const [activePage, setActivePage]   = useState(0)
+  const [pausedPage, setPausedPage]   = useState(0)
+  const [holdFor, setHoldFor]         = useState<Site | null>(null)
+  const [holdReason, setHoldReason]   = useState('')
+  const [holdUntil, setHoldUntil]     = useState('')
+  const [holdSaving, setHoldSaving]   = useState(false)
+
   const [form, setForm]           = useState<SiteFormState>(emptySiteForm)
   const [saving, setSaving]       = useState(false)
   const [busy, setBusy]           = useState<string | null>(null)
@@ -970,6 +982,153 @@ function SitesTab() {
     } finally {
       setSaving(false)
     }
+  }
+
+  const SITES_PER_PAGE = 5
+  const pausedSites = sites.filter((s) => s.paused_at)
+  const activeSites = sites.filter((s) => !s.paused_at)
+
+  const renderRow = (s: Site) => (
+      <div key={s.site} className={`rounded-xl border bg-slate-800 overflow-hidden ${s.active ? 'border-slate-700' : 'border-slate-700/50 opacity-60'}`}>
+        <div className="flex items-center gap-3 px-5 py-3">
+          <div className="flex-1 min-w-0">
+            <span className="font-mono text-sm text-white">{s.site_name ?? s.machine_name ?? s.site}</span>
+            {s.site_name && <span className="ml-2 text-xs text-slate-500 font-mono">{s.machine_name ?? s.site}</span>}
+            <div className="flex flex-wrap gap-1.5 mt-1">
+              <span className="text-xs rounded bg-slate-700 px-2 py-0.5 text-slate-300">{PLATFORM_LABELS[s.platform]}</span>
+              {s.paused_at && (
+                <span className="text-xs rounded border border-yellow-500/50 bg-yellow-500/10 px-2 py-0.5 text-yellow-300"
+                  title={s.pause_reason ?? 'Updates paused'}>
+                  Paused{s.paused_until ? ` · until ${String(s.paused_until).slice(0, 10)}` : ' · no end date'}
+                </span>
+              )}
+              {s.auto_stage
+                ? <span className="text-xs rounded bg-green-500/15 px-2 py-0.5 text-green-400">auto-stage on</span>
+                : <span className="text-xs rounded bg-slate-700 px-2 py-0.5 text-slate-500">auto-stage off</span>}
+              {s.php_version && <span className="text-xs rounded bg-slate-700 px-2 py-0.5 text-slate-400">PHP {s.php_version}</span>}
+              {s.upstream && <span className="text-xs rounded bg-slate-700 px-2 py-0.5 text-slate-400">{s.upstream}</span>}
+              {(() => {
+                const sched = scheduleForSite(s.site)
+                return sched ? (
+                  <>
+                    <span className="text-xs rounded bg-slate-700 px-2 py-0.5 text-slate-300">{formatStandingSchedule(sched)}</span>
+                    <span className="text-xs rounded bg-slate-700 px-2 py-0.5 text-slate-400">→ {sched.deploy_destination ?? 'live'} · +{sched.deploy_days ?? 1}bd</span>
+                  </>
+                ) : (
+                  <span className="text-xs rounded bg-slate-700/50 px-2 py-0.5 text-slate-500">no schedule</span>
+                )
+              })()}
+              {(s.vrt_paths?.length ?? 0) > 0 && <span className="text-xs rounded bg-slate-700 px-2 py-0.5 text-slate-400">{s.vrt_paths.length} VRT</span>}
+            </div>
+          </div>
+          <button onClick={() => reSync(s)} disabled={busy === s.site}
+            className="text-slate-500 hover:text-slate-300 transition-colors disabled:opacity-40" title="Re-sync from Pantheon">
+            <RefreshCw className={`w-4 h-4 ${busy === s.site ? 'animate-spin' : ''}`} />
+          </button>
+          <button onClick={() => openEdit(s)} className="text-xs text-slate-400 hover:text-white transition-colors">Edit</button>
+          <button onClick={() => setOptionsFor(s)}
+            className="text-xs text-slate-400 hover:text-white transition-colors" title="Plugins and themes to skip on this site">Options</button>
+          {s.paused_at ? (
+            <button onClick={() => resume(s)} disabled={busy === s.site}
+              className="text-xs px-2 py-0.5 rounded border border-yellow-500/50 text-yellow-300 hover:bg-yellow-500/10 transition-colors disabled:opacity-40"
+              title={s.pause_reason ?? 'Updates paused'}>Resume</button>
+          ) : (
+            <button onClick={() => openHold(s)}
+              className="text-xs text-slate-400 hover:text-yellow-300 transition-colors" title="Pause managed updates for this site">Pause</button>
+          )}
+          <a href={`${MU_VRT_URL}/vrt/${encodeURIComponent(s.site)}`} target="_blank" rel="noopener noreferrer"
+            className="text-xs text-slate-400 hover:text-sky-300 transition-colors inline-flex items-center gap-1" title="Configure VRT (paths + threshold)">
+            <Globe className="w-3.5 h-3.5" /> VRT
+          </a>
+          <button onClick={() => toggleActive(s)} disabled={busy === s.site}
+            className={`text-xs px-2 py-0.5 rounded border transition-colors ${s.active ? 'border-green-700 text-green-400 hover:bg-green-900/30' : 'border-slate-600 text-slate-500 hover:bg-slate-700'}`}>
+            {s.active ? 'Active' : 'Inactive'}
+          </button>
+          <button onClick={() => remove(s)} disabled={busy === s.site}
+            className="text-red-500 hover:text-red-400 transition-colors disabled:opacity-40" title="Remove from registry">
+            <Trash2 className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+  )
+
+  // A plain function, not a nested component: a component defined during render
+  // gets a new identity each time and would reset its own pagination state.
+  const renderGroup = (
+    label: string,
+    rows: Site[],
+    open: boolean,
+    setOpen: (v: boolean) => void,
+    page: number,
+    setPage: (n: number) => void,
+    tone: 'green' | 'yellow',
+  ) => {
+    if (rows.length === 0) return null
+    const pages = Math.max(1, Math.ceil(rows.length / SITES_PER_PAGE))
+    const safe = Math.min(page, pages - 1)
+    const slice = rows.slice(safe * SITES_PER_PAGE, safe * SITES_PER_PAGE + SITES_PER_PAGE)
+    const dot = tone === 'green' ? 'bg-green-400' : 'bg-yellow-400'
+    const text = tone === 'green' ? 'text-green-400' : 'text-yellow-300'
+    return (
+      <div className="space-y-3">
+        <button onClick={() => setOpen(!open)}
+          className="flex w-full items-center gap-2 rounded-lg border border-slate-700 bg-slate-800/60 px-4 py-2 text-left transition-colors hover:border-slate-600">
+          <span className={`h-2 w-2 rounded-full ${dot}`} />
+          <span className={`font-mono text-xs uppercase tracking-widest ${text}`}>{label}</span>
+          <span className="font-mono text-xs text-slate-500">{rows.length}</span>
+          {open ? <ChevronUp className="ml-auto h-4 w-4 text-slate-500" /> : <ChevronDown className="ml-auto h-4 w-4 text-slate-500" />}
+        </button>
+
+        {open && (
+          <div className="space-y-3">
+            {slice.map(renderRow)}
+            {pages > 1 && (
+              <div className="flex items-center justify-end gap-2 pr-1">
+                <button onClick={() => setPage(Math.max(0, safe - 1))} disabled={safe === 0}
+                  className="rounded border border-slate-600 px-2 py-1 font-mono text-xs text-slate-400 hover:border-slate-400 disabled:opacity-30 transition-colors">← Prev</button>
+                <span className="font-mono text-xs text-slate-500 tabular-nums">{safe + 1} / {pages}</span>
+                <button onClick={() => setPage(Math.min(pages - 1, safe + 1))} disabled={safe >= pages - 1}
+                  className="rounded border border-slate-600 px-2 py-1 font-mono text-xs text-slate-400 hover:border-slate-400 disabled:opacity-30 transition-colors">Next →</button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  const openHold = (s: Site) => {
+    setHoldFor(s)
+    setHoldReason(s.pause_reason ?? '')
+    setHoldUntil(s.paused_until ? String(s.paused_until).slice(0, 10) : '')
+  }
+
+  const applyHold = async () => {
+    if (!holdFor) return
+    setHoldSaving(true)
+    try {
+      await fetch(`/api/sites/${encodeURIComponent(holdFor.site)}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          paused_at: holdFor.paused_at ?? new Date().toISOString(),
+          paused_until: holdUntil || null,
+          pause_reason: holdReason.trim() || null,
+          pause_notified_at: null,          // a changed hold earns a fresh reminder cycle
+        }),
+      })
+      setHoldFor(null); await loadAll()
+    } finally { setHoldSaving(false) }
+  }
+
+  const resume = async (s: Site) => {
+    setBusy(s.site)
+    try {
+      await fetch(`/api/sites/${encodeURIComponent(s.site)}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paused_at: null, paused_until: null, pause_reason: null, pause_notified_at: null }),
+      })
+      await loadAll()
+    } finally { setBusy(null) }
   }
 
   const toggleActive = async (s: Site) => {
@@ -1210,55 +1369,48 @@ function SitesTab() {
         </div>
       )}
 
-      {sites.map((s) => (
-        <div key={s.site} className={`rounded-xl border bg-slate-800 overflow-hidden ${s.active ? 'border-slate-700' : 'border-slate-700/50 opacity-60'}`}>
-          <div className="flex items-center gap-3 px-5 py-3">
-            <div className="flex-1 min-w-0">
-              <span className="font-mono text-sm text-white">{s.site_name ?? s.machine_name ?? s.site}</span>
-              {s.site_name && <span className="ml-2 text-xs text-slate-500 font-mono">{s.machine_name ?? s.site}</span>}
-              <div className="flex flex-wrap gap-1.5 mt-1">
-                <span className="text-xs rounded bg-slate-700 px-2 py-0.5 text-slate-300">{PLATFORM_LABELS[s.platform]}</span>
-                {s.auto_stage
-                  ? <span className="text-xs rounded bg-green-500/15 px-2 py-0.5 text-green-400">auto-stage on</span>
-                  : <span className="text-xs rounded bg-slate-700 px-2 py-0.5 text-slate-500">auto-stage off</span>}
-                {s.php_version && <span className="text-xs rounded bg-slate-700 px-2 py-0.5 text-slate-400">PHP {s.php_version}</span>}
-                {s.upstream && <span className="text-xs rounded bg-slate-700 px-2 py-0.5 text-slate-400">{s.upstream}</span>}
-                {(() => {
-                  const sched = scheduleForSite(s.site)
-                  return sched ? (
-                    <>
-                      <span className="text-xs rounded bg-slate-700 px-2 py-0.5 text-slate-300">{formatStandingSchedule(sched)}</span>
-                      <span className="text-xs rounded bg-slate-700 px-2 py-0.5 text-slate-400">→ {sched.deploy_destination ?? 'live'} · +{sched.deploy_days ?? 1}bd</span>
-                    </>
-                  ) : (
-                    <span className="text-xs rounded bg-slate-700/50 px-2 py-0.5 text-slate-500">no schedule</span>
-                  )
-                })()}
-                {(s.vrt_paths?.length ?? 0) > 0 && <span className="text-xs rounded bg-slate-700 px-2 py-0.5 text-slate-400">{s.vrt_paths.length} VRT</span>}
-              </div>
+      {/* Active sites and held sites in separate accordions, five to a page.
+          A hold is a first-class state, so it gets its own group rather than
+          being mixed in with a yellow badge and left to be spotted. */}
+      {renderGroup('Active', activeSites, openActive, setOpenActive, activePage, setActivePage, 'green')}
+      {renderGroup('Paused', pausedSites, openPaused, setOpenPaused, pausedPage, setPausedPage, 'yellow')}
+
+      {holdFor && (
+        <Modal title={`Pause updates — ${holdFor.machine_name ?? holdFor.site_name ?? holdFor.site}`} onClose={() => setHoldFor(null)}>
+          <div className="space-y-4">
+            <p className="text-sm text-slate-400">
+              Nothing stages itself while a site is paused — not the schedule, not the security scan, not the
+              upstream check. Manual runs still work.
+            </p>
+            <div className="space-y-1.5">
+              <label className="font-mono text-xs uppercase tracking-widest text-slate-400">Reason</label>
+              <input type="text" value={holdReason} onChange={(e) => setHoldReason(e.target.value)}
+                placeholder="e.g. customer migrating D10 to D11"
+                className="w-full rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 font-mono text-sm text-white placeholder-slate-500 focus:border-[#FFDC28] focus:outline-none" />
             </div>
-            <button onClick={() => reSync(s)} disabled={busy === s.site}
-              className="text-slate-500 hover:text-slate-300 transition-colors disabled:opacity-40" title="Re-sync from Pantheon">
-              <RefreshCw className={`w-4 h-4 ${busy === s.site ? 'animate-spin' : ''}`} />
-            </button>
-            <button onClick={() => openEdit(s)} className="text-xs text-slate-400 hover:text-white transition-colors">Edit</button>
-            <button onClick={() => setOptionsFor(s)}
-              className="text-xs text-slate-400 hover:text-white transition-colors" title="Plugins and themes to skip on this site">Options</button>
-            <a href={`${MU_VRT_URL}/vrt/${encodeURIComponent(s.site)}`} target="_blank" rel="noopener noreferrer"
-              className="text-xs text-slate-400 hover:text-sky-300 transition-colors inline-flex items-center gap-1" title="Configure VRT (paths + threshold)">
-              <Globe className="w-3.5 h-3.5" /> VRT
-            </a>
-            <button onClick={() => toggleActive(s)} disabled={busy === s.site}
-              className={`text-xs px-2 py-0.5 rounded border transition-colors ${s.active ? 'border-green-700 text-green-400 hover:bg-green-900/30' : 'border-slate-600 text-slate-500 hover:bg-slate-700'}`}>
-              {s.active ? 'Active' : 'Paused'}
-            </button>
-            <button onClick={() => remove(s)} disabled={busy === s.site}
-              className="text-red-500 hover:text-red-400 transition-colors disabled:opacity-40" title="Remove from registry">
-              <Trash2 className="w-4 h-4" />
-            </button>
+            <div className="space-y-1.5">
+              <label className="font-mono text-xs uppercase tracking-widest text-slate-400">
+                Expected end <span className="text-slate-600 normal-case">(optional)</span>
+              </label>
+              <input type="date" value={holdUntil} onChange={(e) => setHoldUntil(e.target.value)}
+                className="rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 font-mono text-sm text-white focus:border-[#FFDC28] focus:outline-none" />
+              <p className="text-[0.7rem] text-slate-500 font-mono">
+                Advisory only — the site stays paused until someone resumes it. Slack nudges 3 business days
+                before this date so you can follow up. Leave it blank when the customer gives no timeline and
+                you will be reminded of the hold&apos;s age instead.
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={applyHold} disabled={holdSaving}
+                className="rounded-lg border border-yellow-500/50 px-3 py-1.5 font-mono text-xs text-yellow-300 hover:bg-yellow-500/10 disabled:opacity-40 transition-colors">
+                {holdSaving ? 'Saving…' : holdFor.paused_at ? 'Update hold' : 'Pause updates'}
+              </button>
+              <button onClick={() => setHoldFor(null)}
+                className="rounded-lg border border-slate-600 px-3 py-1.5 font-mono text-xs text-slate-400 hover:bg-slate-700 transition-colors">Cancel</button>
+            </div>
           </div>
-        </div>
-      ))}
+        </Modal>
+      )}
 
       {optionsFor && (
         <Modal

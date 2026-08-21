@@ -1,5 +1,5 @@
-import { getPacificYYMMDD } from '@/lib/timezone'
-import { listSites, getSite } from '@/lib/sites'
+import { getPacificYYMMDD, getManilaToday, addBusinessDays } from '@/lib/timezone'
+import { listSites, getSite, updateSite, isPaused } from '@/lib/sites'
 import {
   getActiveSchedules,
   updateSchedule,
@@ -38,6 +38,12 @@ async function runDueJobs(): Promise<void> {
       // (last_deployment) and the skip flags alike.
       const site = bySite.get(sched.site)
       if (!isDueNow(sched, site?.last_deployment, now)) continue
+
+      // A customer-requested hold outranks everything, including a due occurrence.
+      if (site && isPaused(site)) {
+        console.log(`[scheduler] ${sched.site} is due but updates are paused${site.pause_reason ? ` — ${site.pause_reason}` : ''}`)
+        continue
+      }
 
       // Guardrail: only auto-stage sites explicitly opted in (auto_stage). A due
       // schedule on a non-opted site does NOT fire — prevents surprise staging.
@@ -114,6 +120,10 @@ async function runPendingSecurityChecks(): Promise<void> {
     for (const sched of pending) {
       // Guardrail: never security-stage a site that isn't opted in.
       const site = await getSite(sched.site)
+      if (site && isPaused(site)) {
+        console.log(`[scheduler] Skipping security staging for ${sched.site} — updates are paused`)
+        continue
+      }
       if (!site?.auto_stage) {
         console.log(`[scheduler] Skipping security staging for ${sched.site} — auto_stage is off`)
         continue
@@ -155,7 +165,7 @@ async function runUpstreamCheck(): Promise<void> {
     // Guardrail: auto_stage gates enrollment — a merely-registered site is never
     // auto-staged by the scan until explicitly opted in. skip_upstream still means
     // "skip the upstream step when we do stage".
-    const eligible = sites.filter(s => s.active && s.auto_stage && !s.skip_upstream)
+    const eligible = sites.filter(s => s.active && s.auto_stage && !s.skip_upstream && !isPaused(s))
     if (eligible.length === 0) return
 
     const multidev = `mu-${today}`
@@ -235,6 +245,57 @@ async function runVrtLinkExpiry(): Promise<void> {
   }
 }
 
+
+// A hold with no follow-up becomes a site that quietly stopped being maintained.
+// This pass IS the follow-up: it warns 3 business days before an expected end so
+// the consultant can chase the customer, keeps nudging once that date lapses (the
+// site stays paused — an elapsed date never resumes anything), and for the common
+// case where the customer gave no timeline it reports the AGE of the hold, since
+// chasing a date is consultant discretion and needs a prompt rather than a rule.
+const PAUSE_NUDGE_EVERY_MS = 7 * 24 * 60 * 60 * 1000
+const PAUSE_WARN_BUSINESS_DAYS = 3
+const PAUSE_OPEN_ENDED_NUDGE_DAYS = 14
+
+async function runPauseReminders(): Promise<void> {
+  try {
+    const paused = (await listSites()).filter(isPaused)
+    if (paused.length === 0) return
+    const now = Date.now()
+    const today = getManilaToday()
+    const warnHorizon = addBusinessDays(today, PAUSE_WARN_BUSINESS_DAYS)
+
+    for (const site of paused) {
+      // At most one reminder per site per week, whichever kind applies.
+      const last = site.pause_notified_at ? new Date(site.pause_notified_at).getTime() : 0
+      if (now - last < PAUSE_NUDGE_EVERY_MS) continue
+
+      const label = site.site_name ?? site.machine_name ?? site.site
+      const ageDays = site.paused_at
+        ? Math.floor((now - new Date(site.paused_at).getTime()) / 86_400_000)
+        : 0
+      let message: string | null = null
+
+      if (site.paused_until) {
+        const until = new Date(`${String(site.paused_until).slice(0, 10)}T00:00:00+08:00`)
+        if (until.getTime() < today.getTime()) {
+          message = `⏸ *${label}* — the hold was expected to end ${site.paused_until} and has not been resumed (paused ${ageDays} days). Still paused: resume it, or agree a new date.`
+        } else if (until.getTime() <= warnHorizon.getTime()) {
+          message = `⏸ *${label}* — the hold is expected to end ${site.paused_until}. Follow up with the customer before updates resume.`
+        }
+      } else if (ageDays >= PAUSE_OPEN_ENDED_NUDGE_DAYS) {
+        message = `⏸ *${label}* — paused ${ageDays} days with no end date${site.pause_reason ? ` (${site.pause_reason})` : ''}. Worth chasing a timeline.`
+      }
+
+      if (!message) continue
+      void broadcastText(message)
+      await updateSite(site.site, { pause_notified_at: new Date().toISOString() }).catch(() => {})
+      console.log(`[scheduler] Pause reminder sent for ${site.site}`)
+    }
+  } catch (err) {
+    console.error('[scheduler] Error in pause reminders:', err)
+  }
+}
+
 export function startScheduler(): void {
   if (schedulerStarted) return
   schedulerStarted = true
@@ -254,6 +315,10 @@ export function startScheduler(): void {
   // Upstream check for all active sites — every 12 hours
   void runUpstreamCheck()
   setInterval(runUpstreamCheck, 12 * 60 * 60 * 1000)
+
+  // Pause follow-ups — every 6 hours, deduped to one nudge per site per week
+  void runPauseReminders()
+  setInterval(runPauseReminders, 6 * 60 * 60 * 1000)
 
   // VRT report link expiry (14 days / superseded) — every 6 hours
   void runVrtLinkExpiry()
