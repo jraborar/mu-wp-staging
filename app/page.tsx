@@ -1966,6 +1966,7 @@ export default function Page() {
   const [skipPluginsThemes, setSkipPluginsThemes] = useState(false)
   const [stageDeployDays, setStageDeployDays] = useState(1)
   const [stageDestination, setStageDestination] = useState('live')
+  const [securityFastTrack, setSecurityFastTrack] = useState(false)
   const [testMode, setTestMode]               = useState(false)
   const [submitting, setSubmitting] = useState(false)
 
@@ -2019,7 +2020,9 @@ export default function Page() {
       const body: Record<string, unknown> = {
         site: site.trim(),
         skipUpstream,
-        skipPluginsThemes,
+        // Fast-track implies upstream-only; the route enforces it too.
+        skipPluginsThemes: securityFastTrack ? true : skipPluginsThemes,
+        securityFastTrack,
         deployDays: stageDeployDays,
         deployDestination: stageDestination,
       }
@@ -2034,7 +2037,7 @@ export default function Page() {
     } finally {
       setSubmitting(false)
     }
-  }, [site, skipUpstream, skipPluginsThemes, stageDeployDays, stageDestination, testMode])
+  }, [site, skipUpstream, skipPluginsThemes, securityFastTrack, stageDeployDays, stageDestination, testMode])
 
   const liveIds  = new Set(liveJobs.map((j) => j.id))
   const pastJobs = history.filter((h) => !liveIds.has(h.id))
@@ -2128,6 +2131,21 @@ export default function Page() {
                   />
                   Skip plugins &amp; themes
                 </label>
+                <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={securityFastTrack}
+                    onChange={(e) => setSecurityFastTrack(e.target.checked)}
+                    className="rounded border-slate-600 bg-slate-700 accent-[#FFDC28]"
+                  />
+                  Security / core update only
+                </label>
+                {securityFastTrack && (
+                  <p className="text-[0.7rem] text-slate-500 font-mono pl-6">
+                    Upstream only. Deploys on the 24-hour security window instead of the usual wait,
+                    and does not move the site&apos;s staging cadence.
+                  </p>
+                )}
               </div>
 
               <div className="space-y-1.5 pt-1 border-t border-slate-700">
