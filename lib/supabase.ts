@@ -23,6 +23,8 @@ export interface StagingRecord {
   upstream?: string
   upstream_updated: boolean
   upstream_skipped_reason?: string
+  // Paths the upstream merge could not reconcile — the list we hand the customer.
+  upstream_conflict_files?: string[]
   upstream_updates?: Array<{ message: string; hash?: string }>
   upstream_old_version?: string
   upstream_new_version?: string
@@ -92,7 +94,7 @@ export async function listStagingHistory(limit = 30): Promise<Omit<StagingRecord
   if (!db) return []
   const { data, error } = await db
     .from('staging_history')
-    .select('id, site, site_name, multidev, upstream, upstream_updated, upstream_skipped_reason, plugins_updated, plugins_skipped, themes_updated, themes_skipped, vrt_report_url, vrt_flagged_count, vrt_status, status, started_at, completed_at')
+    .select('id, site, site_name, multidev, upstream, upstream_updated, upstream_skipped_reason, upstream_conflict_files, plugins_updated, plugins_skipped, themes_updated, themes_skipped, vrt_report_url, vrt_flagged_count, vrt_status, status, started_at, completed_at')
     .order('started_at', { ascending: false })
     .limit(limit)
   if (error) console.error('[supabase] listStagingHistory:', error.message)
