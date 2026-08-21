@@ -58,7 +58,8 @@ export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => null)
   if (!body) return Response.json({ error: 'Invalid JSON' }, { status: 400 })
 
-  const { site, multidev: multidevOverride, testMode, skipUpstream, skipPluginsThemes, deployDays, deployDestination } = body as Record<string, unknown>
+  const { site, multidev: multidevOverride, testMode, skipUpstream, skipPluginsThemes,
+          securityFastTrack, deployDays, deployDestination } = body as Record<string, unknown>
 
   if (!site || typeof site !== 'string' || !SITE_RE.test(site)) {
     return Response.json({ error: 'Invalid or missing site ID' }, { status: 400 })
@@ -73,9 +74,18 @@ export async function POST(request: NextRequest) {
     : (typeof multidevOverride === 'string' && /^[a-z0-9-]{1,11}$/.test(multidevOverride))
       ? multidevOverride
       : `mu-${dateStr}`
+  // An out-of-band security/core patch is NOT a managed-cycle run: it deploys on
+  // the site's security_deploy_hours window (24h) instead of the relative one, and
+  // it must NOT advance sites.last_deployment — otherwise a hand-run security patch
+  // drags the whole staging cadence forward. Both behaviours hang off this flag
+  // (lib/schedule.ts isFastTrack, lib/staging.ts anchor advance), which until now
+  // only the automatic upstream scan could set. Upstream-only is implied: applying
+  // plugins/themes would make it a regular run wearing a fast-track badge.
+  const fastTrack = Boolean(securityFastTrack)
   const job = createJob(site, multidev, {
     skipUpstream: Boolean(skipUpstream),
-    skipPluginsThemes: Boolean(skipPluginsThemes),
+    skipPluginsThemes: fastTrack ? true : Boolean(skipPluginsThemes),
+    securityFastTrack: fastTrack,
     deployDays: typeof deployDays === 'number' ? deployDays : undefined,
     deployDestination: typeof deployDestination === 'string' ? deployDestination : undefined,
   })
