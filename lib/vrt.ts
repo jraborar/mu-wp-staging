@@ -99,15 +99,43 @@ async function getRun(runId: string): Promise<VrtRun | null> {
   }
 }
 
+// How long to wait scales with the site's path count, because that is what the
+// work scales with: mu-vrt captures every path (twice for a baseline, to measure
+// the per-run noise floor) sequentially in one browser, and concurrent runs each
+// launch their own. A flat 120s was fine for a 5-path site running alone; it gave
+// up on apexorderpickup's 13 paths while eleven staging runs and a 13-path
+// calibration shared the worker, and the run was reported 'incomplete' even
+// though the baseline finished moments later.
+const BASELINE_MS_PER_PATH = 45_000
+const COMPARE_MS_PER_PATH  = 60_000
+const MIN_WAIT_MS =  2 * 60_000
+const MAX_WAIT_MS = 20 * 60_000
+
+function budgetFor(paths: number, msPerPath: number): number {
+  if (paths <= 0) return MIN_WAIT_MS
+  return Math.min(MAX_WAIT_MS, Math.max(MIN_WAIT_MS, paths * msPerPath))
+}
+
 async function waitForStatus(
   runId: string,
   want: VrtRun['status'] | VrtRun['status'][],
-  { timeoutMs = 180_000, everyMs = 5_000 }: { timeoutMs?: number; everyMs?: number } = {},
+  { msPerPath, everyMs = 5_000 }: { msPerPath: number; everyMs?: number },
 ): Promise<VrtRun | null> {
   const wants = Array.isArray(want) ? want : [want]
-  const deadline = Date.now() + timeoutMs
+  // Start on the floor, then re-budget once the run tells us how many paths it
+  // has — the row exists from the moment phase 1 is created, so this is known on
+  // the first poll and costs no extra request.
+  let deadline = Date.now() + MIN_WAIT_MS
+  let sized = false
   while (Date.now() < deadline) {
     const run = await getRun(runId)
+    if (run && !sized) {
+      const paths = run.results?.length ?? 0
+      if (paths > 0) {
+        deadline = Date.now() + budgetFor(paths, msPerPath)
+        sized = true
+      }
+    }
     if (run && wants.includes(run.status)) return run
     if (run?.status === 'failed') return run
     await sleep(everyMs)
@@ -121,7 +149,7 @@ async function waitForStatus(
 export async function finishCompare(multidev: string, machineName: string, runId: string): Promise<VrtRun | null> {
   // The baseline capture almost always finished during the (multi-minute) update
   // cycle, but confirm it reached awaiting_candidate before comparing.
-  const ready = await waitForStatus(runId, 'awaiting_candidate', { timeoutMs: 120_000 })
+  const ready = await waitForStatus(runId, 'awaiting_candidate', { msPerPath: BASELINE_MS_PER_PATH })
   if (!ready) {
     console.error('[vrt] baseline never reported a terminal status — skipping compare')
     return null
@@ -151,5 +179,5 @@ export async function finishCompare(multidev: string, machineName: string, runId
     return null
   }
 
-  return waitForStatus(runId, ['completed', 'failed'], { timeoutMs: 300_000 })
+  return waitForStatus(runId, ['completed', 'failed'], { msPerPath: COMPARE_MS_PER_PATH })
 }
