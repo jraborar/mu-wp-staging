@@ -635,13 +635,30 @@ export async function executeJob(job: StagingJob): Promise<void> {
           preApplyHash = entries?.[0]?.hash ?? entries?.[0]?.Hash ?? ''
         } catch {}
 
+        // runStream hands lines to the callback and returns only an exit code, so
+        // keep the output if we need to pick the conflicting paths out of it.
+        const applyLines: string[] = []
         const applyResult = await runStream(
           `terminus upstream:updates:apply --updatedb ${env(job)} 2>&1`,
-          (line) => log('info', line),
+          (line) => { applyLines.push(line); log('info', line) },
         )
 
         if (applyResult.code !== 0) {
           job.upstreamConflict = true
+          // Keep the conflicting paths. We deliberately never pass
+          // --accept-upstream (it would overwrite the customer's customizations
+          // with no way back short of a snapshot), so the resolution is theirs to
+          // make — and they can only make it if we hand them the file list.
+          job.upstreamConflictFiles = Array.from(new Set(
+            applyLines
+              .map(l => l.match(/CONFLICT \([^)]*\): Merge conflict in (.+?)\s*$/))
+              .filter((m): m is RegExpMatchArray => m !== null)
+              .map(m => m[1].trim()),
+          ))
+          if (job.upstreamConflictFiles.length > 0) {
+            log('warn', `Upstream merge conflicted in ${job.upstreamConflictFiles.length} file(s):`)
+            for (const f of job.upstreamConflictFiles) log('warn', `  · ${f}`)
+          }
           log('warn', 'Upstream update failed — possible merge conflict, attempting revert...')
           if (preApplyHash) {
             const reverted = await revertUpstreamConflict(job, preApplyHash)
@@ -864,6 +881,19 @@ export async function executeJob(job: StagingJob): Promise<void> {
       `${job.themes.updated.length} theme(s) updated`,
     )
 
+    if (job.upstreamConflict) {
+      const fileList = job.upstreamConflictFiles.length
+        ? '\n' + job.upstreamConflictFiles.slice(0, 12).map(f => `• \`${f}\``).join('\n') +
+          (job.upstreamConflictFiles.length > 12 ? `\n• …and ${job.upstreamConflictFiles.length - 12} more` : '')
+        : ''
+      postStep(
+        `⚠️ *Upstream update could not be applied — merge conflict*${fileList}\n` +
+        `Reverted, so nothing was changed. These files differ from the upstream, which usually means ` +
+        `customizations committed to the site's repo. The customer's developers need to decide: apply the ` +
+        `updates themselves, or have us apply them accepting that the customizations are overwritten.`,
+      )
+    }
+
     if (job.deployDestination === 'multidev') {
       // Multidev-only: mu_deploy never deploys (customer promotes it), so THIS
       // completion is the terminal cycle event — advance the cadence anchor.
@@ -893,9 +923,16 @@ export async function executeJob(job: StagingJob): Promise<void> {
       )
     }
 
-    finishJob(job, 'completed')
     // Reconcile the pre-booked deploy: keep it if something changed, else cancel it.
     const anythingUpdated = job.upstreamUpdated || job.plugins.updated.length > 0 || job.themes.updated.length > 0
+
+    // A run whose ONLY job was the upstream, where the upstream conflicted, applied
+    // nothing at all — calling that "completed" hides the fact that the site still
+    // needs its update. Report it as failed so it stands out in History and Slack
+    // and someone takes it to the customer. A run that also updated plugins/themes
+    // did real work, so it stays completed with the conflict called out.
+    const upstreamOnlyNoOp = job.upstreamConflict && !anythingUpdated
+    finishJob(job, upstreamOnlyNoOp ? 'failed' : 'completed')
     if (job.deployDestination !== 'multidev') {
       await reconcileDeployment(job, anythingUpdated)
       if (!anythingUpdated) log('info', 'Nothing was updated — pre-booked deploy cancelled')
@@ -904,7 +941,12 @@ export async function executeJob(job: StagingJob): Promise<void> {
       site_name: job.site_name,
       upstream: job.upstream,
       upstream_updated: job.upstreamUpdated,
-      upstream_skipped_reason: job.upstreamConflict ? 'merge conflict' : job.skipUpstream ? 'skipped by user' : undefined,
+      upstream_skipped_reason: job.upstreamConflict
+        ? (job.upstreamConflictFiles.length > 0
+            ? `merge conflict in ${job.upstreamConflictFiles.length} file(s)`
+            : 'merge conflict')
+        : job.skipUpstream ? 'skipped by user' : undefined,
+      upstream_conflict_files: job.upstreamConflictFiles.length > 0 ? job.upstreamConflictFiles : undefined,
       upstream_updates: job.upstreamUpdates.length > 0 ? job.upstreamUpdates : undefined,
       upstream_old_version: job.upstreamOldVersion,
       upstream_new_version: job.upstreamNewVersion,
@@ -915,7 +957,7 @@ export async function executeJob(job: StagingJob): Promise<void> {
       vrt_report_url: job.vrtReportUrl ?? undefined,
       vrt_flagged_count: job.vrtFlaggedCount ?? undefined,
       vrt_status: job.vrtStatus ?? undefined,
-      status: 'completed',
+      status: upstreamOnlyNoOp ? 'failed' : 'completed',
       completed_at: new Date().toISOString(),
       logs: job.logs,
     })

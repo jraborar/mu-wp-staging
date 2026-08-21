@@ -34,6 +34,9 @@ export interface StagingJob {
   upstream?: string
   upstreamUpdated: boolean
   upstreamConflict: boolean
+  // Core files the upstream merge could not reconcile — shareable with the
+  // customer, since we never force-overwrite their customizations.
+  upstreamConflictFiles: string[]
   upstreamUpdates: UpstreamUpdateEntry[]   // commit details from upstream:updates:list
   upstreamOldVersion?: string              // wp core version before apply
   upstreamNewVersion?: string              // wp core version after apply
@@ -93,6 +96,7 @@ export function createJob(site: string, multidev: string, opts: CreateJobOptions
     multidev,
     upstreamUpdated: false,
     upstreamConflict: false,
+    upstreamConflictFiles: [],
     upstreamUpdates: [],
     plugins: { updated: [], skipped: [] },
     themes:  { updated: [], skipped: [] },

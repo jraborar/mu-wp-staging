@@ -56,6 +56,7 @@ interface HistoryItem {
   upstream?: string
   upstream_updated: boolean
   upstream_skipped_reason?: string
+  upstream_conflict_files?: string[]
   upstream_updates?: UpstreamUpdateEntry[]
   upstream_old_version?: string
   upstream_new_version?: string
@@ -405,6 +406,16 @@ function HistoryRow({ item, vrtVisible }: { item: HistoryItem; vrtVisible: boole
                   : null}
               {item.upstream_skipped_reason && (
                 <p className="pl-2 text-orange-400">- Skipped — {item.upstream_skipped_reason}</p>
+              )}
+              {/* The conflicting paths, verbatim, so they can be handed to the
+                  customer's developers — we never force-overwrite customizations. */}
+              {(item.upstream_conflict_files?.length ?? 0) > 0 && (
+                <div className="pl-2 space-y-0.5">
+                  <p className="text-slate-500">Conflicting files (reverted — nothing was changed):</p>
+                  <pre className="max-h-40 overflow-auto rounded border border-slate-700 bg-slate-900/60 p-2 text-[0.7rem] text-orange-300 whitespace-pre-wrap select-all">
+{item.upstream_conflict_files!.join('\n')}
+                  </pre>
+                </div>
               )}
             </div>
           )}
