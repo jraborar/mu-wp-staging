@@ -264,6 +264,17 @@ export async function executeJob(job: StagingJob): Promise<void> {
   // Bind this job's PHP context so every terminus command picks the matching php + terminus
   // binary (per-command, no global switch). Seed from the registry; refined after env:info.
   const registrySite = await getSite(job.site).catch(() => null)
+
+  // Drupal (Composer-managed) sites take a completely different pipeline — clone the
+  // multidev, resolve composer.lock, push, then drush. Hand off before any WP-specific
+  // setup runs (the phpCtx bind happens inside runDrupalStaging).
+  if (registrySite?.platform === 'drupal') {
+    const { runDrupalStaging } = await import('@/lib/drupal')
+    return runDrupalStaging(job, registrySite)
+  }
+
+  // Bind this job's PHP context so every terminus command picks the matching php + terminus
+  // binary (per-command, no global switch). Seed from the registry; refined after env:info.
   const phpCtx = { php: registrySite?.php_version ?? '8.2' }
   terminusPhp.enterWith(phpCtx)
 

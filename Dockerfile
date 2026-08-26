@@ -22,6 +22,16 @@ RUN apt-get install -y --no-install-recommends \
 # Default to PHP 8.2 (most common on Pantheon)
 RUN update-alternatives --set php /usr/bin/php8.2
 
+# Composer — required for Drupal (Integrated Composer) staging: we clone the
+# multidev, resolve composer.lock locally, and push. Pantheon builds server-side
+# on push, so we only ever need the lock (composer update --no-install) — never a
+# full vendor install. Invoked as `phpX.Y /usr/local/bin/composer` to match the
+# site's PHP for resolution.
+RUN curl -fsSL https://getcomposer.org/download/latest-stable/composer.phar \
+    -o /usr/local/bin/composer \
+    && chmod +x /usr/local/bin/composer \
+    && php /usr/local/bin/composer --version
+
 # Install Terminus 3 (PHP 7.x/8.0/8.1) and Terminus 4 (PHP 8.2+)
 ARG TERMINUS3_VERSION=3.6.2
 ARG TERMINUS4_VERSION=4.3.2
