@@ -338,11 +338,15 @@ async function composerStrategy(
   const composerEnv = `COMPOSER_HOME=/tmp/mu_composer_home COMPOSER_ALLOW_SUPERUSER=1 COMPOSER_NO_INTERACTION=1 COMPOSER_PROCESS_TIMEOUT=900`
   const composer = (args: string) => `${composerEnv} ${php} /usr/local/bin/composer --working-dir=${workdir} ${args}`
   const gitc = (args: string) => `git -C ${workdir} ${args}`
-  // IC only rewrites the lock; committed-vendor must build vendor. --ignore-platform-reqs
-  // covers extensions the container lacks (files still download; the site's real runtime
-  // has them). Running under the matching php binary keeps VERSION resolution correct.
+  // Both paths resolve on THIS container, whose minimal PHP lacks extensions the site's
+  // real runtime has (e.g. ext-gd). Composer's solver enforces platform reqs even with
+  // --no-install, so without ignoring them it rejects every candidate ("could not be
+  // resolved") and the update silently looks like a no-op. IC only rewrites the lock, so
+  // it ignores just the EXTENSIONS (ext-*) and keeps php-version resolution honest; the
+  // committed-vendor path also builds vendor here, so it drops all platform reqs. Running
+  // under the matching php binary keeps VERSION resolution correct either way.
   const resolveFlags = integrated
-    ? '--no-install --no-audit --no-scripts --no-plugins'
+    ? '--no-install --no-audit --no-scripts --no-plugins --ignore-platform-req=ext-*'
     : '--no-audit --no-scripts --no-plugins --ignore-platform-reqs'
 
   log('status', 'Resolving multidev git URL...')
@@ -391,10 +395,16 @@ async function composerStrategy(
 
   // Phase A — Drupal core as the "upstream" update. -W pulls core's own deps.
   log('status', 'Checking for an in-constraint Drupal core update...')
-  await runStream(
+  const coreUpdate = await runStream(
     composer(`update ${CORE_UPDATE_TARGETS.join(' ')} -W ${resolveFlags} 2>&1`),
     (line) => log('info', line),
   )
+  // A failed solve (unresolvable deps, missing platform ext) leaves the lock untouched,
+  // which downstream reads as "coreChanged=false" — i.e. a hard error masquerading as
+  // "up to date". Fail loudly instead of shipping an inconclusive run as a success.
+  if (coreUpdate.code !== 0) {
+    throw new Error('Composer could not resolve a Drupal core update — see the log above. A failed solve must not be reported as "up to date".')
+  }
   const afterCore = await readLock(`${workdir}/composer.lock`)
   const coreAfter = afterCore.get('drupal/core')?.version ?? coreBefore
   const coreChanged = coreAfter !== coreBefore
@@ -411,7 +421,10 @@ async function composerStrategy(
 
   // Phase B — modules / themes / deps. Exact pins are honoured automatically.
   log('status', 'Resolving remaining module / theme / dependency updates...')
-  await runStream(composer(`update ${resolveFlags} 2>&1`), (line) => log('info', line))
+  const restUpdate = await runStream(composer(`update ${resolveFlags} 2>&1`), (line) => log('info', line))
+  if (restUpdate.code !== 0) {
+    throw new Error('Composer could not resolve module/theme/dependency updates — see the log above. A failed solve must not be reported as "no updates".')
+  }
   const finalLock = await readLock(`${workdir}/composer.lock`)
 
   const totalDiff = diffLocks(origLock, finalLock)
