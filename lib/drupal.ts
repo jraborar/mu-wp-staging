@@ -338,16 +338,6 @@ async function composerStrategy(
   const composerEnv = `COMPOSER_HOME=/tmp/mu_composer_home COMPOSER_ALLOW_SUPERUSER=1 COMPOSER_NO_INTERACTION=1 COMPOSER_PROCESS_TIMEOUT=900`
   const composer = (args: string) => `${composerEnv} ${php} /usr/local/bin/composer --working-dir=${workdir} ${args}`
   const gitc = (args: string) => `git -C ${workdir} ${args}`
-  // Both paths resolve on THIS container, whose minimal PHP lacks extensions the site's
-  // real runtime has (e.g. ext-gd). Composer's solver enforces platform reqs even with
-  // --no-install, so without ignoring them it rejects every candidate ("could not be
-  // resolved") and the update silently looks like a no-op. IC only rewrites the lock, so
-  // it ignores just the EXTENSIONS (ext-*) and keeps php-version resolution honest; the
-  // committed-vendor path also builds vendor here, so it drops all platform reqs. Running
-  // under the matching php binary keeps VERSION resolution correct either way.
-  const resolveFlags = integrated
-    ? '--no-install --no-audit --no-scripts --no-plugins --ignore-platform-req=ext-*'
-    : '--no-audit --no-scripts --no-plugins --ignore-platform-reqs'
 
   log('status', 'Resolving multidev git URL...')
   // terminus emits PHP deprecation lines on stdout; --field output is NOT JSON (no
@@ -368,6 +358,32 @@ async function composerStrategy(
   try { composerJson = await readFile(`${workdir}/composer.json`, 'utf8') } catch {}
   if (!composerJson) throw new Error('No composer.json on the multidev branch')
 
+  // Both paths resolve on THIS container, whose minimal PHP lacks extensions the site's
+  // real runtime has (e.g. ext-gd). Composer's solver enforces platform reqs even with
+  // --no-install, so without ignoring them it rejects every candidate ("could not be
+  // resolved") and the update silently looks like a no-op. IC only rewrites the lock, so
+  // it ignores just the EXTENSIONS (ext-*) and keeps php-version resolution honest; the
+  // committed-vendor path also builds vendor here, so it drops all platform reqs. Running
+  // under the matching php binary keeps VERSION resolution correct either way.
+  //
+  // merge-plugin sites are the exception: wikimedia/composer-merge-plugin injects extra
+  // requires from files that live INSIDE the module tree (e.g. Webform's optional JS
+  // libraries in web/modules/contrib/webform/composer.libraries.json). Those files don't
+  // exist until the tree is installed, and the merged requires only reach the solver when
+  // the plugin runs — so --no-install/--no-plugins would prune them, producing a lock
+  // Pantheon's own build rejects ("Required package X is not present in the lock file").
+  // For these sites we mirror Pantheon: install the tree first (below), then resolve WITH
+  // plugins on. --no-scripts stays throughout, so no package/root script hooks ever run.
+  let usesMergePlugin = false
+  try { usesMergePlugin = !!(JSON.parse(composerJson)?.extra?.['merge-plugin']) } catch {}
+  const resolveFlags = integrated
+    ? (usesMergePlugin
+        ? '--no-audit --no-scripts --ignore-platform-req=ext-*'
+        : '--no-install --no-audit --no-scripts --no-plugins --ignore-platform-req=ext-*')
+    : (usesMergePlugin
+        ? '--no-audit --no-scripts --ignore-platform-reqs'
+        : '--no-audit --no-scripts --no-plugins --ignore-platform-reqs')
+
   const origLock = await readLock(`${workdir}/composer.lock`)
   const coreBefore = origLock.get('drupal/core')?.version ?? '?'
   const constraints = await readConstraints(`${workdir}/composer.json`)
@@ -376,6 +392,20 @@ async function composerStrategy(
   // report advisories separately and never force-fix a pin. This edits the working-copy
   // composer.json only — we never `git add` composer.json (IC) / we restore it (vendor).
   await run(composer(`config --no-plugins policy.advisories.block false 2>&1`))
+
+  // merge-plugin sites: materialize the current module tree so the plugin's include files
+  // (e.g. Webform's composer.libraries.json) exist before we resolve — otherwise the merged
+  // requires are invisible and get pruned from the lock (see resolveFlags note above).
+  // Installs from the committed lock only; --no-scripts blocks script hooks; `composer
+  // install` rejects --no-audit so it is omitted here.
+  if (usesMergePlugin) {
+    log('status', 'Installing the current module tree so merged Composer requires stay in the lock...')
+    const installFlags = integrated ? '--ignore-platform-req=ext-*' : '--ignore-platform-reqs'
+    const install = await runStream(composer(`install --no-scripts ${installFlags} 2>&1`), (line) => log('info', line))
+    if (install.code !== 0) {
+      throw new Error('Composer could not install the current module tree — resolving now would drop merged (composer-merge-plugin) requires from the lock and break Pantheon\'s build. Refusing to resolve against an incomplete require set.')
+    }
+  }
 
   const commitOpts = `-c user.name=${shellEscape(GIT_AUTHOR_NAME)} -c user.email=${shellEscape(GIT_AUTHOR_EMAIL)}`
   let commits = 0
