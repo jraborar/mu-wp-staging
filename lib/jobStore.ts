@@ -1,6 +1,17 @@
 import { EventEmitter } from 'events'
 import { randomUUID } from 'crypto'
-import type { UpdateSummary } from '@/lib/wordpress'
+import type { UpdateSummary, UpdatedItem } from '@/lib/wordpress'
+
+// A composer-audit advisory, as surfaced on a Drupal run. `pinned` marks packages
+// exact-pinned in composer.json that we deliberately did NOT update even though an
+// advisory exists — reported for manual review, never force-fixed.
+export interface SecurityAdvisory {
+  package: string
+  id: string          // CVE or advisory id (SA-CONTRIB-…)
+  title: string
+  link?: string
+  pinned: boolean
+}
 
 export type LogType = 'info' | 'status' | 'warn' | 'success' | 'error' | 'delete' | 'deleted' | 'create'
 
@@ -42,6 +53,10 @@ export interface StagingJob {
   upstreamNewVersion?: string              // wp core version after apply
   plugins: UpdateSummary
   themes: UpdateSummary
+  // Drupal (Composer-managed) runs only. Modules/themes reuse plugins/themes above;
+  // core reuses the upstream* fields. These two have no WordPress equivalent.
+  composerDeps: UpdatedItem[]
+  securityAdvisories: SecurityAdvisory[]
   status: JobStatus
   logs: LogEntry[]
   startedAt: number
@@ -100,6 +115,8 @@ export function createJob(site: string, multidev: string, opts: CreateJobOptions
     upstreamUpdates: [],
     plugins: { updated: [], skipped: [] },
     themes:  { updated: [], skipped: [] },
+    composerDeps: [],
+    securityAdvisories: [],
     status: 'running',
     logs: [],
     startedAt: Date.now(),

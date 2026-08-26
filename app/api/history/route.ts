@@ -5,8 +5,10 @@ import { getAllJobs } from '@/lib/jobStore'
 export const runtime = 'nodejs'
 
 export async function GET() {
-  // site key is the UUID; resolve machine_name for display from the registry.
-  const mn = new Map((await listSites()).map((s) => [s.site, s.machine_name ?? null]))
+  // site key is the UUID; resolve machine_name + platform for display from the registry.
+  const sites = await listSites()
+  const mn = new Map(sites.map((s) => [s.site, s.machine_name ?? null]))
+  const platforms = new Map(sites.map((s) => [s.site, s.platform]))
 
   // Always include in-memory running jobs (not yet persisted with results)
   const running = getAllJobs()
@@ -16,6 +18,7 @@ export async function GET() {
       site: j.site,
       site_name: j.site_name,
       machine_name: mn.get(j.site) ?? null,
+      platform: platforms.get(j.site),
       multidev: j.multidev,
       upstream: j.upstream,
       upstream_updated: j.upstreamUpdated,
@@ -23,6 +26,8 @@ export async function GET() {
       plugins_skipped: j.plugins.skipped,
       themes_updated: j.themes.updated,
       themes_skipped: j.themes.skipped,
+      composer_deps_updated: j.composerDeps,
+      security_advisories: j.securityAdvisories,
       status: j.status,
       started_at: new Date(j.startedAt).toISOString(),
       completed_at: null,

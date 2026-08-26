@@ -35,6 +35,9 @@ interface ApprovalPayload {
 interface UpdatedItem { name: string; title: string; from: string; to: string }
 interface SkippedItem { name: string; title: string; reason: string }
 interface UpdateSummary { updated: UpdatedItem[]; skipped: SkippedItem[] }
+// Drupal only — a composer-audit advisory. `pinned` = the package is exact-pinned in
+// composer.json and was deliberately left untouched (reported for manual review).
+interface SecurityAdvisoryItem { package: string; id: string; title: string; link?: string; pinned: boolean }
 
 interface LiveJob {
   id: string
@@ -53,6 +56,7 @@ interface HistoryItem {
   machine_name?: string
   site_name?: string
   multidev: string
+  platform?: string
   upstream?: string
   upstream_updated: boolean
   upstream_skipped_reason?: string
@@ -64,6 +68,9 @@ interface HistoryItem {
   plugins_skipped: SkippedItem[]
   themes_updated: UpdatedItem[]
   themes_skipped: SkippedItem[]
+  // Drupal only — see sql/014. Modules/themes reuse plugins_/themes_ above.
+  composer_deps_updated?: UpdatedItem[]
+  security_advisories?: SecurityAdvisoryItem[]
   vrt_report_url?: string | null
   vrt_flagged_count?: number | null
   vrt_status?: string | null
@@ -296,9 +303,15 @@ function HistoryRow({ item, vrtVisible }: { item: HistoryItem; vrtVisible: boole
       year: 'numeric', hour: 'numeric', minute: '2-digit',
     })
 
-  const updatedCount = item.plugins_updated.length + item.themes_updated.length
+  // Drupal runs reuse the WP columns (modules→plugins_, themes→themes_, core→upstream_)
+  // plus two of their own: composer_deps_updated and security_advisories.
+  const isDrupal   = item.platform === 'drupal'
+  const coreLabel  = isDrupal ? 'Drupal' : 'WordPress'
+  const depsCount  = item.composer_deps_updated?.length ?? 0
+  const advisories = item.security_advisories ?? []
+  const updatedCount = item.plugins_updated.length + item.themes_updated.length + depsCount
   const skippedCount = item.plugins_skipped.length + item.themes_skipped.length
-  const hasDetails   = updatedCount > 0 || skippedCount > 0 || item.upstream_updated || !!item.upstream_skipped_reason
+  const hasDetails   = updatedCount > 0 || skippedCount > 0 || item.upstream_updated || !!item.upstream_skipped_reason || advisories.length > 0
 
   return (
     <div className="rounded-lg border border-slate-700 bg-slate-800 p-4 space-y-1.5">
@@ -395,7 +408,7 @@ function HistoryRow({ item, vrtVisible }: { item: HistoryItem; vrtVisible: boole
                     <div key={i} className="pl-2 space-y-0.5">
                       <p className="text-green-400">- {u.message}</p>
                       {i === 0 && item.upstream_old_version && item.upstream_new_version && (
-                        <p className="pl-2 text-slate-500">WordPress ({item.upstream_old_version} to {item.upstream_new_version})</p>
+                        <p className="pl-2 text-slate-500">{coreLabel} ({item.upstream_old_version} to {item.upstream_new_version})</p>
                       )}
                     </div>
                   ))
@@ -403,7 +416,7 @@ function HistoryRow({ item, vrtVisible }: { item: HistoryItem; vrtVisible: boole
                   ? <div className="pl-2 space-y-0.5">
                       <p className="text-green-400">- Applied successfully</p>
                       {item.upstream_old_version && item.upstream_new_version && (
-                        <p className="pl-2 text-slate-500">WordPress ({item.upstream_old_version} to {item.upstream_new_version})</p>
+                        <p className="pl-2 text-slate-500">{coreLabel} ({item.upstream_old_version} to {item.upstream_new_version})</p>
                       )}
                     </div>
                   : null}
@@ -427,7 +440,7 @@ function HistoryRow({ item, vrtVisible }: { item: HistoryItem; vrtVisible: boole
           {item.plugins_updated.length > 0 && (
             <div className="space-y-0.5 font-mono text-xs">
               <p className="text-slate-400 font-semibold">
-                Plugin/s <span className="text-green-400">({item.plugins_updated.length} updated):</span>
+                {isDrupal ? 'Module/s' : 'Plugin/s'} <span className="text-green-400">({item.plugins_updated.length} updated):</span>
               </p>
               {item.plugins_updated.map((p) => (
                 <p key={p.name} className="pl-2 text-slate-200">
@@ -446,6 +459,43 @@ function HistoryRow({ item, vrtVisible }: { item: HistoryItem; vrtVisible: boole
               {item.themes_updated.map((t) => (
                 <p key={t.name} className="pl-2 text-slate-200">
                   - {t.title} <span className="text-slate-500">({t.from} to {t.to})</span>
+                </p>
+              ))}
+            </div>
+          )}
+
+          {/* Composer Dependencies — Drupal only (non-module/theme packages) */}
+          {depsCount > 0 && (
+            <div className="space-y-0.5 font-mono text-xs">
+              <p className="text-slate-400 font-semibold">
+                Composer Dependencies <span className="text-green-400">({depsCount} updated):</span>
+              </p>
+              {item.composer_deps_updated!.map((d) => (
+                <p key={d.name} className="pl-2 text-slate-200">
+                  - {d.name} <span className="text-slate-500">({d.from} to {d.to})</span>
+                </p>
+              ))}
+            </div>
+          )}
+
+          {/* Security advisories — Drupal only. Pinned = reported, not auto-updated. */}
+          {advisories.length > 0 && (
+            <div className="space-y-0.5 font-mono text-xs">
+              <p className="text-slate-400 font-semibold">
+                Security advisories <span className="text-orange-400">({advisories.length}):</span>
+              </p>
+              {advisories.map((a, i) => (
+                <p key={`${a.package}-${a.id}-${i}`} className="pl-2 text-orange-400">
+                  - {a.package} <span className="text-orange-500/70">— {a.id}</span>
+                  {a.pinned && (
+                    <span className="ml-1 rounded bg-orange-400/15 px-1 text-[0.65rem] text-orange-300">
+                      pinned — manual review, not updated
+                    </span>
+                  )}
+                  {a.link && (
+                    <a href={a.link} target="_blank" rel="noopener noreferrer"
+                       className="ml-1 text-slate-500 underline hover:text-slate-300">details</a>
+                  )}
                 </p>
               ))}
             </div>
