@@ -208,6 +208,25 @@ export function currentWindowTarget(
   return null
 }
 
+// Does a regular scheduled run cover the CURRENT ISO week? Unlike isDueNow this
+// ignores time-of-day and whether the run has already fired: it answers "is this an
+// on-cadence week" so the fast-track upstream/security lane can stand down when the
+// week's scheduled run will apply the update anyway (skip_upstream off). A skip_week'd
+// week is NOT covered — the scheduled run won't fire, so the scan must still handle it.
+// security-only / inactive schedules never "cover" a week (they have no cadence run).
+export function isScheduledThisWeek(
+  sched: StagingSchedule,
+  lastDeployment?: string | null,
+  now: Date = new Date(),
+): boolean {
+  if (!sched.active || sched.cadence === 'security-only') return false
+  // A pin replaces cadence for the week it lands in (matches isDueNow's precedence).
+  if (sched.override_at) return sameWeek(parseAnchor(sched.override_at), now)
+  if (sched.cadence === 'once') return !!sched.next_staging_at && sameWeek(new Date(sched.next_staging_at), now)
+  if (sched.skip_week && sameWeek(parseAnchor(sched.skip_week), now)) return false
+  return currentWindowTarget(sched, lastDeployment, now) != null
+}
+
 // Should this schedule fire right now?
 export function isDueNow(
   sched: StagingSchedule,

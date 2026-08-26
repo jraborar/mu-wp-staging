@@ -17,7 +17,8 @@ import { run, cleanJson } from '@/lib/terminus'
 import { parseWpJson } from '@/lib/wordpress'
 import { hasRunForMultidev, listStagingWithVrt, clearStagingVrt } from '@/lib/supabase'
 import { deleteVrtRun, runIdFromReportUrl } from '@/lib/vrt'
-import { computeNextOccurrence, isDueNow } from '@/lib/cadence'
+import { computeNextOccurrence, isDueNow, isScheduledThisWeek } from '@/lib/cadence'
+import type { StagingSchedule } from '@/lib/scheduleStore'
 import { broadcastText } from '@/lib/slack'
 
 // ── Main scheduler loop ───────────────────────────────────────────────────────
@@ -25,6 +26,36 @@ import { broadcastText } from '@/lib/slack'
 let schedulerStarted = false
 
 const ACTIVE_JOB_STATUSES = new Set(['running', 'paused', 'awaiting-approval'])
+
+// Group active schedules by site so the fast-track lanes can ask "does a regular
+// scheduled run cover this ISO week?" without another round-trip per site.
+function groupSchedulesBySite(schedules: StagingSchedule[]): Map<string, StagingSchedule[]> {
+  const bySite = new Map<string, StagingSchedule[]>()
+  for (const sc of schedules) {
+    const arr = bySite.get(sc.site) ?? []
+    arr.push(sc)
+    bySite.set(sc.site, arr)
+  }
+  return bySite
+}
+
+// HARD RULE — the fast-track upstream/security lane fires OFF-WEEK ONLY. A week the
+// site is already scheduled to stage is never touched by the scan: that scheduled run
+// applies the upstream itself (skip_upstream off), and creating a separate upstream-only
+// multidev mid-week would delete the scheduled week's richer multidev (plugins/themes,
+// VRT, deploy booking). True only when the covering run WOULD apply upstream — mirrors
+// runDueJobs' effective skipUpstream (site.skip_upstream ?? sched.skip_upstream), so a
+// scheduled run that itself skips upstream does NOT suppress the scan.
+function coveredByScheduledUpstream(
+  siteName: string,
+  schedulesBySite: Map<string, StagingSchedule[]>,
+  siteSkipUpstream: boolean | null | undefined,
+  lastDeployment: string | null | undefined,
+): boolean {
+  return (schedulesBySite.get(siteName) ?? []).some(
+    sc => isScheduledThisWeek(sc, lastDeployment) && !(siteSkipUpstream ?? sc.skip_upstream),
+  )
+}
 
 async function runDueJobs(): Promise<void> {
   try {
@@ -117,6 +148,8 @@ async function runPendingSecurityChecks(): Promise<void> {
     const pending = await getPendingSecuritySites()
     if (pending.length === 0) return
 
+    const schedulesBySite = groupSchedulesBySite(await getActiveSchedules())
+
     for (const sched of pending) {
       // Guardrail: never security-stage a site that isn't opted in.
       const site = await getSite(sched.site)
@@ -126,6 +159,15 @@ async function runPendingSecurityChecks(): Promise<void> {
       }
       if (!site?.auto_stage) {
         console.log(`[scheduler] Skipping security staging for ${sched.site} — auto_stage is off`)
+        continue
+      }
+
+      // Off-week only (see coveredByScheduledUpstream): a scheduled run this ISO week
+      // will apply the security upstream itself. Stand down and clear the pending flag
+      // so we don't recreate — and destroy — that week's scheduled multidev.
+      if (coveredByScheduledUpstream(sched.site, schedulesBySite, site.skip_upstream, site.last_deployment)) {
+        console.log(`[scheduler] Skipping security staging for ${sched.site} — a scheduled run covers this ISO week`)
+        await clearSecurityCheckPending(sched.id)
         continue
       }
       // Check if Pantheon has propagated the upstream update yet
@@ -168,6 +210,7 @@ async function runUpstreamCheck(): Promise<void> {
     const eligible = sites.filter(s => s.active && s.auto_stage && !s.skip_upstream && !isPaused(s))
     if (eligible.length === 0) return
 
+    const schedulesBySite = groupSchedulesBySite(await getActiveSchedules())
     const multidev = `mu-${today}`
 
     for (const site of eligible) {
@@ -175,6 +218,13 @@ async function runUpstreamCheck(): Promise<void> {
       const stateKey = `upstream_staged_${site.site}`
       const lastStaged = await getSchedulerState(stateKey)
       if (lastStaged === today) continue
+
+      // Off-week only (see coveredByScheduledUpstream): if a regular scheduled run
+      // covers this ISO week, let it carry the upstream — don't wipe its multidev.
+      if (coveredByScheduledUpstream(site.site, schedulesBySite, site.skip_upstream, site.last_deployment)) {
+        console.log(`[scheduler] Skipping upstream scan for ${site.site} — a scheduled run covers this ISO week`)
+        continue
+      }
 
       // Dedupe across lanes: don't create a second run when the site already has
       // one today (manual/scheduled/security — all share the mu-YYMMDD name) or an

@@ -5,6 +5,7 @@ import {
   computeNextOccurrence,
   currentWindowTarget,
   isDueNow,
+  isScheduledThisWeek,
   manilaDayOfWeek,
 } from '../lib/cadence.ts'
 import type { StagingSchedule } from '../lib/scheduleStore.ts'
@@ -84,6 +85,25 @@ check('projection = the shifted week itself',       computeNextOccurrence(shifte
 check('shifted week, Tue → due (run-now)',          isDueNow(shifted, '2026-08-03', D('2026-09-08T09:00:00+08:00')), true)
 check('week after shift → not due',                 isDueNow(shifted, '2026-08-03', D('2026-09-15T09:00:00+08:00')), false)
 check('stale reference loses to newer completion',  computeNextOccurrence(s({ ...biwk, biweekly_reference_date: '2026-08-03' }), D('2026-08-20T15:00:00+08:00'), '2026-08-17'), D('2026-08-31T15:00:00+08:00'))
+
+// isScheduledThisWeek — the off-week guard for the fast-track upstream/security lane.
+// Answers "is the CURRENT ISO week an on-cadence week", ignoring time-of-day and
+// whether the run already fired (both of which isDueNow does gate on).
+console.log('\nisScheduledThisWeek (fast-track off-week guard)')
+check('weekly, on-week, Wed → covered',              isScheduledThisWeek(weekly, '2026-08-10', D('2026-08-19T09:00:00+08:00')), true)
+check('weekly, on-week, before Mon 15:00 → covered', isScheduledThisWeek(weekly, '2026-08-10', D('2026-08-17T09:00:00+08:00')), true)
+check('weekly, already staged this week → still covered',
+  isScheduledThisWeek(s({ ...weekly, last_staged_at: '2026-08-18T07:00:00Z' }), '2026-08-10', D('2026-08-20T15:00:00+08:00')), true)
+check('weekly, anchor IS this week → not covered',   isScheduledThisWeek(weekly, '2026-08-17', D('2026-08-20T15:00:00+08:00')), false)
+check('weekly, skip_week this week → not covered',   isScheduledThisWeek(s({ ...weekly, skip_week: '2026-08-17' }), '2026-08-10', D('2026-08-19T09:00:00+08:00')), false)
+check('biweekly, on-parity week → covered',          isScheduledThisWeek(biwk, '2026-08-03', D('2026-08-19T09:00:00+08:00')), true)
+check('biweekly, off-parity week → not covered',     isScheduledThisWeek(biwk, '2026-08-03', D('2026-08-26T09:00:00+08:00')), false)
+check('override_at this week → covered',             isScheduledThisWeek(s({ ...biwk, override_at: '2026-08-25T09:00:00+08:00' }), '2026-08-03', D('2026-08-26T09:00:00+08:00')), true)
+check('override_at other week → not covered',        isScheduledThisWeek(s({ ...biwk, override_at: '2026-09-01T09:00:00+08:00' }), '2026-08-03', D('2026-08-26T09:00:00+08:00')), false)
+check('once, datetime this week → covered',          isScheduledThisWeek(s({ cadence: 'once', next_staging_at: '2026-08-20T09:00:00+08:00' }), null, D('2026-08-18T09:00:00+08:00')), true)
+check('once, datetime other week → not covered',     isScheduledThisWeek(s({ cadence: 'once', next_staging_at: '2026-08-27T09:00:00+08:00' }), null, D('2026-08-18T09:00:00+08:00')), false)
+check('security-only → not covered',                 isScheduledThisWeek(s({ cadence: 'security-only' }), '2026-08-10', D('2026-08-19T09:00:00+08:00')), false)
+check('inactive → not covered',                      isScheduledThisWeek(s({ ...weekly, active: false }), '2026-08-10', D('2026-08-19T09:00:00+08:00')), false)
 
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)
