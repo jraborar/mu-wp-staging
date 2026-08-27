@@ -282,9 +282,24 @@ function UpdateSection({ label, updated, skipped }: {
   )
 }
 
-function HistoryRow({ item, vrtVisible }: { item: HistoryItem; vrtVisible: boolean }) {
+function HistoryRow({ item, vrtVisible, onCancel }: { item: HistoryItem; vrtVisible: boolean; onCancel?: () => void }) {
   const machineName = item.machine_name ?? item.site
   const [open, setOpen] = useState(false)
+  const [cancelling, setCancelling] = useState(false)
+
+  const cancelPaused = async () => {
+    setCancelling(true)
+    try {
+      await fetch(`/api/history/${item.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'cancel' }),
+      })
+      onCancel?.()
+    } finally {
+      setCancelling(false)
+    }
+  }
 
   const statusColors: Record<string, string> = {
     completed:  'text-green-400',
@@ -326,9 +341,21 @@ function HistoryRow({ item, vrtVisible }: { item: HistoryItem; vrtVisible: boole
             <span className="ml-1.5 font-mono font-normal text-slate-500 text-xs">· {machineName}</span>
           )}
         </div>
-        <span className={`font-mono text-xs font-semibold shrink-0 ${siteColor}`}>
-          {statusLabel[item.status] ?? item.status}
-        </span>
+        <div className="flex items-center gap-2 shrink-0">
+          <span className={`font-mono text-xs font-semibold ${siteColor}`}>
+            {statusLabel[item.status] ?? item.status}
+          </span>
+          {item.status === 'paused' && (
+            <button
+              onClick={cancelPaused}
+              disabled={cancelling}
+              title="Cancel this paused deployment"
+              className="rounded px-2 py-0.5 text-xs font-mono text-red-400 border border-red-800 hover:bg-red-900/30 transition-colors disabled:opacity-40"
+            >
+              {cancelling ? '…' : 'Cancel'}
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Row 2: Multidev + summary chips */}
@@ -2541,7 +2568,7 @@ export default function Page() {
                   const ref = item.completed_at ?? item.started_at
                   const fresh = now - new Date(ref).getTime() <= TTL
                   const vrtVisible = Boolean(item.vrt_report_url) && isLatest && fresh
-                  return <HistoryRow key={item.id} item={item} vrtVisible={vrtVisible} />
+                  return <HistoryRow key={item.id} item={item} vrtVisible={vrtVisible} onCancel={loadHistory} />
                 })
               })()}
             </div>
