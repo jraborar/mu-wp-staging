@@ -304,19 +304,23 @@ function HistoryRow({ item, vrtVisible, onCancel }: { item: HistoryItem; vrtVisi
   const statusColors: Record<string, string> = {
     completed:  'text-green-400',
     failed:     'text-red-400',
-    paused:     'text-blue-400',
+    paused:     'text-orange-400',
     cancelled:  'text-slate-500',
     running:    'text-yellow-400',
   }
   const siteColor  = statusColors[item.status] ?? 'text-slate-400'
   const statusLabel: Record<string, string> = { completed: 'staged' }
-  const endLabel   = item.status === 'failed' ? 'Failed:' : item.status === 'cancelled' ? 'Cancelled:' : 'Completed:'
+  const endLabel   = item.status === 'failed' ? 'Failed:' : item.status === 'paused' ? 'Paused:' : item.status === 'cancelled' ? 'Cancelled:' : 'Completed:'
 
   const fmt = (ts: string) =>
     new Date(ts).toLocaleString('en-PH', {
       timeZone: 'Asia/Manila', month: 'short', day: 'numeric',
       year: 'numeric', hour: 'numeric', minute: '2-digit',
     })
+  const dur = (s: string, e: string) => {
+    const m = Math.round((new Date(e).getTime() - new Date(s).getTime()) / 60000)
+    return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`
+  }
 
   // Drupal runs reuse the WP columns (modules→plugins_, themes→themes_, core→upstream_)
   // plus two of their own: composer_deps_updated and security_advisories.
@@ -380,6 +384,12 @@ function HistoryRow({ item, vrtVisible, onCancel }: { item: HistoryItem; vrtVisi
         {!item.upstream && updatedCount === 0 && skippedCount === 0 && item.status === 'completed' && (
           <><span className="text-slate-600">·</span><span className="text-slate-500">nothing updated</span></>
         )}
+        {item.completed_at && (
+          <>
+            <span className="text-slate-600">·</span>
+            <span className="text-slate-500">{dur(item.started_at, item.completed_at)}</span>
+          </>
+        )}
         {vrtVisible && item.vrt_report_url && (
           <>
             <span className="text-slate-600">·</span>
@@ -415,13 +425,15 @@ function HistoryRow({ item, vrtVisible, onCancel }: { item: HistoryItem; vrtVisi
 
       {/* Expandable detail */}
       {hasDetails && (
-        <button
-          onClick={() => setOpen((o) => !o)}
-          className="flex items-center gap-1 font-mono text-xs text-slate-500 hover:text-slate-300 transition-colors pt-0.5"
-        >
-          {open ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-          {open ? 'Hide details' : 'Show details'}
-        </button>
+        <div className="flex justify-end">
+          <button
+            onClick={() => setOpen((o) => !o)}
+            className="flex items-center gap-1 text-xs text-white hover:text-[#FFDC28] transition-colors"
+          >
+            {open ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+            {open ? 'Hide Details' : 'Show Details'}
+          </button>
+        </div>
       )}
 
       {open && hasDetails && (
