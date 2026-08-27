@@ -1116,7 +1116,8 @@ function SitesTab() {
           </button>
           <button onClick={() => openEdit(s)} className="text-xs text-slate-400 hover:text-white transition-colors">Edit</button>
           <button onClick={() => setOptionsFor(s)}
-            className="text-xs text-slate-400 hover:text-white transition-colors" title="Plugins and themes to skip on this site">Options</button>
+            className="text-xs text-slate-400 hover:text-white transition-colors"
+            title={s.platform === 'drupal' ? "Modules and themes to skip on this site" : "Plugins and themes to skip on this site"}>Options</button>
           {s.paused_at ? (
             <button onClick={() => resume(s)} disabled={busy === s.site}
               className="text-xs px-2 py-0.5 rounded border border-yellow-500/50 text-yellow-300 hover:bg-yellow-500/10 transition-colors disabled:opacity-40"
@@ -1506,7 +1507,7 @@ function SitesTab() {
           title={optionsFor.machine_name ?? optionsFor.site_name ?? optionsFor.site}
           onClose={() => setOptionsFor(null)}
         >
-          <UpdateOptionsTab site={optionsFor.site} />
+          <UpdateOptionsTab site={optionsFor.site} platform={optionsFor.platform} upstream={optionsFor.upstream} />
         </Modal>
       )}
     </div>
@@ -2131,7 +2132,12 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
   )
 }
 
-function UpdateOptionsTab({ site }: { site: string }) {
+function UpdateOptionsTab({ site, platform, upstream }: { site: string; platform?: string | null; upstream?: string | null }) {
+  const isDrupal = platform === 'drupal'
+  const up       = (upstream ?? '').toLowerCase()
+  const isIC     = isDrupal && !up.includes('drops-7') && !up.includes('drops-8')
+  const pluginLabel = isDrupal ? 'Modules' : 'Plugins'
+
   const [loading, setLoading]         = useState(false)
   const [saving, setSaving]           = useState(false)
   const [saved, setSaved]             = useState(false)
@@ -2147,8 +2153,11 @@ function UpdateOptionsTab({ site }: { site: string }) {
     setLoading(true)
     setSaved(false)
     try {
+      const params = new URLSearchParams({ site: site.trim() })
+      if (platform) params.set('platform', platform)
+      if (upstream) params.set('upstream', upstream)
       const [pluginsRes, prefsRes] = await Promise.all([
-        fetch(`/api/site-plugins?site=${encodeURIComponent(site.trim())}`),
+        fetch(`/api/site-plugins?${params}`),
         fetch(`/api/prefs/${encodeURIComponent(site.trim())}`),
       ])
       if (pluginsRes.ok) {
@@ -2190,7 +2199,9 @@ function UpdateOptionsTab({ site }: { site: string }) {
         <CardHeader
           icon={<Package className="w-5 h-5" />}
           title="Update Options"
-          description="Configure which plugins and themes to skip. Applies to all staging runs — manual, scheduled, and automated."
+          description={isDrupal
+            ? "Configure which modules and themes to skip. Applies to all staging runs — manual, scheduled, and automated."
+            : "Configure which plugins and themes to skip. Applies to all staging runs — manual, scheduled, and automated."}
         />
         <div className="px-6 py-5 space-y-4">
 
@@ -2205,14 +2216,28 @@ function UpdateOptionsTab({ site }: { site: string }) {
             <p className="text-sm text-slate-500 font-mono text-center py-4">Enter a site ID in the Stage tab first</p>
           )}
           {loading && (
-            <p className="text-sm text-slate-500 font-mono text-center py-4">Loading plugin list from live…</p>
+            <p className="text-sm text-slate-500 font-mono text-center py-4">
+              {isDrupal ? 'Loading module list from live…' : 'Loading plugin list from live…'}
+            </p>
           )}
 
-          {loaded && !loading && (
+          {/* IC Drupal: exclusions managed by Composer */}
+          {isIC && (
+            <div className="rounded-lg border border-slate-700 bg-slate-900/50 px-4 py-4 space-y-1">
+              <p className="text-sm font-mono text-slate-300">
+                This site was built using Composer, so exclusions are disabled.
+              </p>
+              <p className="text-xs font-mono text-slate-500">
+                Update types are inherited from Composer.
+              </p>
+            </div>
+          )}
+
+          {loaded && !loading && !isIC && (
             <>
-              {/* Plugins accordion */}
+              {/* Plugins / Modules accordion */}
               <ItemAccordion
-                label="Plugins"
+                label={pluginLabel}
                 items={plugins}
                 skips={pluginSkips}
                 setSkips={setPluginSkips}
