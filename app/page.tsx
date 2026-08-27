@@ -2267,6 +2267,8 @@ export default function Page() {
   const [liveJobs, setLiveJobs]             = useState<LiveJob[]>([])
   const [history, setHistory]               = useState<HistoryItem[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
+  const [historyPage, setHistoryPage]       = useState(0)
+  const HISTORY_PAGE_SIZE = 5
   const seenJobIds = useRef<Set<string>>(new Set())
 
   // Poll for running jobs
@@ -2291,6 +2293,7 @@ export default function Page() {
 
   const loadHistory = useCallback(async () => {
     setHistoryLoading(true)
+    setHistoryPage(0)
     try {
       const res = await fetch('/api/history')
       if (res.ok) setHistory(await res.json())
@@ -2566,6 +2569,8 @@ export default function Page() {
               {(() => {
                 // A VRT link stays visible only on the newest run per site and for
                 // 14 days — older/superseded reports are purged by the cleanup sweep.
+                // latestVrt is computed over ALL pastJobs so visibility is correct
+                // even when the newest run for a site is on a different page.
                 const TTL = 14 * 24 * 60 * 60 * 1000
                 const now = Date.now()
                 const latestVrt = new Map<string, { id: string; ts: number }>()
@@ -2575,13 +2580,35 @@ export default function Page() {
                   const cur = latestVrt.get(it.site)
                   if (!cur || ts > cur.ts) latestVrt.set(it.site, { id: it.id, ts })
                 }
-                return pastJobs.map((item) => {
-                  const isLatest = latestVrt.get(item.site)?.id === item.id
-                  const ref = item.completed_at ?? item.started_at
-                  const fresh = now - new Date(ref).getTime() <= TTL
-                  const vrtVisible = Boolean(item.vrt_report_url) && isLatest && fresh
-                  return <HistoryRow key={item.id} item={item} vrtVisible={vrtVisible} onCancel={loadHistory} />
-                })
+                const totalPages = Math.max(1, Math.ceil(pastJobs.length / HISTORY_PAGE_SIZE))
+                const safePage   = Math.min(historyPage, totalPages - 1)
+                const paginated  = pastJobs.slice(safePage * HISTORY_PAGE_SIZE, (safePage + 1) * HISTORY_PAGE_SIZE)
+                return (
+                  <>
+                    {paginated.map((item) => {
+                      const isLatest = latestVrt.get(item.site)?.id === item.id
+                      const ref = item.completed_at ?? item.started_at
+                      const fresh = now - new Date(ref).getTime() <= TTL
+                      const vrtVisible = Boolean(item.vrt_report_url) && isLatest && fresh
+                      return <HistoryRow key={item.id} item={item} vrtVisible={vrtVisible} onCancel={loadHistory} />
+                    })}
+                    {totalPages > 1 && (
+                      <div className="flex items-center justify-center gap-2 pt-2">
+                        <button
+                          onClick={() => setHistoryPage((p) => Math.max(0, p - 1))}
+                          disabled={safePage === 0}
+                          className="rounded border border-slate-600 px-3 py-1 text-xs text-slate-400 hover:border-slate-400 disabled:opacity-30 transition-colors"
+                        >← Prev</button>
+                        <span className="font-mono text-xs text-slate-500">{safePage + 1} / {totalPages}</span>
+                        <button
+                          onClick={() => setHistoryPage((p) => Math.min(totalPages - 1, p + 1))}
+                          disabled={safePage >= totalPages - 1}
+                          className="rounded border border-slate-600 px-3 py-1 text-xs text-slate-400 hover:border-slate-400 disabled:opacity-30 transition-colors"
+                        >Next →</button>
+                      </div>
+                    )}
+                  </>
+                )
               })()}
             </div>
           </div>
