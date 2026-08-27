@@ -1713,9 +1713,12 @@ function toManilaDatetimeLocal(iso: string): string {
 }
 
 function UpcomingTab() {
-  const [upcoming, setUpcoming]   = useState<UpcomingEntry[]>([])
-  const [loading, setLoading]     = useState(true)
-  const [editingKey, setEditingKey]       = useState<string | null>(null)   // `${id}-${i}`
+  const [upcoming, setUpcoming]           = useState<UpcomingEntry[]>([])
+  const [loading, setLoading]             = useState(true)
+  const [accordionOpen, setAccordionOpen] = useState(true)
+  const [upcomingPage, setUpcomingPage]   = useState(0)
+  const UPCOMING_PAGE_SIZE                = 5
+  const [editingKey, setEditingKey]       = useState<string | null>(null)   // `${id}-${globalIdx}`
   const [editFor, setEditFor]             = useState('')
   const [applyScope, setApplyScope]       = useState<'this' | 'all' | null>(null)
   const [skippingKey, setSkippingKey]     = useState<string | null>(null)
@@ -1806,16 +1809,17 @@ function UpcomingTab() {
     })
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <CalendarClock className="w-4 h-4 text-slate-400" />
-          <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-widest">Upcoming Stagings</h3>
+          <h3 className="text-sm font-semibold text-white uppercase tracking-widest">Upcoming Stagings</h3>
         </div>
         <button
           onClick={load}
           disabled={loading}
-          className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-[#FFDC28] transition-colors disabled:opacity-40"
+          className="flex items-center gap-1.5 text-xs text-white hover:text-[#FFDC28] transition-colors disabled:opacity-40"
         >
           <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
           Refresh
@@ -1832,126 +1836,164 @@ function UpcomingTab() {
         </div>
       )}
 
-      {upcoming.map((u, i) => {
-        const key      = `${u.id}-${i}`
-        const isFirst  = i === 0
-        const isEditing   = editingKey === key
-        const isSkipping  = skippingKey === key
-        const isRunningNow = runningId === u.id
+      {upcoming.length > 0 && (
+        <div className="rounded-xl border border-slate-700 bg-slate-800 overflow-hidden">
+          {/* Accordion toggle */}
+          <button
+            onClick={() => setAccordionOpen(o => !o)}
+            className="w-full flex items-center justify-between px-5 py-3 hover:bg-slate-700/40 transition-colors"
+          >
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-[#FFDC28] animate-pulse inline-block" />
+              <h3 className="text-sm font-semibold text-white uppercase tracking-widest">Upcoming Stagings</h3>
+              <span className="text-xs rounded-full bg-slate-600 text-slate-300 px-2 py-0.5 font-mono">
+                {upcoming.length}
+              </span>
+            </div>
+            {accordionOpen
+              ? <ChevronUp className="w-4 h-4 text-slate-400" />
+              : <ChevronDown className="w-4 h-4 text-slate-400" />}
+          </button>
 
-        return (
-          <div key={key} className="rounded-lg border border-slate-700 bg-slate-800 p-4 space-y-3">
-            {/* Row: site + datetime + actions */}
-            <div className="flex items-start gap-3">
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="font-mono text-sm font-semibold text-white">{u.site_name ?? u.machine_name ?? u.site}</span>
-                  {u.due_now ? (
-                    <span className="text-xs rounded border border-green-500/40 text-green-400 px-1.5 py-0.5 font-mono">due now</span>
-                  ) : isFirst && (
-                    <span className="text-xs rounded border border-yellow-500/40 text-yellow-400 px-1.5 py-0.5 font-mono">next</span>
-                  )}
-                  {(u.skip_upstream || u.skip_plugins_themes) && (
-                    <span className="text-xs rounded bg-slate-700 px-1.5 py-0.5 text-slate-400 font-mono">
-                      {u.skip_upstream && u.skip_plugins_themes ? 'upstream+plugins skipped' : u.skip_upstream ? 'upstream skipped' : 'plugins/themes skipped'}
-                    </span>
-                  )}
-                </div>
-                <p className="text-xs text-slate-400 font-mono mt-0.5">{CADENCE_LABELS[u.cadence as Cadence] ?? u.cadence}</p>
+          {/* Accordion body */}
+          {accordionOpen && (() => {
+            const totalPages = Math.max(1, Math.ceil(upcoming.length / UPCOMING_PAGE_SIZE))
+            const safePage   = Math.min(upcomingPage, totalPages - 1)
+            const paged      = upcoming.slice(safePage * UPCOMING_PAGE_SIZE, (safePage + 1) * UPCOMING_PAGE_SIZE)
+            return (
+              <div className="border-t border-slate-700">
+                {paged.map((u, i) => {
+                  const globalIdx    = safePage * UPCOMING_PAGE_SIZE + i
+                  const key          = `${u.id}-${globalIdx}`
+                  const isFirst      = globalIdx === 0
+                  const isLast       = i === paged.length - 1
+                  const isEditing    = editingKey === key
+                  const isSkipping   = skippingKey === key
+                  const isRunningNow = runningId === u.id
 
-                {isEditing ? (
-                  <div className="mt-2 space-y-2">
-                    <input
-                      type="datetime-local"
-                      value={editFor}
-                      onChange={e => setEditFor(e.target.value)}
-                      className="rounded border border-slate-600 bg-slate-700 px-2 py-1 font-mono text-xs text-white focus:border-[#FFDC28] focus:outline-none"
-                    />
-                    {/* Apply scope prompt — only for earliest entry */}
-                    {isFirst && (
-                      <div className="space-y-1.5">
-                        <p className="text-xs text-slate-400 font-mono">Apply this change to:</p>
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => setApplyScope('this')}
-                            className={`rounded border px-2.5 py-1 font-mono text-xs transition-colors ${applyScope === 'this' ? 'border-[#FFDC28] text-[#FFDC28] bg-[#FFDC28]/10' : 'border-slate-600 text-slate-400 hover:border-slate-400'}`}
-                          >
-                            This occurrence only
-                          </button>
-                          <button
-                            onClick={() => setApplyScope('all')}
-                            className={`rounded border px-2.5 py-1 font-mono text-xs transition-colors ${applyScope === 'all' ? 'border-[#FFDC28] text-[#FFDC28] bg-[#FFDC28]/10' : 'border-slate-600 text-slate-400 hover:border-slate-400'}`}
-                          >
-                            All future occurrences
-                          </button>
+                  return (
+                    <div key={key} className={`p-4 space-y-2${!isLast ? ' border-b border-slate-700/60' : ''}`}>
+                      <div className="flex items-start gap-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-mono text-sm font-semibold text-white">{u.site_name ?? u.machine_name ?? u.site}</span>
+                            {u.due_now ? (
+                              <span className="text-xs rounded border border-green-500/40 text-green-400 px-1.5 py-0.5 font-mono">due now</span>
+                            ) : isFirst && (
+                              <span className="text-xs rounded border border-yellow-500/40 text-yellow-400 px-1.5 py-0.5 font-mono">next</span>
+                            )}
+                            <span className="text-xs rounded border border-[#FFDC28]/40 text-[#FFDC28] px-1.5 py-0.5 font-mono">
+                              {CADENCE_LABELS[u.cadence as Cadence] ?? u.cadence}
+                            </span>
+                            {(u.skip_upstream || u.skip_plugins_themes) && (
+                              <span className="text-xs rounded bg-slate-700 px-1.5 py-0.5 text-slate-400 font-mono">
+                                {u.skip_upstream && u.skip_plugins_themes ? 'upstream+plugins skipped' : u.skip_upstream ? 'upstream skipped' : 'plugins/themes skipped'}
+                              </span>
+                            )}
+                          </div>
+
+                          {isEditing ? (
+                            <div className="mt-2 space-y-2">
+                              <input
+                                type="datetime-local"
+                                value={editFor}
+                                onChange={e => setEditFor(e.target.value)}
+                                className="rounded border border-slate-600 bg-slate-700 px-2 py-1 font-mono text-xs text-white focus:border-[#FFDC28] focus:outline-none"
+                              />
+                              {isFirst && (
+                                <div className="space-y-1.5">
+                                  <p className="text-xs text-slate-400 font-mono">Apply this change to:</p>
+                                  <div className="flex gap-2">
+                                    <button
+                                      onClick={() => setApplyScope('this')}
+                                      className={`rounded border px-2.5 py-1 font-mono text-xs transition-colors ${applyScope === 'this' ? 'border-[#FFDC28] text-[#FFDC28] bg-[#FFDC28]/10' : 'border-slate-600 text-slate-400 hover:border-slate-400'}`}
+                                    >This occurrence only</button>
+                                    <button
+                                      onClick={() => setApplyScope('all')}
+                                      className={`rounded border px-2.5 py-1 font-mono text-xs transition-colors ${applyScope === 'all' ? 'border-[#FFDC28] text-[#FFDC28] bg-[#FFDC28]/10' : 'border-slate-600 text-slate-400 hover:border-slate-400'}`}
+                                    >All future occurrences</button>
+                                  </div>
+                                </div>
+                              )}
+                              <div className="flex gap-2">
+                                <button
+                                  onClick={() => saveEdit(u)}
+                                  disabled={saving || !editFor || (isFirst && !applyScope)}
+                                  className="rounded border border-green-500/40 px-2.5 py-1 font-mono text-xs text-green-400 hover:bg-green-400/10 disabled:opacity-40 transition-colors"
+                                >{saving ? 'Saving…' : 'Save'}</button>
+                                <button
+                                  onClick={() => { setEditingKey(null); setApplyScope(null) }}
+                                  className="rounded border border-slate-600 px-2.5 py-1 font-mono text-xs text-slate-400 hover:bg-slate-700 transition-colors"
+                                >Cancel</button>
+                              </div>
+                            </div>
+                          ) : (
+                            <p className="font-mono text-xs text-slate-300 mt-1">{fmt(u.at)}</p>
+                          )}
                         </div>
+
+                        {!isEditing && (
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            {isSkipping ? (
+                              <>
+                                <span className="font-mono text-xs text-orange-400 mr-1">Skip this?</span>
+                                <button
+                                  onClick={() => skipOccurrence(u)}
+                                  disabled={saving}
+                                  className="rounded border border-orange-500/40 px-2 py-1 font-mono text-xs text-orange-400 hover:bg-orange-400/10 disabled:opacity-40 transition-colors"
+                                >Yes</button>
+                                <button
+                                  onClick={() => setSkippingKey(null)}
+                                  className="rounded border border-slate-600 px-2 py-1 font-mono text-xs text-slate-400 hover:bg-slate-700 transition-colors"
+                                >No</button>
+                              </>
+                            ) : (
+                              <>
+                                <button
+                                  onClick={() => runNow(u)}
+                                  disabled={!!isRunningNow}
+                                  title="Run Now"
+                                  className="rounded-lg bg-[#FFDC28] hover:bg-[#E6C625] px-2.5 py-1.5 text-xs font-semibold text-slate-900 transition-colors disabled:opacity-40"
+                                >{isRunningNow ? '…' : '▶'}</button>
+                                <button
+                                  onClick={() => startEdit(u, globalIdx)}
+                                  title="Edit"
+                                  className="rounded border border-slate-600 px-2.5 py-1 font-mono text-xs text-slate-400 hover:border-slate-400 hover:text-white transition-colors"
+                                >✎</button>
+                                <button
+                                  onClick={() => setSkippingKey(key)}
+                                  title="Skip this occurrence"
+                                  className="rounded border border-orange-500/40 px-2.5 py-1 font-mono text-xs text-orange-400 hover:bg-orange-400/10 transition-colors"
+                                >✕</button>
+                              </>
+                            )}
+                          </div>
+                        )}
                       </div>
-                    )}
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => saveEdit(u)}
-                        disabled={saving || !editFor || (isFirst && !applyScope)}
-                        className="rounded border border-green-500/40 px-2.5 py-1 font-mono text-xs text-green-400 hover:bg-green-400/10 disabled:opacity-40 transition-colors"
-                      >
-                        {saving ? 'Saving…' : 'Save'}
-                      </button>
-                      <button
-                        onClick={() => { setEditingKey(null); setApplyScope(null) }}
-                        className="rounded border border-slate-600 px-2.5 py-1 font-mono text-xs text-slate-400 hover:bg-slate-700 transition-colors"
-                      >
-                        Cancel
-                      </button>
                     </div>
+                  )
+                })}
+
+                {totalPages > 1 && (
+                  <div className="flex items-center justify-center gap-2 px-5 py-2 border-t border-slate-700/60">
+                    <button
+                      onClick={() => setUpcomingPage(p => Math.max(0, p - 1))}
+                      disabled={safePage === 0}
+                      className="rounded border border-slate-600 px-3 py-1 text-xs text-slate-400 hover:border-slate-400 disabled:opacity-30 transition-colors"
+                    >← Prev</button>
+                    <span className="font-mono text-xs text-slate-500">{safePage + 1} / {totalPages}</span>
+                    <button
+                      onClick={() => setUpcomingPage(p => Math.min(totalPages - 1, p + 1))}
+                      disabled={safePage >= totalPages - 1}
+                      className="rounded border border-slate-600 px-3 py-1 text-xs text-slate-400 hover:border-slate-400 disabled:opacity-30 transition-colors"
+                    >Next →</button>
                   </div>
-                ) : (
-                  <p className="text-sm text-slate-200 font-mono mt-1">{fmt(u.at)}</p>
                 )}
               </div>
-
-              {/* Action buttons */}
-              {!isEditing && (
-                <div className="flex items-center gap-1.5 shrink-0">
-                  {isSkipping ? (
-                    <>
-                      <span className="font-mono text-xs text-orange-400 mr-1">Skip this?</span>
-                      <button
-                        onClick={() => skipOccurrence(u)}
-                        disabled={saving}
-                        className="rounded border border-orange-500/40 px-2 py-1 font-mono text-xs text-orange-400 hover:bg-orange-400/10 disabled:opacity-40 transition-colors"
-                      >Yes</button>
-                      <button
-                        onClick={() => setSkippingKey(null)}
-                        className="rounded border border-slate-600 px-2 py-1 font-mono text-xs text-slate-400 hover:bg-slate-700 transition-colors"
-                      >No</button>
-                    </>
-                  ) : (
-                    <>
-                      <button
-                        onClick={() => runNow(u)}
-                        disabled={!!isRunningNow}
-                        title="Run Now"
-                        className="rounded border border-[#FFDC28]/40 px-2.5 py-1 font-mono text-xs text-[#FFDC28] hover:bg-[#FFDC28]/10 disabled:opacity-40 transition-colors"
-                      >
-                        {isRunningNow ? '…' : '▶'}
-                      </button>
-                      <button
-                        onClick={() => startEdit(u, i)}
-                        title="Edit"
-                        className="rounded border border-slate-600 px-2.5 py-1 font-mono text-xs text-slate-400 hover:border-slate-400 hover:text-white transition-colors"
-                      >✎</button>
-                      <button
-                        onClick={() => setSkippingKey(key)}
-                        title="Skip this occurrence"
-                        className="rounded border border-orange-500/40 px-2.5 py-1 font-mono text-xs text-orange-400 hover:bg-orange-400/10 transition-colors"
-                      >✕</button>
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-        )
-      })}
+            )
+          })()}
+        </div>
+      )}
     </div>
   )
 }
