@@ -211,6 +211,18 @@ function parseConflictingPackages(output: string): string[] {
   return [...pkgs]
 }
 
+// Parse `composer outdated --locked --direct --format=json` output.
+// Returns root-required package names that have a newer version available.
+function parseOutdated(output: string): string[] {
+  try {
+    const json = JSON.parse(output)
+    const list = json?.installed ?? json?.packages ?? []
+    return (list as { name: string }[]).map(p => p.name)
+  } catch {
+    return []
+  }
+}
+
 async function readConstraints(composerJsonPath: string): Promise<Record<string, string>> {
   try {
     const d = JSON.parse(await readFile(composerJsonPath, 'utf8'))
@@ -475,6 +487,7 @@ async function composerStrategy(
   const origLockRaw = await readFile(`${workdir}/composer.lock`, 'utf8')
   const origComposerJsonRaw = await readFile(`${workdir}/composer.json`, 'utf8')
   const autoSkipped: string[] = []
+  let composerCmd = `update ${resolveFlags} 2>&1`
 
   for (let skipRound = 0; skipRound <= 10; skipRound++) {
     if (skipRound === 10) {
@@ -482,10 +495,29 @@ async function composerStrategy(
     }
     let phaseOutput = ''
     const restUpdate = await runStream(
-      composer(`update ${resolveFlags} 2>&1`),
+      composer(composerCmd),
       (line) => { phaseOutput += line + '\n'; log('info', line) },
     )
-    if (restUpdate.code === 0) break
+    if (restUpdate.code === 0) {
+      // Detect silent no-op: exit 0 but lock unchanged while packages have available updates.
+      // Composer 2's conservative solver succeeds by doing nothing when incompatible packages
+      // block the graph. Switch to a targeted update so it fails loudly and the retry loop
+      // can strip the blockers and update the remaining compatible packages.
+      if (autoSkipped.length === 0) {
+        const lockNow = await readFile(`${workdir}/composer.lock`, 'utf8')
+        if (lockNow === origLockRaw) {
+          log('info', 'Phase B: lock unchanged — checking for held-back packages via composer outdated...')
+          const outdatedRaw = (await run(composer(`outdated --locked --direct --no-dev --format=json 2>&1`))).stdout
+          const outdated = parseOutdated(outdatedRaw)
+          if (outdated.length > 0) {
+            log('warn', `${outdated.length} package(s) held back by conservative solver — retrying with targeted update`)
+            composerCmd = `update ${outdated.join(' ')} -W ${resolveFlags} 2>&1`
+            continue
+          }
+        }
+      }
+      break
+    }
 
     const blockers = parseConflictingPackages(phaseOutput).filter(p => !autoSkipped.includes(p))
     if (!blockers.length) {
