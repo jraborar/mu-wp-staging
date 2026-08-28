@@ -1,4 +1,4 @@
-import { readFile } from 'fs/promises'
+import { readFile, writeFile } from 'fs/promises'
 import {
   type StagingJob,
   type SecurityAdvisory,
@@ -197,6 +197,18 @@ function diffLocks(before: Map<string, LockEntry>, after: Map<string, LockEntry>
   const byName = (a: UpdatedItem, b: UpdatedItem) => a.name.localeCompare(b.name)
   diff.core.sort(byName); diff.modules.sort(byName); diff.themes.sort(byName); diff.deps.sort(byName)
   return diff
+}
+
+// Extract root-required package names from a failed `composer update` error output.
+// The solver prints "Root composer.json requires <pkg> <constraint>" for each
+// package it cannot satisfy — these are the ones blocking the solve.
+function parseConflictingPackages(output: string): string[] {
+  const pkgs = new Set<string>()
+  for (const line of output.split('\n')) {
+    const m = line.match(/Root composer\.json requires ([\w.\-/]+)/i)
+    if (m) pkgs.add(m[1])
+  }
+  return [...pkgs]
 }
 
 async function readConstraints(composerJsonPath: string): Promise<Record<string, string>> {
@@ -449,17 +461,93 @@ async function composerStrategy(
     log('info', `Drupal core is up to date (${coreBefore}) — nothing new within constraint`)
   }
 
-  // Phase B — modules / themes / deps. Exact pins are honoured automatically.
+  // Phase B — modules / themes / deps, with auto-skip for packages that have no
+  // release compatible with the site's Drupal major (e.g. drupal/micro_site still
+  // on ^10 while the site runs 11.x). On each solve failure we identify which
+  // root-required packages are blocking, strip them from the working composer.json,
+  // add them to the skipped list, and retry — up to 10 rounds.
+  //
+  // After a clean solve we patch the skipped packages' original lock entries back
+  // into the new lock (so Pantheon's IC build continues to install them as before),
+  // restore composer.json to its original content, and run `composer update --lock`
+  // to refresh the content-hash so the committed lock stays consistent.
   log('status', 'Resolving remaining module / theme / dependency updates...')
-  const restUpdate = await runStream(composer(`update ${resolveFlags} 2>&1`), (line) => log('info', line))
-  if (restUpdate.code !== 0) {
-    throw new Error('Composer could not resolve module/theme/dependency updates — see the log above. A failed solve must not be reported as "no updates".')
+  const origLockRaw = await readFile(`${workdir}/composer.lock`, 'utf8')
+  const origComposerJsonRaw = await readFile(`${workdir}/composer.json`, 'utf8')
+  const autoSkipped: string[] = []
+
+  for (let skipRound = 0; skipRound <= 10; skipRound++) {
+    if (skipRound === 10) {
+      throw new Error('Composer phase B: resolve still failing after 10 skip rounds — too many incompatible packages')
+    }
+    let phaseOutput = ''
+    const restUpdate = await runStream(
+      composer(`update ${resolveFlags} 2>&1`),
+      (line) => { phaseOutput += line + '\n'; log('info', line) },
+    )
+    if (restUpdate.code === 0) break
+
+    const blockers = parseConflictingPackages(phaseOutput).filter(p => !autoSkipped.includes(p))
+    if (!blockers.length) {
+      throw new Error('Composer could not resolve module/theme/dependency updates — see the log above. A failed solve must not be reported as "no updates".')
+    }
+
+    const cjson = JSON.parse(await readFile(`${workdir}/composer.json`, 'utf8'))
+    let stripped = 0
+    for (const pkg of blockers) {
+      for (const section of ['require', 'require-dev'] as const) {
+        if (cjson[section]?.[pkg]) {
+          const lockedVer = origLock.get(pkg)?.version ?? 'current'
+          delete cjson[section][pkg]
+          autoSkipped.push(pkg)
+          const bucket = origLock.get(pkg)?.type === 'drupal-theme' ? 'themes' : 'plugins'
+          job[bucket].skipped.push({
+            name: pkg, title: pkg,
+            reason: `no Drupal ${profile.coreMajor} compatible release — held at ${lockedVer}`,
+          })
+          log('warn', `⚠ Skipping ${pkg} (held at ${lockedVer}): no Drupal ${profile.coreMajor} compatible release`)
+          stripped++
+          break
+        }
+      }
+    }
+    if (!stripped) {
+      throw new Error('Composer could not resolve module/theme/dependency updates — blocking packages could not be identified in composer.json.')
+    }
+    await writeFile(`${workdir}/composer.json`, JSON.stringify(cjson, null, 4))
   }
+
+  if (autoSkipped.length > 0) {
+    // Patch the skipped packages back into the resolved lock from the original, so
+    // Pantheon's IC build continues to install them at their current versions.
+    const newLock = JSON.parse(await readFile(`${workdir}/composer.lock`, 'utf8')) as Record<string, unknown>
+    const origLockParsed = JSON.parse(origLockRaw) as Record<string, Array<{ name: string }>>
+    for (const pkg of autoSkipped) {
+      for (const section of ['packages', 'packages-dev'] as const) {
+        const entry = origLockParsed[section]?.find(p => p.name === pkg)
+        if (entry) {
+          const arr = newLock[section] as Array<{ name: string }>
+          if (!arr?.find(p => p.name === pkg)) arr.push(entry)
+          break
+        }
+      }
+    }
+    await writeFile(`${workdir}/composer.lock`, JSON.stringify(newLock, null, 4))
+
+    // Restore original composer.json so the committed lock's content-hash stays valid.
+    await writeFile(`${workdir}/composer.json`, origComposerJsonRaw)
+    const lockHash = await run(composer(`update --lock 2>&1`))
+    if (lockHash.code !== 0) {
+      log('warn', 'Could not refresh lock file content-hash — the lock may show as outdated on Pantheon (non-blocking)')
+    }
+  }
+
   const finalLock = await readLock(`${workdir}/composer.lock`)
 
   const totalDiff = diffLocks(origLock, finalLock)
-  job.plugins = { updated: totalDiff.modules, skipped: [] }
-  job.themes = { updated: totalDiff.themes, skipped: [] }
+  // Preserve any auto-skipped items accumulated during the Phase B retry loop.
+  job.plugins = { updated: totalDiff.modules, skipped: job.plugins.skipped }
+  job.themes  = { updated: totalDiff.themes,  skipped: job.themes.skipped  }
   job.composerDeps = totalDiff.deps
 
   const restChanged = totalDiff.modules.length + totalDiff.themes.length + totalDiff.deps.length
