@@ -1,0 +1,187 @@
+name: Auto-create linked issues on PR open
+
+on:
+  pull_request:
+    types: [opened]
+
+jobs:
+  link-issues:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const pr   = context.payload.pull_request
+            const body = pr.body || ''
+
+            // Skip if PR already has closing keywords
+            if (/\b(closes|fixes|resolves)\s+#\d+/i.test(body)) {
+              console.log('PR already references an issue — skipping.')
+              return
+            }
+
+            // Label definitions: name, color, description, keyword patterns
+            const LABEL_RULES = [
+              {
+                name: 'bug',
+                color: 'EF4444',
+                description: 'Something is broken or incorrect',
+                patterns: /\b(fix|bug|error|broken|crash|issue|fail|revert|regression)\b/i,
+              },
+              {
+                name: 'feature',
+                color: 'EFD01B',
+                description: 'New capability or functionality',
+                patterns: /\b(add|new|feature|implement|introduce|create|build|scaffold|support)\b/i,
+              },
+              {
+                name: 'enhancement',
+                color: '6633CC',
+                description: 'Improvement to existing functionality',
+                patterns: /\b(update|upgrade|improve|enhance|optimis|optimiz|refactor|clean|polish|simplif|restructur|migrat|replac|rework)\b/i,
+              },
+              {
+                name: 'documentation',
+                color: '60A5FA',
+                description: 'Docs, comments, or README changes',
+                patterns: /\b(doc|docs|documentation|readme|comment|changelog|wiki|guide)\b/i,
+              },
+              {
+                name: 'testing',
+                color: '22C55E',
+                description: 'Tests or coverage improvements',
+                patterns: /\b(test|spec|coverage|e2e|unit|integration|assert|mock|stub)\b/i,
+              },
+              {
+                name: 'chore',
+                color: '6B6B6B',
+                description: 'Maintenance, deps, CI/CD, tooling',
+                patterns: /\b(chore|dep|deps|dependency|dependencies|ci|workflow|pipeline|bump|lock|build|lint|config|env|secret|cron)\b/i,
+              },
+              {
+                name: 'ui',
+                color: 'F97316',
+                description: 'Visual, layout, or design changes',
+                patterns: /\b(style|ui|ux|design|css|layout|theme|color|font|icon|component|tailwind|visual|modal|drawer|toast)\b/i,
+              },
+            ]
+
+            // Ensure all labels exist in the repo (create if missing)
+            async function ensureLabel(label) {
+              try {
+                await github.rest.issues.createLabel({
+                  owner:       context.repo.owner,
+                  repo:        context.repo.repo,
+                  name:        label.name,
+                  color:       label.color,
+                  description: label.description,
+                })
+                console.log(`Created label: ${label.name}`)
+              } catch (e) {
+                // 422 = the label already exists. Do NOT stop there: GitHub
+                // seeds every repo with bug / documentation / enhancement in
+                // its own palette, so leaving them alone means three of the
+                // seven never take the Pantheon colours and the issue list
+                // looks half-themed. Update instead.
+                if (e.status !== 422) throw e
+                try {
+                  await github.rest.issues.updateLabel({
+                    owner:       context.repo.owner,
+                    repo:        context.repo.repo,
+                    name:        label.name,
+                    color:       label.color,
+                    description: label.description,
+                  })
+                  console.log(`Recoloured existing label: ${label.name}`)
+                } catch (e2) {
+                  console.log(`Could not update label ${label.name}: ${e2.message}`)
+                }
+              }
+            }
+
+            // Detect labels for a given text
+            function detectLabels(text) {
+              return LABEL_RULES
+                .filter(rule => rule.patterns.test(text))
+                .map(rule => rule.name)
+            }
+
+            // Extract bullet points from ## Summary section
+            const summaryMatch = body.match(/##\s*Summary\s*\n([\s\S]*?)(?=\n##\s|\s*$)/)
+            const bullets = summaryMatch
+              ? (summaryMatch[1].match(/^[ \t]*[-*]\s+.+/gm) || [])
+              : []
+
+            const closingLines = []
+
+            if (bullets.length > 1) {
+              // Multiple bullets → one issue per bullet with individual labels
+              for (const bullet of bullets) {
+                const title  = bullet.replace(/^[ \t]*[-*]\s+/, '').trim()
+                const labels = detectLabels(title)
+
+                for (const labelName of labels) {
+                  const rule = LABEL_RULES.find(r => r.name === labelName)
+                  if (rule) await ensureLabel(rule)
+                }
+
+                const { data: issue } = await github.rest.issues.create({
+                  owner:  context.repo.owner,
+                  repo:   context.repo.repo,
+                  title,
+                  labels,
+                  body: [
+                    `Part of PR #${pr.number} — _${pr.title}_`,
+                    '',
+                    `Tracks: **${title}**`,
+                  ].join('\n'),
+                })
+
+                console.log(`Created issue #${issue.number} [${labels.join(', ') || 'no label'}]: ${title}`)
+                closingLines.push(`Closes #${issue.number}`)
+              }
+            } else {
+              // Single bullet or no Summary → one issue for the whole PR
+              const issueTitle = bullets.length === 1
+                ? bullets[0].replace(/^[ \t]*[-*]\s+/, '').trim()
+                : pr.title
+
+              const labels = detectLabels(issueTitle)
+              for (const labelName of labels) {
+                const rule = LABEL_RULES.find(r => r.name === labelName)
+                if (rule) await ensureLabel(rule)
+              }
+
+              const issueBody = bullets.length === 0 && body
+                ? [`Tracks changes introduced in PR #${pr.number}.`, '', body.replace(/\bCloses\s+#\d+/gi, '').trim()].join('\n')
+                : `Tracks changes introduced in PR #${pr.number}.`
+
+              const { data: issue } = await github.rest.issues.create({
+                owner:  context.repo.owner,
+                repo:   context.repo.repo,
+                title:  issueTitle,
+                labels,
+                body:   issueBody,
+              })
+
+              console.log(`Created issue #${issue.number} [${labels.join(', ') || 'no label'}]`)
+              closingLines.push(`Closes #${issue.number}`)
+            }
+
+            // Append all Closes keywords to PR body
+            const updatedBody = body
+              ? `${body}\n\n${closingLines.join('\n')}`
+              : closingLines.join('\n')
+
+            await github.rest.pulls.update({
+              owner:       context.repo.owner,
+              repo:        context.repo.repo,
+              pull_number: pr.number,
+              body:        updatedBody,
+            })
+
+            console.log(`PR #${pr.number} linked to: ${closingLines.join(', ')}`)
