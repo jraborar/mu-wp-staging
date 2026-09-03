@@ -9,7 +9,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
        > /etc/apt/sources.list.d/sury-php.list \
     && apt-get update
 
-# Install PHP 8.1, 8.2, 8.3 so we can match whatever version the site uses
+# Install PHP 8.1, 8.2, 8.3 so we can match whatever version the site uses.
+#
+# `patch` is required, not optional. cweagans/composer-patches tries `git apply
+# --check` at -p1/-p0/-p2/-p4 and only falls back to the `patch` binary when all
+# four fail — which they do on any Drupal repo carrying the standard
+# .gitattributes (`*.inc text eol=lf whitespace=blank-at-eol,...`). Debian slim
+# ships no `patch`, so without it cweagans has NO working applier and every
+# committed-vendor site with patches dies at `composer install` with "Cannot
+# apply patch" (composer-exit-on-patch-failure). Only the committed-vendor path
+# installs packages, so only it applies patches — which is why the IC sites
+# never surfaced this.
 RUN apt-get install -y --no-install-recommends \
     php8.1-cli php8.1-curl php8.1-mbstring php8.1-xml php8.1-zip \
     php8.2-cli php8.2-curl php8.2-mbstring php8.2-xml php8.2-zip \
@@ -17,6 +27,7 @@ RUN apt-get install -y --no-install-recommends \
     git \
     openssh-client \
     unzip \
+    patch \
     && rm -rf /var/lib/apt/lists/*
 
 # Default to PHP 8.2 (most common on Pantheon)
