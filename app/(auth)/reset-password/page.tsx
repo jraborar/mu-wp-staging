@@ -7,8 +7,8 @@ export default function ResetPasswordPage() {
   const [error, setError]   = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
-  const inputCls = 'w-full rounded-lg border border-slate-600 bg-slate-700 px-3.5 py-2.5 font-mono text-sm text-white placeholder-slate-500 outline-none transition focus:border-[#FFDC28] focus:ring-1 focus:ring-[#FFDC28]'
-  const btnCls   = 'w-full rounded-lg bg-[#FFDC28] px-4 py-2.5 font-mono text-sm font-semibold text-slate-900 hover:bg-[#E6C625] transition-colors disabled:opacity-50'
+  const inputCls = 'w-full rounded-lg border border-pantheon-border-hi bg-pantheon-bg-elevated px-3.5 py-2.5 font-mono text-sm text-pantheon-text placeholder-pantheon-text-dim outline-none transition focus:border-pantheon-yellow focus:ring-1 focus:ring-pantheon-yellow'
+  const btnCls   = 'w-full rounded-lg bg-pantheon-yellow px-4 py-2.5 font-mono text-sm font-semibold text-pantheon-bg hover:bg-pantheon-yellow-dark transition-colors disabled:opacity-50'
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -20,11 +20,11 @@ export default function ResetPasswordPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="font-mono text-xl font-bold text-white">New password</h1>
-        <p className="mt-1 font-mono text-sm text-slate-400">Choose a strong password</p>
+        <h1 className="font-mono text-xl font-bold text-pantheon-text">New password</h1>
+        <p className="mt-1 font-mono text-sm text-pantheon-text-muted">Choose a strong password</p>
       </div>
 
-      {error && <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-3 font-mono text-xs text-red-400">{error}</div>}
+      {error && <div className="rounded-lg border border-pantheon-error/40 bg-pantheon-error/10 px-4 py-3 font-mono text-xs text-pantheon-error">{error}</div>}
 
       <form onSubmit={handleSubmit} className="space-y-4">
         <input name="password" type="password" required minLength={8} placeholder="New password (min 8 chars)" className={inputCls} />

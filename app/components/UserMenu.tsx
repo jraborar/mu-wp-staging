@@ -19,11 +19,11 @@ export default function UserMenu() {
 
   return (
     <div className="ml-auto flex items-center gap-4">
-      <span className="text-sm font-medium text-slate-300 hidden sm:block">{display}</span>
+      <span className="text-sm font-medium text-pantheon-text hidden sm:block">{display}</span>
       <form action={logout}>
         <button
           type="submit"
-          className="rounded-lg bg-[#FFDC28] hover:bg-[#E6C625] px-3 py-1.5 text-xs font-semibold text-slate-900 transition-colors"
+          className="rounded-lg bg-pantheon-yellow hover:bg-pantheon-yellow-dark px-3 py-1.5 text-xs font-semibold text-pantheon-bg transition-colors"
         >
           Sign out
         </button>
