@@ -2,34 +2,114 @@
 
 @import "tailwindcss";
 
-@theme {
-  /* Pantheon brand colors — shared across the MU apps (canonical = mu-deployment) */
-  --color-pantheon-yellow:      #FFDC28;
-  --color-pantheon-yellow-dark: #E6C625;
-  --color-pantheon-bg:          #0F172A;   /* slate-900 */
-  --color-pantheon-bg-card:     #1E293B;   /* slate-800 */
-  --color-pantheon-bg-elevated: #334155;   /* slate-700 */
-  --color-pantheon-bg-console:  #0F172A;
-  --color-pantheon-border:      #334155;   /* slate-700 */
-  --color-pantheon-border-hi:   #475569;   /* slate-600 */
-  --color-pantheon-purple:      #6633CC;
-  --color-pantheon-purple-dim:  #4B249A;
-  --color-pantheon-text:        #F1F5F9;   /* slate-100 */
-  --color-pantheon-text-muted:  #94A3B8;   /* slate-400 */
-  --color-pantheon-text-dim:    #64748B;   /* slate-500 */
-  --color-pantheon-success:     #4ADE80;   /* green-400 */
-  --color-pantheon-success-dim: #16A34A;   /* green-600 */
-  --color-pantheon-error:       #F87171;   /* red-400 */
-  --color-pantheon-error-dim:   #DC2626;   /* red-600 */
-  --color-pantheon-warning:     #FB923C;   /* orange-400 */
-  --color-pantheon-info:        #60A5FA;   /* blue-400 */
+/* ═══════════════════════════════════════════════════════════════════════════
+   PANTHEON PALETTE — canonical, shared byte-identical across mu-pmu-tool,
+   mu-staging, mu-deployment, mu-vrt and mu-sites. Generated from one source,
+   so a change here is a change everywhere. Do not hand-edit one copy.
 
-  /* Fonts */
+   Was Tailwind SLATE (#0F172A / #1E293B / #334155 / #F1F5F9) with #FFDC28
+   yellow. Slate is cold and blue; these neutrals carry a slight WARM bias
+   (R >= G >= B by a few points) so the yellow accent reads as chosen rather
+   than dropped onto a blue-grey.
+
+   The old ramp also had only EIGHT hex points between the page and a card, so
+   it read flat as well as dark. Each step here is 10-12 points.
+
+   CONTRAST, measured honestly: slate was NOT failing. slate-500 on slate-900
+   is 3.75:1, above the 3:1 floor. This palette is slightly WORSE on every
+   measure — text 15.30 vs 16.30, muted 6.36 vs 6.96, dim 3.18 vs 3.75, yellow
+   11.57 vs 13.19 — and all four still pass. The change is a deliberate
+   aesthetic call for warm over blue-grey neutrals, not an accessibility fix.
+   Do not drop --color-pantheon-text-dim any lower: 3.18:1 has little headroom.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@theme {
+  /* ── Grounds. bg -> card -> elevated is the elevation ramp. `console` is the
+     streamed-Terminus-output surface, deliberately darker than the page so it
+     reads as recessed rather than as another card. ── */
+  --color-pantheon-bg:            #191817;
+  --color-pantheon-bg-card:       #232120;
+  --color-pantheon-bg-elevated:   #2E2B29;
+  --color-pantheon-bg-console:    #121111;
+
+  /* Neutral chip fill — "Paused" pills, count badges, secondary buttons. The
+     old slate-500/600 had no equivalent on the ramp; this is it. */
+  --color-pantheon-bg-neutral:    #47423D;
+  --color-pantheon-bg-neutral-hi: #5A544D;
+
+  /* ── Lines ── */
+  --color-pantheon-border:        #3A3735;
+  --color-pantheon-border-hi:     #504C48;
+
+  /* ── Text ramp ── */
+  --color-pantheon-text:          #F0EEEA;
+  --color-pantheon-text-muted:    #A09A92;
+  --color-pantheon-text-dim:      #6D6761;
+
+  /* ── Brand. #EFD01B is the Pantheon yellow; #FFDC28 was a lighter, greener
+     approximation that had spread to all four apps. ── */
+  --color-pantheon-yellow:        #EFD01B;
+  --color-pantheon-yellow-dark:   #C9AE00;
+  --color-pantheon-purple:        #6633CC;
+  --color-pantheon-purple-dim:    #4B249A;
+  /* purple-hi exists because the brand purple CANNOT carry text on a dark
+     ground: #6633CC on #191817 is 2.46:1 and #4B249A is 1.70:1, both far under
+     the 4.5:1 body-text floor. The `awaiting-approval` status needs a readable
+     purple, so this is the tint already in use there (6.71:1). Same reason
+     bg-neutral exists — the residue of a conversion naming a missing token. */
+  --color-pantheon-purple-hi:     #C084FC;
+
+  /* ── Semantic state. The -400 tints (#4ADE80 / #F87171 / #FB923C) were
+     pastel against a dark ground; these are the -500s. ── */
+  --color-pantheon-success:       #22C55E;
+  --color-pantheon-success-dim:   #15803D;
+  --color-pantheon-error:         #EF4444;
+  --color-pantheon-error-dim:     #991B1B;
+  --color-pantheon-warning:       #F97316;
+  --color-pantheon-info:          #60A5FA;
+
+  /* ── Type. System sans for body, JetBrains Mono for code and data.
+     DELIBERATE: mu-pmu-tool sets --font-sans to JetBrains Mono as well, so it
+     is monospace throughout; the four operational apps keep system sans for
+     body prose because monospace paragraphs read badly at long line lengths.
+     Unifying the palette is what makes them one product; unifying body type
+     would restyle every paragraph, label and table in four live tools. ── */
   --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
 
+  /* NOT unified deliberately: the radius ramp. These apps use rounded-lg 109
+     times and inherit Tailwind v4's default 0.5rem; mu-pmu-tool overrides
+     --radius-lg to 0.625rem. Propagating that would move every corner in four
+     production apps for a 0.125rem gain. Align mu-pmu-tool DOWN instead. */
   --radius: 0.5rem;
 
+  /* ════ SHADCN INTERFACE — aliases only, NEVER literals ════
+     App code writes `pantheon-*`; shadcn components write this semantic set.
+     Defining both as literals is how they silently drift a hex step apart, so
+     that a shadcn Card lands beside a hand-written div in a slightly different
+     colour. Aliasing makes the drift structurally impossible. */
+  --color-background:             var(--color-pantheon-bg);
+  --color-foreground:             var(--color-pantheon-text);
+  --color-card:                   var(--color-pantheon-bg-card);
+  --color-card-foreground:        var(--color-pantheon-text);
+  --color-popover:                var(--color-pantheon-bg-card);
+  --color-popover-foreground:     var(--color-pantheon-text);
+  --color-primary:                var(--color-pantheon-yellow);
+  --color-primary-foreground:     var(--color-pantheon-bg);
+  --color-secondary:              var(--color-pantheon-bg-elevated);
+  --color-secondary-foreground:   var(--color-pantheon-text);
+  --color-muted:                  var(--color-pantheon-bg-elevated);
+  --color-muted-foreground:       var(--color-pantheon-text-muted);
+  --color-accent:                 var(--color-pantheon-bg-elevated);
+  --color-accent-foreground:      var(--color-pantheon-text);
+  --color-destructive:            var(--color-pantheon-error);
+  --color-destructive-foreground: var(--color-pantheon-text);
+  --color-border:                 var(--color-pantheon-border);
+  --color-input:                  var(--color-pantheon-bg-elevated);
+  --color-ring:                   var(--color-pantheon-yellow);
+  --color-ring-offset-background: var(--color-pantheon-bg);
+
+  /* ── Animations ── */
   --animate-fade-in:  fade-in 0.2s ease-out;
   --animate-slide-up: slide-up 0.3s ease-out;
 }
@@ -42,16 +122,19 @@
 * { box-sizing: border-box; }
 
 body {
-  background: linear-gradient(135deg, #0F172A 0%, #1E293B 50%, #0F172A 100%);
+  background: linear-gradient(135deg,
+    var(--color-pantheon-bg) 0%,
+    var(--color-pantheon-bg-card) 50%,
+    var(--color-pantheon-bg) 100%);
   min-height: 100vh;
-  color: #F1F5F9;
+  color: var(--color-pantheon-text);
   font-family: var(--font-sans);
   margin: 0;
 }
 
 ::-webkit-scrollbar       { width: 6px; height: 6px; }
-::-webkit-scrollbar-track  { background: #1E293B; }
-::-webkit-scrollbar-thumb  { background: #334155; border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: #475569; }
+::-webkit-scrollbar-track  { background: var(--color-pantheon-bg-card); }
+::-webkit-scrollbar-thumb  { background: var(--color-pantheon-border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--color-pantheon-border-hi); }
 
-.console-output ::selection { background: rgba(255, 220, 40, 0.25); }
+.console-output ::selection { background: rgba(239, 208, 27, 0.25); }

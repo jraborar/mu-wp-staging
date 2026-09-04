@@ -182,14 +182,14 @@ const CADENCE_LABELS: Record<Cadence, string> = {
 // ── Log styling ────────────────────────────────────────────────────────────────
 
 const LOG_STYLES: Record<string, { prefix: string; cls: string }> = {
-  info:    { prefix: '›',  cls: 'text-slate-400' },
-  status:  { prefix: '◈',  cls: 'text-yellow-400' },
-  warn:    { prefix: '⚠',  cls: 'text-orange-400' },
-  success: { prefix: '✦',  cls: 'text-green-400 font-semibold' },
-  error:   { prefix: '✗',  cls: 'text-red-400' },
-  delete:  { prefix: '🗑',  cls: 'text-orange-400' },
-  deleted: { prefix: '✓',  cls: 'text-orange-300' },
-  create:  { prefix: '◈',  cls: 'text-blue-400' },
+  info:    { prefix: '›',  cls: 'text-pantheon-text-muted' },
+  status:  { prefix: '◈',  cls: 'text-pantheon-yellow' },
+  warn:    { prefix: '⚠',  cls: 'text-pantheon-warning' },
+  success: { prefix: '✦',  cls: 'text-pantheon-success font-semibold' },
+  error:   { prefix: '✗',  cls: 'text-pantheon-error' },
+  delete:  { prefix: '🗑',  cls: 'text-pantheon-warning' },
+  deleted: { prefix: '✓',  cls: 'text-pantheon-warning' },
+  create:  { prefix: '◈',  cls: 'text-pantheon-info' },
 }
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
@@ -206,26 +206,26 @@ function LogLine({ entry }: { entry: LogEntry }) {
 
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, string> = {
-    running:            'border-yellow-500 text-yellow-400',
-    'awaiting-approval':'border-purple-500 text-purple-400',
-    completed:          'border-green-500 text-green-400',
-    failed:             'border-red-500 text-red-400',
-    paused:             'border-blue-500 text-blue-400',
-    cancelled:          'border-slate-600 text-slate-400',
+    running:            'border-pantheon-yellow text-pantheon-yellow',
+    'awaiting-approval':'border-pantheon-purple-hi text-pantheon-purple-hi',
+    completed:          'border-pantheon-success text-pantheon-success',
+    failed:             'border-pantheon-error text-pantheon-error',
+    paused:             'border-pantheon-info text-pantheon-info',
+    cancelled:          'border-pantheon-border-hi text-pantheon-text-muted',
   }
   const dot: Record<string, string> = {
-    running:            'bg-yellow-400 animate-pulse',
-    'awaiting-approval':'bg-purple-400 animate-pulse',
-    completed:          'bg-green-400',
-    failed:             'bg-red-400',
-    paused:             'bg-blue-400',
+    running:            'bg-pantheon-yellow animate-pulse',
+    'awaiting-approval':'bg-pantheon-purple-hi animate-pulse',
+    completed:          'bg-pantheon-success',
+    failed:             'bg-pantheon-error',
+    paused:             'bg-pantheon-info',
   }
   const label: Record<string, string> = {
     completed:          'staged',
     'awaiting-approval':'waiting',
   }
   return (
-    <span className={`inline-flex items-center gap-1.5 rounded border px-2 py-0.5 font-mono text-xs ${map[status] ?? 'border-slate-600 text-slate-400'}`}>
+    <span className={`inline-flex items-center gap-1.5 rounded border px-2 py-0.5 font-mono text-xs ${map[status] ?? 'border-pantheon-border-hi text-pantheon-text-muted'}`}>
       {dot[status] && <span className={`h-1.5 w-1.5 rounded-full ${dot[status]}`} />}
       {label[status] ?? status}
     </span>
@@ -234,7 +234,7 @@ function StatusBadge({ status }: { status: string }) {
 
 function Card({ children, className = '' }: { children: React.ReactNode; className?: string }) {
   return (
-    <div className={`rounded-xl border border-slate-700 bg-slate-800 ${className}`}>
+    <div className={`rounded-xl border border-pantheon-border bg-pantheon-bg-card ${className}`}>
       {children}
     </div>
   )
@@ -244,12 +244,12 @@ function CardHeader({ icon, title, description }: {
   icon: React.ReactNode; title: string; description?: string
 }) {
   return (
-    <div className="px-6 py-5 border-b border-slate-700">
+    <div className="px-6 py-5 border-b border-pantheon-border">
       <div className="flex items-center gap-2 mb-1">
-        <span className="text-[#FFDC28]">{icon}</span>
-        <h2 className="text-white font-semibold">{title}</h2>
+        <span className="text-pantheon-yellow">{icon}</span>
+        <h2 className="text-pantheon-text font-semibold">{title}</h2>
       </div>
-      {description && <p className="text-slate-400 text-sm">{description}</p>}
+      {description && <p className="text-pantheon-text-muted text-sm">{description}</p>}
     </div>
   )
 }
@@ -260,21 +260,21 @@ function UpdateSection({ label, updated, skipped }: {
   if (updated.length === 0 && skipped.length === 0) return null
   return (
     <div className="space-y-1">
-      <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">{label}</p>
+      <p className="text-xs font-semibold text-pantheon-text-muted uppercase tracking-widest">{label}</p>
       {updated.map((u) => (
         <div key={u.name} className="flex items-center gap-2 pl-2">
-          <CheckCircle className="w-3 h-3 text-green-400 shrink-0" />
-          <span className="text-xs font-mono text-slate-200">{u.title}</span>
-          <span className="text-xs text-slate-500">{u.from}</span>
-          <ArrowRight className="w-3 h-3 text-slate-500" />
-          <span className="text-xs text-green-400">{u.to}</span>
+          <CheckCircle className="w-3 h-3 text-pantheon-success shrink-0" />
+          <span className="text-xs font-mono text-pantheon-text">{u.title}</span>
+          <span className="text-xs text-pantheon-text-dim">{u.from}</span>
+          <ArrowRight className="w-3 h-3 text-pantheon-text-dim" />
+          <span className="text-xs text-pantheon-success">{u.to}</span>
         </div>
       ))}
       {skipped.map((s) => (
         <div key={s.name} className="flex items-start gap-2 pl-2">
-          <AlertCircle className="w-3 h-3 text-orange-400 shrink-0 mt-0.5" />
-          <span className="text-xs font-mono text-slate-400">
-            {s.title} <span className="text-slate-500">— {s.reason}</span>
+          <AlertCircle className="w-3 h-3 text-pantheon-warning shrink-0 mt-0.5" />
+          <span className="text-xs font-mono text-pantheon-text-muted">
+            {s.title} <span className="text-pantheon-text-dim">— {s.reason}</span>
           </span>
         </div>
       ))}
@@ -302,13 +302,13 @@ function HistoryRow({ item, vrtVisible, onCancel }: { item: HistoryItem; vrtVisi
   }
 
   const statusColors: Record<string, string> = {
-    completed:  'text-green-400',
-    failed:     'text-red-400',
-    paused:     'text-orange-400',
-    cancelled:  'text-slate-500',
-    running:    'text-yellow-400',
+    completed:  'text-pantheon-success',
+    failed:     'text-pantheon-error',
+    paused:     'text-pantheon-warning',
+    cancelled:  'text-pantheon-text-dim',
+    running:    'text-pantheon-yellow',
   }
-  const siteColor  = statusColors[item.status] ?? 'text-slate-400'
+  const siteColor  = statusColors[item.status] ?? 'text-pantheon-text-muted'
   const statusLabel: Record<string, string> = { completed: 'staged' }
   const endLabel   = item.status === 'failed' ? 'Failed:' : item.status === 'paused' ? 'Paused:' : item.status === 'cancelled' ? 'Cancelled:' : 'Completed:'
 
@@ -333,7 +333,7 @@ function HistoryRow({ item, vrtVisible, onCancel }: { item: HistoryItem; vrtVisi
   const hasDetails   = updatedCount > 0 || skippedCount > 0 || item.upstream_updated || !!item.upstream_skipped_reason || advisories.length > 0
 
   return (
-    <div className="rounded-lg border border-slate-700 bg-slate-800 p-4 space-y-1.5">
+    <div className="rounded-lg border border-pantheon-border bg-pantheon-bg-card p-4 space-y-1.5">
 
       {/* Row 1: Site name + status */}
       <div className="flex items-start justify-between gap-3">
@@ -342,7 +342,7 @@ function HistoryRow({ item, vrtVisible, onCancel }: { item: HistoryItem; vrtVisi
             {item.site_name ?? machineName}
           </span>
           {item.site_name && (
-            <span className="ml-1.5 font-mono font-normal text-slate-500 text-xs">· {machineName}</span>
+            <span className="ml-1.5 font-mono font-normal text-pantheon-text-dim text-xs">· {machineName}</span>
           )}
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -354,7 +354,7 @@ function HistoryRow({ item, vrtVisible, onCancel }: { item: HistoryItem; vrtVisi
               onClick={cancelPaused}
               disabled={cancelling}
               title="Cancel this paused deployment"
-              className="rounded px-2 py-0.5 text-xs font-mono text-red-400 border border-red-800 hover:bg-red-900/30 transition-colors disabled:opacity-40"
+              className="rounded px-2 py-0.5 text-xs font-mono text-pantheon-error border border-pantheon-error-dim hover:bg-pantheon-error-dim/30 transition-colors disabled:opacity-40"
             >
               {cancelling ? '…' : 'Cancel'}
             </button>
@@ -364,35 +364,35 @@ function HistoryRow({ item, vrtVisible, onCancel }: { item: HistoryItem; vrtVisi
 
       {/* Row 2: Multidev + summary chips */}
       <div className="font-mono text-xs flex items-center flex-wrap gap-x-2 gap-y-0.5">
-        <span className="text-[#FFDC28]">{item.multidev}</span>
+        <span className="text-pantheon-yellow">{item.multidev}</span>
         {item.upstream && (
           item.upstream_updated
-            ? <><span className="text-slate-600">·</span><span className="text-green-400">upstream ✓</span></>
+            ? <><span className="text-pantheon-text-dim">·</span><span className="text-pantheon-success">upstream ✓</span></>
             : item.upstream_skipped_reason
-              ? <><span className="text-slate-600">·</span><span className="text-orange-400">upstream skipped</span></>
-              : <><span className="text-slate-600">·</span><span className="text-slate-500">upstream — no updates</span></>
+              ? <><span className="text-pantheon-text-dim">·</span><span className="text-pantheon-warning">upstream skipped</span></>
+              : <><span className="text-pantheon-text-dim">·</span><span className="text-pantheon-text-dim">upstream — no updates</span></>
         )}
         {(updatedCount > 0 || skippedCount > 0) && (
           <>
-            <span className="text-slate-600">·</span>
-            <span className="text-green-400">{updatedCount} updated</span>
+            <span className="text-pantheon-text-dim">·</span>
+            <span className="text-pantheon-success">{updatedCount} updated</span>
             {skippedCount > 0 && (
-              <><span className="text-slate-600">·</span><span className="text-orange-400">{skippedCount} skipped</span></>
+              <><span className="text-pantheon-text-dim">·</span><span className="text-pantheon-warning">{skippedCount} skipped</span></>
             )}
           </>
         )}
         {!item.upstream && updatedCount === 0 && skippedCount === 0 && item.status === 'completed' && (
-          <><span className="text-slate-600">·</span><span className="text-slate-500">nothing updated</span></>
+          <><span className="text-pantheon-text-dim">·</span><span className="text-pantheon-text-dim">nothing updated</span></>
         )}
         {item.completed_at && (
           <>
-            <span className="text-slate-600">·</span>
-            <span className="text-slate-500">{dur(item.started_at, item.completed_at)}</span>
+            <span className="text-pantheon-text-dim">·</span>
+            <span className="text-pantheon-text-dim">{dur(item.started_at, item.completed_at)}</span>
           </>
         )}
         {vrtVisible && item.vrt_report_url && (
           <>
-            <span className="text-slate-600">·</span>
+            <span className="text-pantheon-text-dim">·</span>
             <a
               href={item.vrt_report_url}
               target="_blank"
@@ -400,10 +400,10 @@ function HistoryRow({ item, vrtVisible, onCancel }: { item: HistoryItem; vrtVisi
               title="Open the shareable visual-regression report (safe to send to the customer)"
               className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 transition-colors ${
                 (item.vrt_flagged_count ?? 0) > 0
-                  ? 'text-orange-400 hover:bg-orange-400/10'
+                  ? 'text-pantheon-warning hover:bg-pantheon-warning/10'
                   : item.vrt_status === 'completed'
-                    ? 'text-green-400 hover:bg-green-400/10'
-                    : 'text-slate-400 hover:bg-slate-400/10'
+                    ? 'text-pantheon-success hover:bg-pantheon-success/10'
+                    : 'text-pantheon-text-muted hover:bg-pantheon-text-muted/10'
               }`}
             >
               🔍 VRT: {(item.vrt_flagged_count ?? 0) > 0
@@ -418,7 +418,7 @@ function HistoryRow({ item, vrtVisible, onCancel }: { item: HistoryItem; vrtVisi
       </div>
 
       {/* Row 3: Timestamps */}
-      <div className="flex flex-wrap gap-x-4 font-mono text-xs text-slate-400">
+      <div className="flex flex-wrap gap-x-4 font-mono text-xs text-pantheon-text-muted">
         <span>Started: {fmt(item.started_at)}</span>
         <span>{endLabel} {item.completed_at ? fmt(item.completed_at) : '—'}</span>
       </div>
@@ -428,7 +428,7 @@ function HistoryRow({ item, vrtVisible, onCancel }: { item: HistoryItem; vrtVisi
         <div className="flex justify-end">
           <button
             onClick={() => setOpen((o) => !o)}
-            className="flex items-center gap-1 text-xs text-white hover:text-[#FFDC28] transition-colors"
+            className="flex items-center gap-1 text-xs text-pantheon-text hover:text-pantheon-yellow transition-colors"
           >
             {open ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
             {open ? 'Hide Details' : 'Show Details'}
@@ -437,37 +437,37 @@ function HistoryRow({ item, vrtVisible, onCancel }: { item: HistoryItem; vrtVisi
       )}
 
       {open && hasDetails && (
-        <div className="border-t border-slate-700 pt-3 space-y-3">
+        <div className="border-t border-pantheon-border pt-3 space-y-3">
           {/* Upstream Update/s */}
           {(item.upstream_updated || item.upstream_skipped_reason) && (
             <div className="space-y-0.5 font-mono text-xs">
-              <p className="text-slate-400 font-semibold">Upstream Update/s:</p>
+              <p className="text-pantheon-text-muted font-semibold">Upstream Update/s:</p>
               {item.upstream_updated && (item.upstream_updates?.length ?? 0) > 0
                 ? item.upstream_updates!.map((u, i) => (
                     <div key={i} className="pl-2 space-y-0.5">
-                      <p className="text-green-400">- {u.message}</p>
+                      <p className="text-pantheon-success">- {u.message}</p>
                       {i === 0 && item.upstream_old_version && item.upstream_new_version && (
-                        <p className="pl-2 text-slate-500">{coreLabel} ({item.upstream_old_version} to {item.upstream_new_version})</p>
+                        <p className="pl-2 text-pantheon-text-dim">{coreLabel} ({item.upstream_old_version} to {item.upstream_new_version})</p>
                       )}
                     </div>
                   ))
                 : item.upstream_updated
                   ? <div className="pl-2 space-y-0.5">
-                      <p className="text-green-400">- Applied successfully</p>
+                      <p className="text-pantheon-success">- Applied successfully</p>
                       {item.upstream_old_version && item.upstream_new_version && (
-                        <p className="pl-2 text-slate-500">{coreLabel} ({item.upstream_old_version} to {item.upstream_new_version})</p>
+                        <p className="pl-2 text-pantheon-text-dim">{coreLabel} ({item.upstream_old_version} to {item.upstream_new_version})</p>
                       )}
                     </div>
                   : null}
               {item.upstream_skipped_reason && (
-                <p className="pl-2 text-orange-400">- Skipped — {item.upstream_skipped_reason}</p>
+                <p className="pl-2 text-pantheon-warning">- Skipped — {item.upstream_skipped_reason}</p>
               )}
               {/* The conflicting paths, verbatim, so they can be handed to the
                   customer's developers — we never force-overwrite customizations. */}
               {(item.upstream_conflict_files?.length ?? 0) > 0 && (
                 <div className="pl-2 space-y-0.5">
-                  <p className="text-slate-500">Conflicting files (reverted — nothing was changed):</p>
-                  <pre className="max-h-40 overflow-auto rounded border border-slate-700 bg-slate-900/60 p-2 text-[0.7rem] text-orange-300 whitespace-pre-wrap select-all">
+                  <p className="text-pantheon-text-dim">Conflicting files (reverted — nothing was changed):</p>
+                  <pre className="max-h-40 overflow-auto rounded border border-pantheon-border bg-pantheon-bg/60 p-2 text-[0.7rem] text-pantheon-warning whitespace-pre-wrap select-all">
 {item.upstream_conflict_files!.join('\n')}
                   </pre>
                 </div>
@@ -478,12 +478,12 @@ function HistoryRow({ item, vrtVisible, onCancel }: { item: HistoryItem; vrtVisi
           {/* Plugin/s — updated only, with count */}
           {item.plugins_updated.length > 0 && (
             <div className="space-y-0.5 font-mono text-xs">
-              <p className="text-slate-400 font-semibold">
-                {isDrupal ? 'Module/s' : 'Plugin/s'} <span className="text-green-400">({item.plugins_updated.length} updated):</span>
+              <p className="text-pantheon-text-muted font-semibold">
+                {isDrupal ? 'Module/s' : 'Plugin/s'} <span className="text-pantheon-success">({item.plugins_updated.length} updated):</span>
               </p>
               {item.plugins_updated.map((p) => (
-                <p key={p.name} className="pl-2 text-slate-200">
-                  - {p.title} <span className="text-slate-500">({p.from} to {p.to})</span>
+                <p key={p.name} className="pl-2 text-pantheon-text">
+                  - {p.title} <span className="text-pantheon-text-dim">({p.from} to {p.to})</span>
                 </p>
               ))}
             </div>
@@ -492,12 +492,12 @@ function HistoryRow({ item, vrtVisible, onCancel }: { item: HistoryItem; vrtVisi
           {/* Theme/s — updated only, with count */}
           {item.themes_updated.length > 0 && (
             <div className="space-y-0.5 font-mono text-xs">
-              <p className="text-slate-400 font-semibold">
-                Theme/s <span className="text-green-400">({item.themes_updated.length} updated):</span>
+              <p className="text-pantheon-text-muted font-semibold">
+                Theme/s <span className="text-pantheon-success">({item.themes_updated.length} updated):</span>
               </p>
               {item.themes_updated.map((t) => (
-                <p key={t.name} className="pl-2 text-slate-200">
-                  - {t.title} <span className="text-slate-500">({t.from} to {t.to})</span>
+                <p key={t.name} className="pl-2 text-pantheon-text">
+                  - {t.title} <span className="text-pantheon-text-dim">({t.from} to {t.to})</span>
                 </p>
               ))}
             </div>
@@ -506,12 +506,12 @@ function HistoryRow({ item, vrtVisible, onCancel }: { item: HistoryItem; vrtVisi
           {/* Composer Dependencies — Drupal only (non-module/theme packages) */}
           {depsCount > 0 && (
             <div className="space-y-0.5 font-mono text-xs">
-              <p className="text-slate-400 font-semibold">
-                Composer Dependencies <span className="text-green-400">({depsCount} updated):</span>
+              <p className="text-pantheon-text-muted font-semibold">
+                Composer Dependencies <span className="text-pantheon-success">({depsCount} updated):</span>
               </p>
               {item.composer_deps_updated!.map((d) => (
-                <p key={d.name} className="pl-2 text-slate-200">
-                  - {d.name} <span className="text-slate-500">({d.from} to {d.to})</span>
+                <p key={d.name} className="pl-2 text-pantheon-text">
+                  - {d.name} <span className="text-pantheon-text-dim">({d.from} to {d.to})</span>
                 </p>
               ))}
             </div>
@@ -520,20 +520,20 @@ function HistoryRow({ item, vrtVisible, onCancel }: { item: HistoryItem; vrtVisi
           {/* Security advisories — Drupal only. Pinned = reported, not auto-updated. */}
           {advisories.length > 0 && (
             <div className="space-y-0.5 font-mono text-xs">
-              <p className="text-slate-400 font-semibold">
-                Security advisories <span className="text-orange-400">({advisories.length}):</span>
+              <p className="text-pantheon-text-muted font-semibold">
+                Security advisories <span className="text-pantheon-warning">({advisories.length}):</span>
               </p>
               {advisories.map((a, i) => (
-                <p key={`${a.package}-${a.id}-${i}`} className="pl-2 text-orange-400">
-                  - {a.package} <span className="text-orange-500/70">— {a.id}</span>
+                <p key={`${a.package}-${a.id}-${i}`} className="pl-2 text-pantheon-warning">
+                  - {a.package} <span className="text-pantheon-warning/70">— {a.id}</span>
                   {a.pinned && (
-                    <span className="ml-1 rounded bg-orange-400/15 px-1 text-[0.65rem] text-orange-300">
+                    <span className="ml-1 rounded bg-pantheon-warning/15 px-1 text-[0.65rem] text-pantheon-warning">
                       pinned — manual review, not updated
                     </span>
                   )}
                   {a.link && (
                     <a href={a.link} target="_blank" rel="noopener noreferrer"
-                       className="ml-1 text-slate-500 underline hover:text-slate-300">details</a>
+                       className="ml-1 text-pantheon-text-dim underline hover:text-pantheon-text">details</a>
                   )}
                 </p>
               ))}
@@ -543,17 +543,17 @@ function HistoryRow({ item, vrtVisible, onCancel }: { item: HistoryItem; vrtVisi
           {/* Skipped — plugins + themes combined, with count */}
           {(item.plugins_skipped.length > 0 || item.themes_skipped.length > 0) && (
             <div className="space-y-0.5 font-mono text-xs">
-              <p className="text-slate-400 font-semibold">
-                Skipped <span className="text-orange-400">({item.plugins_skipped.length + item.themes_skipped.length}):</span>
+              <p className="text-pantheon-text-muted font-semibold">
+                Skipped <span className="text-pantheon-warning">({item.plugins_skipped.length + item.themes_skipped.length}):</span>
               </p>
               {item.plugins_skipped.map((p) => (
-                <p key={p.name} className="pl-2 text-orange-400">
-                  - {p.title} <span className="text-orange-500/70">— {p.reason}</span>
+                <p key={p.name} className="pl-2 text-pantheon-warning">
+                  - {p.title} <span className="text-pantheon-warning/70">— {p.reason}</span>
                 </p>
               ))}
               {item.themes_skipped.map((t) => (
-                <p key={t.name} className="pl-2 text-orange-400">
-                  - {t.title} <span className="text-orange-500/70">— {t.reason}</span>
+                <p key={t.name} className="pl-2 text-pantheon-warning">
+                  - {t.title} <span className="text-pantheon-warning/70">— {t.reason}</span>
                 </p>
               ))}
             </div>
@@ -723,14 +723,14 @@ function LiveJobCard({ job, onComplete }: { job: LiveJob; onComplete: () => void
   const pct          = step ? Math.round((step.index / step.total) * 100) : 0
 
   return (
-    <div className="rounded-xl border border-yellow-500/30 bg-slate-800 overflow-hidden">
+    <div className="rounded-xl border border-pantheon-yellow/30 bg-pantheon-bg-card overflow-hidden">
       {/* Header */}
-      <div className="flex items-center gap-3 px-5 py-3 border-b border-slate-700 bg-slate-800">
-        <Radio className="w-4 h-4 text-yellow-400 animate-pulse" />
+      <div className="flex items-center gap-3 px-5 py-3 border-b border-pantheon-border bg-pantheon-bg-card">
+        <Radio className="w-4 h-4 text-pantheon-yellow animate-pulse" />
         <div className="flex-1 min-w-0">
-          <span className="font-mono text-sm text-white">{label}</span>
-          <span className="text-slate-500 mx-2">·</span>
-          <span className="font-mono text-xs text-[#FFDC28]">{job.multidev}</span>
+          <span className="font-mono text-sm text-pantheon-text">{label}</span>
+          <span className="text-pantheon-text-dim mx-2">·</span>
+          <span className="font-mono text-xs text-pantheon-yellow">{job.multidev}</span>
         </div>
         <StatusBadge status={status} />
         {isActive && (
@@ -738,7 +738,7 @@ function LiveJobCard({ job, onComplete }: { job: LiveJob; onComplete: () => void
             onClick={cancelJob}
             disabled={cancelling}
             title="Cancel staging"
-            className="flex items-center gap-1 rounded border border-red-700 px-2 py-0.5 text-xs text-red-400 hover:bg-red-900/30 transition-colors disabled:opacity-40"
+            className="flex items-center gap-1 rounded border border-pantheon-error-dim px-2 py-0.5 text-xs text-pantheon-error hover:bg-pantheon-error-dim/30 transition-colors disabled:opacity-40"
           >
             <X className="w-3 h-3" />
             {cancelling ? 'Cancelling…' : 'Cancel'}
@@ -755,7 +755,7 @@ function LiveJobCard({ job, onComplete }: { job: LiveJob; onComplete: () => void
                 })
               }}
               title="Restart staging from scratch"
-              className="flex items-center gap-1 rounded border border-[#FFDC28]/40 px-2 py-0.5 text-xs text-[#FFDC28] hover:bg-[#FFDC28]/10 transition-colors"
+              className="flex items-center gap-1 rounded border border-pantheon-yellow/40 px-2 py-0.5 text-xs text-pantheon-yellow hover:bg-pantheon-yellow/10 transition-colors"
             >
               ↺ Restart
             </button>
@@ -763,7 +763,7 @@ function LiveJobCard({ job, onComplete }: { job: LiveJob; onComplete: () => void
               onClick={cancelJob}
               disabled={cancelling}
               title="Cancel and dismiss"
-              className="flex items-center gap-1 rounded border border-red-700 px-2 py-0.5 text-xs text-red-400 hover:bg-red-900/30 transition-colors disabled:opacity-40"
+              className="flex items-center gap-1 rounded border border-pantheon-error-dim px-2 py-0.5 text-xs text-pantheon-error hover:bg-pantheon-error-dim/30 transition-colors disabled:opacity-40"
             >
               <X className="w-3 h-3" />
               {cancelling ? '…' : 'Cancel'}
@@ -776,12 +776,12 @@ function LiveJobCard({ job, onComplete }: { job: LiveJob; onComplete: () => void
       {step && status === 'running' && (
         <div className="px-5 pt-3 pb-1 space-y-1.5">
           <div className="flex items-center justify-between text-xs">
-            <span className="text-slate-300 font-mono">{step.name}</span>
-            <span className="text-slate-500">{step.index}/{step.total}</span>
+            <span className="text-pantheon-text font-mono">{step.name}</span>
+            <span className="text-pantheon-text-dim">{step.index}/{step.total}</span>
           </div>
-          <div className="h-1.5 w-full rounded-full bg-slate-700 overflow-hidden">
+          <div className="h-1.5 w-full rounded-full bg-pantheon-bg-elevated overflow-hidden">
             <div
-              className="h-full rounded-full bg-[#FFDC28] transition-all duration-500"
+              className="h-full rounded-full bg-pantheon-yellow transition-all duration-500"
               style={{ width: `${pct}%` }}
             />
           </div>
@@ -790,13 +790,13 @@ function LiveJobCard({ job, onComplete }: { job: LiveJob; onComplete: () => void
 
       {/* Approval prompt */}
       {approval && status === 'awaiting-approval' && (
-        <div className="mx-5 mt-3 rounded-lg border border-purple-500/40 bg-purple-900/20 p-4 space-y-3">
-          <p className="text-sm text-purple-300 font-mono">{approval.message}</p>
+        <div className="mx-5 mt-3 rounded-lg border border-pantheon-purple-hi/40 bg-pantheon-purple-dim/20 p-4 space-y-3">
+          <p className="text-sm text-pantheon-purple-hi font-mono">{approval.message}</p>
           <div className="flex gap-2">
             <button
               onClick={() => sendApproval(true)}
               disabled={approving}
-              className="flex items-center gap-1.5 rounded-lg bg-green-700 hover:bg-green-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors disabled:opacity-40"
+              className="flex items-center gap-1.5 rounded-lg bg-pantheon-success-dim hover:bg-pantheon-success-dim px-3 py-1.5 text-xs font-semibold text-pantheon-text transition-colors disabled:opacity-40"
             >
               <Check className="w-3.5 h-3.5" />
               {approval.approveLabel}
@@ -804,7 +804,7 @@ function LiveJobCard({ job, onComplete }: { job: LiveJob; onComplete: () => void
             <button
               onClick={() => sendApproval(false)}
               disabled={approving}
-              className="flex items-center gap-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 px-3 py-1.5 text-xs font-semibold text-slate-200 transition-colors disabled:opacity-40"
+              className="flex items-center gap-1.5 rounded-lg bg-pantheon-bg-elevated hover:bg-pantheon-bg-neutral px-3 py-1.5 text-xs font-semibold text-pantheon-text transition-colors disabled:opacity-40"
             >
               <Pause className="w-3.5 h-3.5" />
               {approval.rejectLabel}
@@ -815,11 +815,11 @@ function LiveJobCard({ job, onComplete }: { job: LiveJob; onComplete: () => void
 
       {/* Reconnect banner */}
       {disconnected && (
-        <div className="mx-5 mt-3 flex items-center justify-between gap-3 rounded-lg border border-slate-600 bg-slate-700/50 px-4 py-2.5">
-          <span className="text-xs text-slate-400">Stream disconnected — job may still be running</span>
+        <div className="mx-5 mt-3 flex items-center justify-between gap-3 rounded-lg border border-pantheon-border-hi bg-pantheon-bg-elevated/50 px-4 py-2.5">
+          <span className="text-xs text-pantheon-text-muted">Stream disconnected — job may still be running</span>
           <button
             onClick={manualReconnect}
-            className="flex items-center gap-1.5 rounded-lg bg-[#FFDC28] hover:bg-[#E6C625] px-3 py-1 text-xs font-semibold text-slate-900 transition-colors"
+            className="flex items-center gap-1.5 rounded-lg bg-pantheon-yellow hover:bg-pantheon-yellow-dark px-3 py-1 text-xs font-semibold text-pantheon-bg transition-colors"
           >
             <RefreshCw className="w-3 h-3" />
             Reconnect
@@ -829,20 +829,20 @@ function LiveJobCard({ job, onComplete }: { job: LiveJob; onComplete: () => void
 
       {/* Long-running warning */}
       {isLongRunning && (
-        <div className="mx-5 mt-2 flex items-center gap-2 rounded-lg border border-orange-500/30 bg-orange-900/20 px-3 py-2">
-          <Clock className="w-3.5 h-3.5 text-orange-400 shrink-0" />
-          <span className="text-xs text-orange-400">
+        <div className="mx-5 mt-2 flex items-center gap-2 rounded-lg border border-pantheon-warning/30 bg-pantheon-warning/20 px-3 py-2">
+          <Clock className="w-3.5 h-3.5 text-pantheon-warning shrink-0" />
+          <span className="text-xs text-pantheon-warning">
             Staging is taking longer than usual — {elapsedMins} min elapsed
           </span>
         </div>
       )}
 
       {/* Console */}
-      <div ref={consoleRef} className="h-64 overflow-y-auto bg-slate-900 p-4 space-y-0.5">
-        {logs.length === 0 && <p className="text-xs text-slate-600 font-mono">Connecting…</p>}
+      <div ref={consoleRef} className="h-64 overflow-y-auto bg-pantheon-bg p-4 space-y-0.5">
+        {logs.length === 0 && <p className="text-xs text-pantheon-text-dim font-mono">Connecting…</p>}
         {logs.map((entry, i) => <LogLine key={i} entry={entry} />)}
         {status === 'running' && (
-          <div className="flex gap-2 font-mono text-xs text-slate-600">
+          <div className="flex gap-2 font-mono text-xs text-pantheon-text-dim">
             <span className="animate-pulse">▋</span>
           </div>
         )}
@@ -850,26 +850,26 @@ function LiveJobCard({ job, onComplete }: { job: LiveJob; onComplete: () => void
 
       {/* Results */}
       {snapshot && !isActive && (
-        <div className="border-t border-slate-700 px-5 py-4 space-y-3">
+        <div className="border-t border-pantheon-border px-5 py-4 space-y-3">
           {snapshot.upstreamUpdated && (
-            <div className="flex items-center gap-2 p-2.5 rounded-lg bg-green-900/20 border border-green-700/40">
-              <CheckCircle className="w-4 h-4 text-green-400" />
-              <span className="text-sm text-green-400 font-mono">Upstream updated</span>
+            <div className="flex items-center gap-2 p-2.5 rounded-lg bg-pantheon-success-dim/20 border border-pantheon-success-dim/40">
+              <CheckCircle className="w-4 h-4 text-pantheon-success" />
+              <span className="text-sm text-pantheon-success font-mono">Upstream updated</span>
             </div>
           )}
           {snapshot.upstreamConflict && (
-            <div className="flex items-center gap-2 p-2.5 rounded-lg bg-orange-900/20 border border-orange-700/40">
-              <AlertCircle className="w-4 h-4 text-orange-400" />
-              <span className="text-sm text-orange-400 font-mono">Upstream skipped — merge conflict</span>
+            <div className="flex items-center gap-2 p-2.5 rounded-lg bg-pantheon-warning/20 border border-pantheon-warning/40">
+              <AlertCircle className="w-4 h-4 text-pantheon-warning" />
+              <span className="text-sm text-pantheon-warning font-mono">Upstream skipped — merge conflict</span>
             </div>
           )}
           <UpdateSection label="Plugins" updated={snapshot.plugins.updated} skipped={snapshot.plugins.skipped} />
           <UpdateSection label="Themes"  updated={snapshot.themes.updated}  skipped={snapshot.themes.skipped} />
           {!snapshot.upstreamUpdated && snapshot.plugins.updated.length === 0 && snapshot.themes.updated.length === 0 && (
-            <p className="text-sm text-slate-500 font-mono">Nothing was updated</p>
+            <p className="text-sm text-pantheon-text-dim font-mono">Nothing was updated</p>
           )}
           {status === 'completed' && (
-            <div className="flex items-center gap-2 pt-2 border-t border-slate-700 text-xs text-slate-400">
+            <div className="flex items-center gap-2 pt-2 border-t border-pantheon-border text-xs text-pantheon-text-muted">
               <Clock className="w-3.5 h-3.5" />
               <span>Deployment scheduled in mu-deployment — check History for the exact time</span>
             </div>
@@ -971,8 +971,8 @@ function SitesTab() {
   const [busy, setBusy]           = useState<string | null>(null)
   const [error, setError]         = useState<string | null>(null)
 
-  const inputCls  = 'w-full rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 font-mono text-sm text-white placeholder-slate-500 focus:border-[#FFDC28] focus:outline-none'
-  const labelCls  = 'text-xs text-slate-400 font-mono'
+  const inputCls  = 'w-full rounded-lg border border-pantheon-border-hi bg-pantheon-bg-elevated px-3 py-2 font-mono text-sm text-pantheon-text placeholder-pantheon-text-dim focus:border-pantheon-yellow focus:outline-none'
+  const labelCls  = 'text-xs text-pantheon-text-muted font-mono'
 
   const loadAll = useCallback(async () => {
     setLoading(true)
@@ -1078,64 +1078,64 @@ function SitesTab() {
   const activeSites = sites.filter((s) => !s.paused_at)
 
   const renderRow = (s: Site) => (
-      <div key={s.site} className={`rounded-xl border bg-slate-800 overflow-hidden ${s.active ? 'border-slate-700' : 'border-slate-700/50 opacity-60'}`}>
+      <div key={s.site} className={`rounded-xl border bg-pantheon-bg-card overflow-hidden ${s.active ? 'border-pantheon-border' : 'border-pantheon-border/50 opacity-60'}`}>
         <div className="flex items-center gap-3 px-5 py-3">
           <div className="flex-1 min-w-0">
-            <span className="font-mono text-sm text-white">{s.site_name ?? s.machine_name ?? s.site}</span>
-            {s.site_name && <span className="ml-2 text-xs text-slate-500 font-mono">{s.machine_name ?? s.site}</span>}
+            <span className="font-mono text-sm text-pantheon-text">{s.site_name ?? s.machine_name ?? s.site}</span>
+            {s.site_name && <span className="ml-2 text-xs text-pantheon-text-dim font-mono">{s.machine_name ?? s.site}</span>}
             <div className="flex flex-wrap gap-1.5 mt-1">
-              <span className="text-xs rounded bg-slate-700 px-2 py-0.5 text-slate-300">{PLATFORM_LABELS[s.platform]}</span>
+              <span className="text-xs rounded bg-pantheon-bg-elevated px-2 py-0.5 text-pantheon-text">{PLATFORM_LABELS[s.platform]}</span>
               {s.paused_at && (
-                <span className="text-xs rounded border border-yellow-500/50 bg-yellow-500/10 px-2 py-0.5 text-yellow-300"
+                <span className="text-xs rounded border border-pantheon-warning/50 bg-pantheon-warning/10 px-2 py-0.5 text-pantheon-warning"
                   title={s.pause_reason ?? 'Updates paused'}>
                   Paused{s.paused_until ? ` · until ${String(s.paused_until).slice(0, 10)}` : ' · no end date'}
                 </span>
               )}
               {s.auto_stage
-                ? <span className="text-xs rounded bg-green-500/15 px-2 py-0.5 text-green-400">auto-stage on</span>
-                : <span className="text-xs rounded bg-slate-700 px-2 py-0.5 text-slate-500">auto-stage off</span>}
-              {s.php_version && <span className="text-xs rounded bg-slate-700 px-2 py-0.5 text-slate-400">PHP {s.php_version}</span>}
-              {s.upstream && <span className="text-xs rounded bg-slate-700 px-2 py-0.5 text-slate-400">{s.upstream}</span>}
+                ? <span className="text-xs rounded bg-pantheon-success/15 px-2 py-0.5 text-pantheon-success">auto-stage on</span>
+                : <span className="text-xs rounded bg-pantheon-bg-elevated px-2 py-0.5 text-pantheon-text-dim">auto-stage off</span>}
+              {s.php_version && <span className="text-xs rounded bg-pantheon-bg-elevated px-2 py-0.5 text-pantheon-text-muted">PHP {s.php_version}</span>}
+              {s.upstream && <span className="text-xs rounded bg-pantheon-bg-elevated px-2 py-0.5 text-pantheon-text-muted">{s.upstream}</span>}
               {(() => {
                 const sched = scheduleForSite(s.site)
                 return sched ? (
                   <>
-                    <span className="text-xs rounded bg-slate-700 px-2 py-0.5 text-slate-300">{formatStandingSchedule(sched)}</span>
-                    <span className="text-xs rounded bg-slate-700 px-2 py-0.5 text-slate-400">→ {sched.deploy_destination ?? 'live'} · +{sched.deploy_days ?? 1}bd</span>
+                    <span className="text-xs rounded bg-pantheon-bg-elevated px-2 py-0.5 text-pantheon-text">{formatStandingSchedule(sched)}</span>
+                    <span className="text-xs rounded bg-pantheon-bg-elevated px-2 py-0.5 text-pantheon-text-muted">→ {sched.deploy_destination ?? 'live'} · +{sched.deploy_days ?? 1}bd</span>
                   </>
                 ) : (
-                  <span className="text-xs rounded bg-slate-700/50 px-2 py-0.5 text-slate-500">no schedule</span>
+                  <span className="text-xs rounded bg-pantheon-bg-elevated/50 px-2 py-0.5 text-pantheon-text-dim">no schedule</span>
                 )
               })()}
-              {(s.vrt_paths?.length ?? 0) > 0 && <span className="text-xs rounded bg-slate-700 px-2 py-0.5 text-slate-400">{s.vrt_paths.length} VRT</span>}
+              {(s.vrt_paths?.length ?? 0) > 0 && <span className="text-xs rounded bg-pantheon-bg-elevated px-2 py-0.5 text-pantheon-text-muted">{s.vrt_paths.length} VRT</span>}
             </div>
           </div>
           <button onClick={() => reSync(s)} disabled={busy === s.site}
-            className="text-slate-500 hover:text-slate-300 transition-colors disabled:opacity-40" title="Re-sync from Pantheon">
+            className="text-pantheon-text-dim hover:text-pantheon-text transition-colors disabled:opacity-40" title="Re-sync from Pantheon">
             <RefreshCw className={`w-4 h-4 ${busy === s.site ? 'animate-spin' : ''}`} />
           </button>
-          <button onClick={() => openEdit(s)} className="text-xs text-slate-400 hover:text-white transition-colors">Edit</button>
+          <button onClick={() => openEdit(s)} className="text-xs text-pantheon-text-muted hover:text-pantheon-text transition-colors">Edit</button>
           <button onClick={() => setOptionsFor(s)}
-            className="text-xs text-slate-400 hover:text-white transition-colors"
+            className="text-xs text-pantheon-text-muted hover:text-pantheon-text transition-colors"
             title={s.platform === 'drupal' ? "Modules and themes to skip on this site" : "Plugins and themes to skip on this site"}>Options</button>
           {s.paused_at ? (
             <button onClick={() => resume(s)} disabled={busy === s.site}
-              className="text-xs px-2 py-0.5 rounded border border-yellow-500/50 text-yellow-300 hover:bg-yellow-500/10 transition-colors disabled:opacity-40"
+              className="text-xs px-2 py-0.5 rounded border border-pantheon-warning/50 text-pantheon-warning hover:bg-pantheon-warning/10 transition-colors disabled:opacity-40"
               title={s.pause_reason ?? 'Updates paused'}>Resume</button>
           ) : (
             <button onClick={() => openHold(s)}
-              className="text-xs text-slate-400 hover:text-yellow-300 transition-colors" title="Pause managed updates for this site">Pause</button>
+              className="text-xs text-pantheon-text-muted hover:text-pantheon-warning transition-colors" title="Pause managed updates for this site">Pause</button>
           )}
           <a href={`${MU_VRT_URL}/vrt/${encodeURIComponent(s.site)}`} target="_blank" rel="noopener noreferrer"
-            className="text-xs text-slate-400 hover:text-sky-300 transition-colors inline-flex items-center gap-1" title="Configure VRT (paths + threshold)">
+            className="text-xs text-pantheon-text-muted hover:text-pantheon-info transition-colors inline-flex items-center gap-1" title="Configure VRT (paths + threshold)">
             <Globe className="w-3.5 h-3.5" /> VRT
           </a>
           <button onClick={() => toggleActive(s)} disabled={busy === s.site}
-            className={`text-xs px-2 py-0.5 rounded border transition-colors ${s.active ? 'border-green-700 text-green-400 hover:bg-green-900/30' : 'border-slate-600 text-slate-500 hover:bg-slate-700'}`}>
+            className={`text-xs px-2 py-0.5 rounded border transition-colors ${s.active ? 'border-pantheon-success-dim text-pantheon-success hover:bg-pantheon-success-dim/30' : 'border-pantheon-border-hi text-pantheon-text-dim hover:bg-pantheon-bg-elevated'}`}>
             {s.active ? 'Active' : 'Inactive'}
           </button>
           <button onClick={() => remove(s)} disabled={busy === s.site}
-            className="text-red-500 hover:text-red-400 transition-colors disabled:opacity-40" title="Remove from registry">
+            className="text-pantheon-error hover:text-pantheon-error transition-colors disabled:opacity-40" title="Remove from registry">
             <Trash2 className="w-4 h-4" />
           </button>
         </div>
@@ -1157,16 +1157,16 @@ function SitesTab() {
     const pages = Math.max(1, Math.ceil(rows.length / SITES_PER_PAGE))
     const safe = Math.min(page, pages - 1)
     const slice = rows.slice(safe * SITES_PER_PAGE, safe * SITES_PER_PAGE + SITES_PER_PAGE)
-    const dot = tone === 'green' ? 'bg-green-400' : 'bg-yellow-400'
-    const text = tone === 'green' ? 'text-green-400' : 'text-yellow-300'
+    const dot = tone === 'green' ? 'bg-pantheon-success' : 'bg-pantheon-warning'
+    const text = tone === 'green' ? 'text-pantheon-success' : 'text-pantheon-warning'
     return (
       <div className="space-y-3">
         <button onClick={() => setOpen(!open)}
-          className="flex w-full items-center gap-2 rounded-lg border border-slate-700 bg-slate-800/60 px-4 py-2 text-left transition-colors hover:border-slate-600">
+          className="flex w-full items-center gap-2 rounded-lg border border-pantheon-border bg-pantheon-bg-card/60 px-4 py-2 text-left transition-colors hover:border-pantheon-border-hi">
           <span className={`h-2 w-2 rounded-full ${dot}`} />
           <span className={`font-mono text-xs uppercase tracking-widest ${text}`}>{label}</span>
-          <span className="font-mono text-xs text-slate-500">{rows.length}</span>
-          {open ? <ChevronUp className="ml-auto h-4 w-4 text-slate-500" /> : <ChevronDown className="ml-auto h-4 w-4 text-slate-500" />}
+          <span className="font-mono text-xs text-pantheon-text-dim">{rows.length}</span>
+          {open ? <ChevronUp className="ml-auto h-4 w-4 text-pantheon-text-dim" /> : <ChevronDown className="ml-auto h-4 w-4 text-pantheon-text-dim" />}
         </button>
 
         {open && (
@@ -1175,10 +1175,10 @@ function SitesTab() {
             {pages > 1 && (
               <div className="flex items-center justify-end gap-2 pr-1">
                 <button onClick={() => setPage(Math.max(0, safe - 1))} disabled={safe === 0}
-                  className="rounded border border-slate-600 px-2 py-1 font-mono text-xs text-slate-400 hover:border-slate-400 disabled:opacity-30 transition-colors">← Prev</button>
-                <span className="font-mono text-xs text-slate-500 tabular-nums">{safe + 1} / {pages}</span>
+                  className="rounded border border-pantheon-border-hi px-2 py-1 font-mono text-xs text-pantheon-text-muted hover:border-pantheon-text-muted disabled:opacity-30 transition-colors">← Prev</button>
+                <span className="font-mono text-xs text-pantheon-text-dim tabular-nums">{safe + 1} / {pages}</span>
                 <button onClick={() => setPage(Math.min(pages - 1, safe + 1))} disabled={safe >= pages - 1}
-                  className="rounded border border-slate-600 px-2 py-1 font-mono text-xs text-slate-400 hover:border-slate-400 disabled:opacity-30 transition-colors">Next →</button>
+                  className="rounded border border-pantheon-border-hi px-2 py-1 font-mono text-xs text-pantheon-text-muted hover:border-pantheon-text-muted disabled:opacity-30 transition-colors">Next →</button>
               </div>
             )}
           </div>
@@ -1256,19 +1256,19 @@ function SitesTab() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Globe className="w-4 h-4 text-slate-400" />
-          <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-widest">Sites Registry</h3>
+          <Globe className="w-4 h-4 text-pantheon-text-muted" />
+          <h3 className="text-sm font-semibold text-pantheon-text-muted uppercase tracking-widest">Sites Registry</h3>
         </div>
         <button
           onClick={openNew}
-          className="flex items-center gap-1.5 rounded-lg bg-[#FFDC28] hover:bg-[#E6C625] px-3 py-1.5 text-xs font-semibold text-slate-900 transition-colors"
+          className="flex items-center gap-1.5 rounded-lg bg-pantheon-yellow hover:bg-pantheon-yellow-dark px-3 py-1.5 text-xs font-semibold text-pantheon-bg transition-colors"
         >
           <Plus className="w-3.5 h-3.5" />
           Register Site
         </button>
       </div>
 
-      <p className="text-xs text-slate-500">
+      <p className="text-xs text-pantheon-text-dim">
         Shared with mu-deployment — register or edit here or there, same data.
       </p>
 
@@ -1283,7 +1283,7 @@ function SitesTab() {
           <div className="px-6 py-5 space-y-4">
             {editing === '__new__' && (
               <div className="space-y-1.5">
-                <label className={labelCls}>Site ID <span className="text-slate-600 normal-case">(Pantheon machine name)</span></label>
+                <label className={labelCls}>Site ID <span className="text-pantheon-text-dim normal-case">(Pantheon machine name)</span></label>
                 <input type="text" value={form.site} onChange={e => setForm(f => ({ ...f, site: e.target.value }))}
                   placeholder="my-site-name" className={inputCls} />
               </div>
@@ -1300,8 +1300,8 @@ function SitesTab() {
             </div>
 
             {/* ── Update policy (site facts — apply to every run, scheduled or ad-hoc) ── */}
-            <div className="space-y-3 pt-1 border-t border-slate-700">
-              <p className="font-mono text-xs uppercase tracking-widest text-slate-400 pt-1">Update policy</p>
+            <div className="space-y-3 pt-1 border-t border-pantheon-border">
+              <p className="font-mono text-xs uppercase tracking-widest text-pantheon-text-muted pt-1">Update policy</p>
               <div className="space-y-1.5">
                 <label className={labelCls}>Core updates</label>
                 <select value={form.update_mode} onChange={e => setForm(f => ({ ...f, update_mode: e.target.value as UpdateMode }))}
@@ -1311,31 +1311,31 @@ function SitesTab() {
                   ))}
                 </select>
               </div>
-              <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
+              <label className="flex items-center gap-2 text-sm text-pantheon-text cursor-pointer">
                 <input type="checkbox" checked={form.skip_upstream} onChange={e => setForm(f => ({ ...f, skip_upstream: e.target.checked }))}
-                  className="rounded border-slate-600 bg-slate-700 accent-[#FFDC28]" />
+                  className="rounded border-pantheon-border-hi bg-pantheon-bg-elevated accent-pantheon-yellow" />
                 Skip upstream updates
               </label>
-              <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
+              <label className="flex items-center gap-2 text-sm text-pantheon-text cursor-pointer">
                 <input type="checkbox" checked={form.skip_plugins_themes} onChange={e => setForm(f => ({ ...f, skip_plugins_themes: e.target.checked }))}
-                  className="rounded border-slate-600 bg-slate-700 accent-[#FFDC28]" />
+                  className="rounded border-pantheon-border-hi bg-pantheon-bg-elevated accent-pantheon-yellow" />
                 Skip plugins &amp; themes
               </label>
-              <label className="flex items-start gap-2 text-sm text-slate-300 cursor-pointer">
+              <label className="flex items-start gap-2 text-sm text-pantheon-text cursor-pointer">
                 <input type="checkbox" checked={form.auto_stage} onChange={e => setForm(f => ({ ...f, auto_stage: e.target.checked }))}
-                  className="mt-0.5 rounded border-slate-600 bg-slate-700 accent-[#FFDC28]" />
+                  className="mt-0.5 rounded border-pantheon-border-hi bg-pantheon-bg-elevated accent-pantheon-yellow" />
                 <span>Enable auto-staging
-                  <span className="block text-[0.7rem] text-slate-500 font-mono">Off = registered but never auto-staged (scan / schedule / security). Turn on only when the site is ready.</span>
+                  <span className="block text-[0.7rem] text-pantheon-text-dim font-mono">Off = registered but never auto-staged (scan / schedule / security). Turn on only when the site is ready.</span>
                 </span>
               </label>
             </div>
 
             {/* ── Standing schedule ── */}
-            <div className="space-y-3 pt-1 border-t border-slate-700">
+            <div className="space-y-3 pt-1 border-t border-pantheon-border">
               <label className="flex items-center gap-2 cursor-pointer pt-1">
                 <input type="checkbox" checked={form.managed} onChange={e => setForm(f => ({ ...f, managed: e.target.checked }))}
-                  className="rounded border-slate-600 bg-slate-700 accent-[#FFDC28]" />
-                <span className="font-mono text-xs uppercase tracking-widest text-slate-400">Standing schedule — recurring staging</span>
+                  className="rounded border-pantheon-border-hi bg-pantheon-bg-elevated accent-pantheon-yellow" />
+                <span className="font-mono text-xs uppercase tracking-widest text-pantheon-text-muted">Standing schedule — recurring staging</span>
               </label>
 
               {form.managed && (
@@ -1366,12 +1366,12 @@ function SitesTab() {
                         className={inputCls}>
                         {WEEKS.map(w => <option key={w.v} value={w.v}>{w.l}</option>)}
                       </select>
-                      <p className="text-xs text-slate-500">e.g. &quot;Last&quot; + &quot;Thursday&quot; = last Thursday of each month.</p>
+                      <p className="text-xs text-pantheon-text-dim">e.g. &quot;Last&quot; + &quot;Thursday&quot; = last Thursday of each month.</p>
                     </div>
                   )}
 
                   {form.cadence === 'custom' && (
-                    <p className="text-xs text-slate-500">Runs on the chosen day in the week of the 15th, every other month.</p>
+                    <p className="text-xs text-pantheon-text-dim">Runs on the chosen day in the week of the 15th, every other month.</p>
                   )}
 
                   <div className="grid grid-cols-2 gap-4">
@@ -1400,48 +1400,48 @@ function SitesTab() {
               )}
             </div>
 
-            <div className="space-y-1.5 pt-1 border-t border-slate-700">
+            <div className="space-y-1.5 pt-1 border-t border-pantheon-border">
               <label className={labelCls}>
-                VRT paths <span className="text-slate-600 normal-case">(managed in the VRT app — read-only here)</span>
+                VRT paths <span className="text-pantheon-text-dim normal-case">(managed in the VRT app — read-only here)</span>
               </label>
               {vrtPaths.length > 0 ? (
-                <div className="rounded-lg border border-slate-700 bg-slate-900/40 px-3 py-2 font-mono text-xs text-slate-300 max-h-32 overflow-y-auto space-y-0.5">
+                <div className="rounded-lg border border-pantheon-border bg-pantheon-bg/40 px-3 py-2 font-mono text-xs text-pantheon-text max-h-32 overflow-y-auto space-y-0.5">
                   {vrtPaths.map((p, i) => <div key={i}>{p}</div>)}
                 </div>
               ) : (
-                <p className="font-mono text-xs text-slate-500">No VRT paths configured.</p>
+                <p className="font-mono text-xs text-pantheon-text-dim">No VRT paths configured.</p>
               )}
               {editing !== '__new__' && (
                 <a href={`${MU_VRT_URL}/vrt/${encodeURIComponent(form.site)}`} target="_blank" rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-xs text-[#FFDC28] hover:underline">
+                  className="inline-flex items-center gap-1 text-xs text-pantheon-yellow hover:underline">
                   Edit paths, thresholds &amp; exclusions in the VRT app <ExternalLink className="w-3 h-3" />
                 </a>
               )}
             </div>
 
             <div className="space-y-1.5">
-              <label className={labelCls}>Last deployment <span className="text-slate-600 normal-case">(optional — cadence anchor)</span></label>
+              <label className={labelCls}>Last deployment <span className="text-pantheon-text-dim normal-case">(optional — cadence anchor)</span></label>
               <input type="date" value={form.last_deployment} onChange={e => setForm(f => ({ ...f, last_deployment: e.target.value }))}
                 className={inputCls} />
-              <p className="text-[0.7rem] text-slate-500 font-mono">When this site was last deployed. The recurring cadence counts ISO weeks from this one — set it for sites deployed before onboarding so the first run lands on the right week. Left blank, the cycle counts from the schedule&apos;s creation week, which (with auto-staging on) can mean a run today.</p>
+              <p className="text-[0.7rem] text-pantheon-text-dim font-mono">When this site was last deployed. The recurring cadence counts ISO weeks from this one — set it for sites deployed before onboarding so the first run lands on the right week. Left blank, the cycle counts from the schedule&apos;s creation week, which (with auto-staging on) can mean a run today.</p>
             </div>
 
             <div className="space-y-1.5">
-              <label className={labelCls}>Notes <span className="text-slate-600 normal-case">(optional)</span></label>
+              <label className={labelCls}>Notes <span className="text-pantheon-text-dim normal-case">(optional)</span></label>
               <input type="text" value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
                 placeholder="anything worth noting" className={inputCls} />
             </div>
 
             {error && (
-              <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 font-mono text-xs text-red-400">{error}</div>
+              <div className="rounded-lg border border-pantheon-error/40 bg-pantheon-error/10 px-3 py-2 font-mono text-xs text-pantheon-error">{error}</div>
             )}
 
             <div className="flex gap-2 pt-2">
               <button onClick={save} disabled={saving || !form.site.trim()}
-                className="flex-1 rounded-lg bg-[#FFDC28] hover:bg-[#E6C625] px-4 py-2.5 text-sm font-semibold text-slate-900 transition-colors disabled:opacity-40">
+                className="flex-1 rounded-lg bg-pantheon-yellow hover:bg-pantheon-yellow-dark px-4 py-2.5 text-sm font-semibold text-pantheon-bg transition-colors disabled:opacity-40">
                 {saving ? 'Saving…' : editing === '__new__' ? 'Register Site' : 'Save Changes'}
               </button>
-              <button onClick={() => setEditing(null)} className="px-4 py-2.5 text-sm text-slate-400 hover:text-white transition-colors">Cancel</button>
+              <button onClick={() => setEditing(null)} className="px-4 py-2.5 text-sm text-pantheon-text-muted hover:text-pantheon-text transition-colors">Cancel</button>
             </div>
           </div>
         </Card>
@@ -1449,13 +1449,13 @@ function SitesTab() {
 
       {/* Site list */}
       {loading && sites.length === 0 && (
-        <p className="text-sm text-slate-500 font-mono text-center py-6">Loading…</p>
+        <p className="text-sm text-pantheon-text-dim font-mono text-center py-6">Loading…</p>
       )}
       {!loading && sites.length === 0 && (
         <div className="text-center py-8 space-y-2">
-          <Globe className="w-8 h-8 text-slate-600 mx-auto" />
-          <p className="text-sm text-slate-500">No sites registered yet — add one above</p>
-          <p className="text-xs text-slate-600">(If you just created the table, run the backfill in Supabase.)</p>
+          <Globe className="w-8 h-8 text-pantheon-text-dim mx-auto" />
+          <p className="text-sm text-pantheon-text-dim">No sites registered yet — add one above</p>
+          <p className="text-xs text-pantheon-text-dim">(If you just created the table, run the backfill in Supabase.)</p>
         </div>
       )}
 
@@ -1468,23 +1468,23 @@ function SitesTab() {
       {holdFor && (
         <Modal title={`Pause updates — ${holdFor.machine_name ?? holdFor.site_name ?? holdFor.site}`} onClose={() => setHoldFor(null)}>
           <div className="space-y-4">
-            <p className="text-sm text-slate-400">
+            <p className="text-sm text-pantheon-text-muted">
               Nothing stages itself while a site is paused — not the schedule, not the security scan, not the
               upstream check. Manual runs still work.
             </p>
             <div className="space-y-1.5">
-              <label className="font-mono text-xs uppercase tracking-widest text-slate-400">Reason</label>
+              <label className="font-mono text-xs uppercase tracking-widest text-pantheon-text-muted">Reason</label>
               <input type="text" value={holdReason} onChange={(e) => setHoldReason(e.target.value)}
                 placeholder="e.g. customer migrating D10 to D11"
-                className="w-full rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 font-mono text-sm text-white placeholder-slate-500 focus:border-[#FFDC28] focus:outline-none" />
+                className="w-full rounded-lg border border-pantheon-border-hi bg-pantheon-bg-elevated px-3 py-2 font-mono text-sm text-pantheon-text placeholder-pantheon-text-dim focus:border-pantheon-yellow focus:outline-none" />
             </div>
             <div className="space-y-1.5">
-              <label className="font-mono text-xs uppercase tracking-widest text-slate-400">
-                Expected end <span className="text-slate-600 normal-case">(optional)</span>
+              <label className="font-mono text-xs uppercase tracking-widest text-pantheon-text-muted">
+                Expected end <span className="text-pantheon-text-dim normal-case">(optional)</span>
               </label>
               <input type="date" value={holdUntil} onChange={(e) => setHoldUntil(e.target.value)}
-                className="rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 font-mono text-sm text-white focus:border-[#FFDC28] focus:outline-none" />
-              <p className="text-[0.7rem] text-slate-500 font-mono">
+                className="rounded-lg border border-pantheon-border-hi bg-pantheon-bg-elevated px-3 py-2 font-mono text-sm text-pantheon-text focus:border-pantheon-yellow focus:outline-none" />
+              <p className="text-[0.7rem] text-pantheon-text-dim font-mono">
                 Advisory only — the site stays paused until someone resumes it. Slack nudges 3 business days
                 before this date so you can follow up. Leave it blank when the customer gives no timeline and
                 you will be reminded of the hold&apos;s age instead.
@@ -1492,11 +1492,11 @@ function SitesTab() {
             </div>
             <div className="flex gap-2">
               <button onClick={applyHold} disabled={holdSaving}
-                className="rounded-lg border border-yellow-500/50 px-3 py-1.5 font-mono text-xs text-yellow-300 hover:bg-yellow-500/10 disabled:opacity-40 transition-colors">
+                className="rounded-lg border border-pantheon-warning/50 px-3 py-1.5 font-mono text-xs text-pantheon-warning hover:bg-pantheon-warning/10 disabled:opacity-40 transition-colors">
                 {holdSaving ? 'Saving…' : holdFor.paused_at ? 'Update hold' : 'Pause updates'}
               </button>
               <button onClick={() => setHoldFor(null)}
-                className="rounded-lg border border-slate-600 px-3 py-1.5 font-mono text-xs text-slate-400 hover:bg-slate-700 transition-colors">Cancel</button>
+                className="rounded-lg border border-pantheon-border-hi px-3 py-1.5 font-mono text-xs text-pantheon-text-muted hover:bg-pantheon-bg-elevated transition-colors">Cancel</button>
             </div>
           </div>
         </Modal>
@@ -1529,8 +1529,8 @@ function ScheduleTab() {
   const [skipUpstream, setSkipUpstream] = useState(false)
   const [skipPluginsThemes, setSkipPluginsThemes] = useState(false)
 
-  const inputCls = 'w-full rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 font-mono text-sm text-white placeholder-slate-500 focus:border-[#FFDC28] focus:outline-none'
-  const labelCls = 'text-xs text-slate-400 font-mono'
+  const inputCls = 'w-full rounded-lg border border-pantheon-border-hi bg-pantheon-bg-elevated px-3 py-2 font-mono text-sm text-pantheon-text placeholder-pantheon-text-dim focus:border-pantheon-yellow focus:outline-none'
+  const labelCls = 'text-xs text-pantheon-text-muted font-mono'
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -1596,19 +1596,19 @@ function ScheduleTab() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Calendar className="w-4 h-4 text-slate-400" />
-          <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-widest">One-off Stagings</h3>
+          <Calendar className="w-4 h-4 text-pantheon-text-muted" />
+          <h3 className="text-sm font-semibold text-pantheon-text-muted uppercase tracking-widest">One-off Stagings</h3>
         </div>
         <button
           onClick={() => setShowForm(f => !f)}
-          className="flex items-center gap-1.5 rounded-lg bg-[#FFDC28] hover:bg-[#E6C625] px-3 py-1.5 text-xs font-semibold text-slate-900 transition-colors"
+          className="flex items-center gap-1.5 rounded-lg bg-pantheon-yellow hover:bg-pantheon-yellow-dark px-3 py-1.5 text-xs font-semibold text-pantheon-bg transition-colors"
         >
           <Plus className="w-3.5 h-3.5" />
           Schedule One-off
         </button>
       </div>
 
-      <p className="text-xs text-slate-500">
+      <p className="text-xs text-pantheon-text-dim">
         Ad-hoc, single staging runs. For recurring schedules, use a site&apos;s Standing schedule in the Sites tab.
       </p>
 
@@ -1617,11 +1617,11 @@ function ScheduleTab() {
           <CardHeader icon={<Calendar className="w-5 h-5" />} title="Schedule a one-off staging" description="Runs once at the chosen Manila time, then clears itself." />
           <div className="px-6 py-5 space-y-4">
             <div className="space-y-1.5">
-              <label className={labelCls}>Site ID <span className="text-slate-600 normal-case">(Pantheon machine name or UUID)</span></label>
+              <label className={labelCls}>Site ID <span className="text-pantheon-text-dim normal-case">(Pantheon machine name or UUID)</span></label>
               <input type="text" value={site} onChange={e => setSite(e.target.value)} placeholder="my-site-name" className={inputCls} />
             </div>
             <div className="space-y-1.5">
-              <label className={labelCls}>Stage at <span className="text-slate-600 normal-case">(Manila time)</span></label>
+              <label className={labelCls}>Stage at <span className="text-pantheon-text-dim normal-case">(Manila time)</span></label>
               <input type="datetime-local" value={when} onChange={e => setWhen(e.target.value)} className={inputCls} />
             </div>
             <div className="grid grid-cols-2 gap-4">
@@ -1644,55 +1644,55 @@ function ScheduleTab() {
                 </select>
               </div>
             </div>
-            <div className="space-y-2 pt-1 border-t border-slate-700">
-              <p className="text-xs text-slate-400 font-mono pt-1">Update options</p>
-              <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
-                <input type="checkbox" checked={skipUpstream} onChange={e => setSkipUpstream(e.target.checked)} className="rounded border-slate-600 bg-slate-700 accent-[#FFDC28]" />
+            <div className="space-y-2 pt-1 border-t border-pantheon-border">
+              <p className="text-xs text-pantheon-text-muted font-mono pt-1">Update options</p>
+              <label className="flex items-center gap-2 text-sm text-pantheon-text cursor-pointer">
+                <input type="checkbox" checked={skipUpstream} onChange={e => setSkipUpstream(e.target.checked)} className="rounded border-pantheon-border-hi bg-pantheon-bg-elevated accent-pantheon-yellow" />
                 Skip upstream updates
               </label>
-              <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
-                <input type="checkbox" checked={skipPluginsThemes} onChange={e => setSkipPluginsThemes(e.target.checked)} className="rounded border-slate-600 bg-slate-700 accent-[#FFDC28]" />
+              <label className="flex items-center gap-2 text-sm text-pantheon-text cursor-pointer">
+                <input type="checkbox" checked={skipPluginsThemes} onChange={e => setSkipPluginsThemes(e.target.checked)} className="rounded border-pantheon-border-hi bg-pantheon-bg-elevated accent-pantheon-yellow" />
                 Skip plugins &amp; themes
               </label>
             </div>
-            {error && <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 font-mono text-xs text-red-400">{error}</div>}
+            {error && <div className="rounded-lg border border-pantheon-error/40 bg-pantheon-error/10 px-3 py-2 font-mono text-xs text-pantheon-error">{error}</div>}
             <div className="flex gap-2 pt-2">
               <button onClick={save} disabled={saving || !site.trim() || !when}
-                className="flex-1 rounded-lg bg-[#FFDC28] hover:bg-[#E6C625] px-4 py-2.5 text-sm font-semibold text-slate-900 transition-colors disabled:opacity-40">
+                className="flex-1 rounded-lg bg-pantheon-yellow hover:bg-pantheon-yellow-dark px-4 py-2.5 text-sm font-semibold text-pantheon-bg transition-colors disabled:opacity-40">
                 {saving ? 'Saving…' : 'Schedule'}
               </button>
-              <button onClick={() => setShowForm(false)} className="px-4 py-2.5 text-sm text-slate-400 hover:text-white transition-colors">Cancel</button>
+              <button onClick={() => setShowForm(false)} className="px-4 py-2.5 text-sm text-pantheon-text-muted hover:text-pantheon-text transition-colors">Cancel</button>
             </div>
           </div>
         </Card>
       )}
 
       {loading && jobs.length === 0 && (
-        <p className="text-sm text-slate-500 font-mono text-center py-6">Loading…</p>
+        <p className="text-sm text-pantheon-text-dim font-mono text-center py-6">Loading…</p>
       )}
       {!loading && jobs.length === 0 && (
         <div className="text-center py-8 space-y-2">
-          <CalendarClock className="w-8 h-8 text-slate-600 mx-auto" />
-          <p className="text-sm text-slate-500">No one-off stagings queued</p>
+          <CalendarClock className="w-8 h-8 text-pantheon-text-dim mx-auto" />
+          <p className="text-sm text-pantheon-text-dim">No one-off stagings queued</p>
         </div>
       )}
 
       {jobs.map(j => (
-        <div key={j.id} className="rounded-xl border border-slate-700 bg-slate-800 overflow-hidden">
+        <div key={j.id} className="rounded-xl border border-pantheon-border bg-pantheon-bg-card overflow-hidden">
           <div className="flex items-center gap-3 px-5 py-3">
             <div className="flex-1 min-w-0">
-              <span className="font-mono text-sm text-white">{j.site_name ?? j.machine_name ?? j.site}</span>
-              <p className="text-xs text-slate-400 mt-0.5">
+              <span className="font-mono text-sm text-pantheon-text">{j.site_name ?? j.machine_name ?? j.site}</span>
+              <p className="text-xs text-pantheon-text-muted mt-0.5">
                 {fmt(j.next_staging_at)} · → {j.deploy_destination ?? 'live'} · +{j.deploy_days ?? 2}bd
                 {(j.skip_upstream || j.skip_plugins_themes) ? ` · ${[j.skip_upstream && 'skip upstream', j.skip_plugins_themes && 'skip plugins/themes'].filter(Boolean).join(' · ')}` : ''}
               </p>
             </div>
             <button onClick={() => runNow(j)} disabled={busy === j.id}
-              className="rounded-lg bg-[#FFDC28] hover:bg-[#E6C625] px-2.5 py-1.5 text-xs font-semibold text-slate-900 transition-colors disabled:opacity-40">
+              className="rounded-lg bg-pantheon-yellow hover:bg-pantheon-yellow-dark px-2.5 py-1.5 text-xs font-semibold text-pantheon-bg transition-colors disabled:opacity-40">
               Run now
             </button>
             <button onClick={() => cancelJob(j.id)} disabled={busy === j.id}
-              className="text-red-500 hover:text-red-400 transition-colors disabled:opacity-40" title="Cancel">
+              className="text-pantheon-error hover:text-pantheon-error transition-colors disabled:opacity-40" title="Cancel">
               <Trash2 className="w-4 h-4" />
             </button>
           </div>
@@ -1813,13 +1813,13 @@ function UpcomingTab() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <CalendarClock className="w-4 h-4 text-slate-400" />
-          <h3 className="text-sm font-semibold text-white uppercase tracking-widest">Upcoming Stagings</h3>
+          <CalendarClock className="w-4 h-4 text-pantheon-text-muted" />
+          <h3 className="text-sm font-semibold text-pantheon-text uppercase tracking-widest">Upcoming Stagings</h3>
         </div>
         <button
           onClick={load}
           disabled={loading}
-          className="flex items-center gap-1.5 text-xs text-white hover:text-[#FFDC28] transition-colors disabled:opacity-40"
+          className="flex items-center gap-1.5 text-xs text-pantheon-text hover:text-pantheon-yellow transition-colors disabled:opacity-40"
         >
           <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
           Refresh
@@ -1827,32 +1827,32 @@ function UpcomingTab() {
       </div>
 
       {loading && upcoming.length === 0 && (
-        <p className="text-sm text-slate-500 font-mono text-center py-6">Loading…</p>
+        <p className="text-sm text-pantheon-text-dim font-mono text-center py-6">Loading…</p>
       )}
       {!loading && upcoming.length === 0 && (
         <div className="text-center py-8 space-y-2">
-          <CalendarClock className="w-8 h-8 text-slate-600 mx-auto" />
-          <p className="text-sm text-slate-500">No upcoming stagings — add schedules in the Schedule tab</p>
+          <CalendarClock className="w-8 h-8 text-pantheon-text-dim mx-auto" />
+          <p className="text-sm text-pantheon-text-dim">No upcoming stagings — add schedules in the Schedule tab</p>
         </div>
       )}
 
       {upcoming.length > 0 && (
-        <div className="rounded-xl border border-slate-700 bg-slate-800 overflow-hidden">
+        <div className="rounded-xl border border-pantheon-border bg-pantheon-bg-card overflow-hidden">
           {/* Accordion toggle */}
           <button
             onClick={() => setAccordionOpen(o => !o)}
-            className="w-full flex items-center justify-between px-5 py-3 hover:bg-slate-700/40 transition-colors"
+            className="w-full flex items-center justify-between px-5 py-3 hover:bg-pantheon-bg-elevated/40 transition-colors"
           >
             <div className="flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-[#FFDC28] animate-pulse inline-block" />
-              <h3 className="text-sm font-semibold text-white uppercase tracking-widest">Upcoming Stagings</h3>
-              <span className="text-xs rounded-full bg-slate-600 text-slate-300 px-2 py-0.5 font-mono">
+              <span className="w-2 h-2 rounded-full bg-pantheon-yellow animate-pulse inline-block" />
+              <h3 className="text-sm font-semibold text-pantheon-text uppercase tracking-widest">Upcoming Stagings</h3>
+              <span className="text-xs rounded-full bg-pantheon-bg-neutral text-pantheon-text px-2 py-0.5 font-mono">
                 {upcoming.length}
               </span>
             </div>
             {accordionOpen
-              ? <ChevronUp className="w-4 h-4 text-slate-400" />
-              : <ChevronDown className="w-4 h-4 text-slate-400" />}
+              ? <ChevronUp className="w-4 h-4 text-pantheon-text-muted" />
+              : <ChevronDown className="w-4 h-4 text-pantheon-text-muted" />}
           </button>
 
           {/* Accordion body */}
@@ -1861,7 +1861,7 @@ function UpcomingTab() {
             const safePage   = Math.min(upcomingPage, totalPages - 1)
             const paged      = upcoming.slice(safePage * UPCOMING_PAGE_SIZE, (safePage + 1) * UPCOMING_PAGE_SIZE)
             return (
-              <div className="border-t border-slate-700">
+              <div className="border-t border-pantheon-border">
                 {paged.map((u, i) => {
                   const globalIdx    = safePage * UPCOMING_PAGE_SIZE + i
                   const key          = `${u.id}-${globalIdx}`
@@ -1872,21 +1872,21 @@ function UpcomingTab() {
                   const isRunningNow = runningId === u.id
 
                   return (
-                    <div key={key} className={`p-4 space-y-2${!isLast ? ' border-b border-slate-700/60' : ''}`}>
+                    <div key={key} className={`p-4 space-y-2${!isLast ? ' border-b border-pantheon-border/60' : ''}`}>
                       <div className="flex items-start gap-3">
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 flex-wrap">
-                            <span className="font-mono text-sm font-semibold text-white">{u.site_name ?? u.machine_name ?? u.site}</span>
+                            <span className="font-mono text-sm font-semibold text-pantheon-text">{u.site_name ?? u.machine_name ?? u.site}</span>
                             {u.due_now ? (
-                              <span className="text-xs rounded border border-green-500/40 text-green-400 px-1.5 py-0.5 font-mono">due now</span>
+                              <span className="text-xs rounded border border-pantheon-success/40 text-pantheon-success px-1.5 py-0.5 font-mono">due now</span>
                             ) : isFirst && (
-                              <span className="text-xs rounded border border-yellow-500/40 text-yellow-400 px-1.5 py-0.5 font-mono">next</span>
+                              <span className="text-xs rounded border border-pantheon-info/40 text-pantheon-info px-1.5 py-0.5 font-mono">next</span>
                             )}
-                            <span className="text-xs rounded border border-[#FFDC28]/40 text-[#FFDC28] px-1.5 py-0.5 font-mono">
+                            <span className="text-xs rounded border border-pantheon-yellow/40 text-pantheon-yellow px-1.5 py-0.5 font-mono">
                               {CADENCE_LABELS[u.cadence as Cadence] ?? u.cadence}
                             </span>
                             {(u.skip_upstream || u.skip_plugins_themes) && (
-                              <span className="text-xs rounded bg-slate-700 px-1.5 py-0.5 text-slate-400 font-mono">
+                              <span className="text-xs rounded bg-pantheon-bg-elevated px-1.5 py-0.5 text-pantheon-text-muted font-mono">
                                 {u.skip_upstream && u.skip_plugins_themes ? 'upstream+plugins skipped' : u.skip_upstream ? 'upstream skipped' : 'plugins/themes skipped'}
                               </span>
                             )}
@@ -1898,19 +1898,19 @@ function UpcomingTab() {
                                 type="datetime-local"
                                 value={editFor}
                                 onChange={e => setEditFor(e.target.value)}
-                                className="rounded border border-slate-600 bg-slate-700 px-2 py-1 font-mono text-xs text-white focus:border-[#FFDC28] focus:outline-none"
+                                className="rounded border border-pantheon-border-hi bg-pantheon-bg-elevated px-2 py-1 font-mono text-xs text-pantheon-text focus:border-pantheon-yellow focus:outline-none"
                               />
                               {isFirst && (
                                 <div className="space-y-1.5">
-                                  <p className="text-xs text-slate-400 font-mono">Apply this change to:</p>
+                                  <p className="text-xs text-pantheon-text-muted font-mono">Apply this change to:</p>
                                   <div className="flex gap-2">
                                     <button
                                       onClick={() => setApplyScope('this')}
-                                      className={`rounded border px-2.5 py-1 font-mono text-xs transition-colors ${applyScope === 'this' ? 'border-[#FFDC28] text-[#FFDC28] bg-[#FFDC28]/10' : 'border-slate-600 text-slate-400 hover:border-slate-400'}`}
+                                      className={`rounded border px-2.5 py-1 font-mono text-xs transition-colors ${applyScope === 'this' ? 'border-pantheon-yellow text-pantheon-yellow bg-pantheon-yellow/10' : 'border-pantheon-border-hi text-pantheon-text-muted hover:border-pantheon-text-muted'}`}
                                     >This occurrence only</button>
                                     <button
                                       onClick={() => setApplyScope('all')}
-                                      className={`rounded border px-2.5 py-1 font-mono text-xs transition-colors ${applyScope === 'all' ? 'border-[#FFDC28] text-[#FFDC28] bg-[#FFDC28]/10' : 'border-slate-600 text-slate-400 hover:border-slate-400'}`}
+                                      className={`rounded border px-2.5 py-1 font-mono text-xs transition-colors ${applyScope === 'all' ? 'border-pantheon-yellow text-pantheon-yellow bg-pantheon-yellow/10' : 'border-pantheon-border-hi text-pantheon-text-muted hover:border-pantheon-text-muted'}`}
                                     >All future occurrences</button>
                                   </div>
                                 </div>
@@ -1919,16 +1919,16 @@ function UpcomingTab() {
                                 <button
                                   onClick={() => saveEdit(u)}
                                   disabled={saving || !editFor || (isFirst && !applyScope)}
-                                  className="rounded border border-green-500/40 px-2.5 py-1 font-mono text-xs text-green-400 hover:bg-green-400/10 disabled:opacity-40 transition-colors"
+                                  className="rounded border border-pantheon-success/40 px-2.5 py-1 font-mono text-xs text-pantheon-success hover:bg-pantheon-success/10 disabled:opacity-40 transition-colors"
                                 >{saving ? 'Saving…' : 'Save'}</button>
                                 <button
                                   onClick={() => { setEditingKey(null); setApplyScope(null) }}
-                                  className="rounded border border-slate-600 px-2.5 py-1 font-mono text-xs text-slate-400 hover:bg-slate-700 transition-colors"
+                                  className="rounded border border-pantheon-border-hi px-2.5 py-1 font-mono text-xs text-pantheon-text-muted hover:bg-pantheon-bg-elevated transition-colors"
                                 >Cancel</button>
                               </div>
                             </div>
                           ) : (
-                            <p className="font-mono text-xs text-slate-300 mt-1">{fmt(u.at)}</p>
+                            <p className="font-mono text-xs text-pantheon-text mt-1">{fmt(u.at)}</p>
                           )}
                         </div>
 
@@ -1936,15 +1936,15 @@ function UpcomingTab() {
                           <div className="flex items-center gap-1.5 shrink-0">
                             {isSkipping ? (
                               <>
-                                <span className="font-mono text-xs text-orange-400 mr-1">Skip this?</span>
+                                <span className="font-mono text-xs text-pantheon-warning mr-1">Skip this?</span>
                                 <button
                                   onClick={() => skipOccurrence(u)}
                                   disabled={saving}
-                                  className="rounded border border-orange-500/40 px-2 py-1 font-mono text-xs text-orange-400 hover:bg-orange-400/10 disabled:opacity-40 transition-colors"
+                                  className="rounded border border-pantheon-warning/40 px-2 py-1 font-mono text-xs text-pantheon-warning hover:bg-pantheon-warning/10 disabled:opacity-40 transition-colors"
                                 >Yes</button>
                                 <button
                                   onClick={() => setSkippingKey(null)}
-                                  className="rounded border border-slate-600 px-2 py-1 font-mono text-xs text-slate-400 hover:bg-slate-700 transition-colors"
+                                  className="rounded border border-pantheon-border-hi px-2 py-1 font-mono text-xs text-pantheon-text-muted hover:bg-pantheon-bg-elevated transition-colors"
                                 >No</button>
                               </>
                             ) : (
@@ -1953,17 +1953,17 @@ function UpcomingTab() {
                                   onClick={() => runNow(u)}
                                   disabled={!!isRunningNow}
                                   title="Run Now"
-                                  className="rounded-lg bg-[#FFDC28] hover:bg-[#E6C625] px-2.5 py-1.5 text-xs font-semibold text-slate-900 transition-colors disabled:opacity-40"
+                                  className="rounded-lg bg-pantheon-yellow hover:bg-pantheon-yellow-dark px-2.5 py-1.5 text-xs font-semibold text-pantheon-bg transition-colors disabled:opacity-40"
                                 >{isRunningNow ? '…' : '▶'}</button>
                                 <button
                                   onClick={() => startEdit(u, globalIdx)}
                                   title="Edit"
-                                  className="rounded border border-slate-600 px-2.5 py-1 font-mono text-xs text-slate-400 hover:border-slate-400 hover:text-white transition-colors"
+                                  className="rounded border border-pantheon-border-hi px-2.5 py-1 font-mono text-xs text-pantheon-text-muted hover:border-pantheon-text-muted hover:text-pantheon-text transition-colors"
                                 >✎</button>
                                 <button
                                   onClick={() => setSkippingKey(key)}
                                   title="Skip this occurrence"
-                                  className="rounded border border-orange-500/40 px-2.5 py-1 font-mono text-xs text-orange-400 hover:bg-orange-400/10 transition-colors"
+                                  className="rounded border border-pantheon-warning/40 px-2.5 py-1 font-mono text-xs text-pantheon-warning hover:bg-pantheon-warning/10 transition-colors"
                                 >✕</button>
                               </>
                             )}
@@ -1975,17 +1975,17 @@ function UpcomingTab() {
                 })}
 
                 {totalPages > 1 && (
-                  <div className="flex items-center justify-center gap-2 px-5 py-2 border-t border-slate-700/60">
+                  <div className="flex items-center justify-center gap-2 px-5 py-2 border-t border-pantheon-border/60">
                     <button
                       onClick={() => setUpcomingPage(p => Math.max(0, p - 1))}
                       disabled={safePage === 0}
-                      className="rounded border border-slate-600 px-3 py-1 text-xs text-slate-400 hover:border-slate-400 disabled:opacity-30 transition-colors"
+                      className="rounded border border-pantheon-border-hi px-3 py-1 text-xs text-pantheon-text-muted hover:border-pantheon-text-muted disabled:opacity-30 transition-colors"
                     >← Prev</button>
-                    <span className="font-mono text-xs text-slate-500">{safePage + 1} / {totalPages}</span>
+                    <span className="font-mono text-xs text-pantheon-text-dim">{safePage + 1} / {totalPages}</span>
                     <button
                       onClick={() => setUpcomingPage(p => Math.min(totalPages - 1, p + 1))}
                       disabled={safePage >= totalPages - 1}
-                      className="rounded border border-slate-600 px-3 py-1 text-xs text-slate-400 hover:border-slate-400 disabled:opacity-30 transition-colors"
+                      className="rounded border border-pantheon-border-hi px-3 py-1 text-xs text-pantheon-text-muted hover:border-pantheon-text-muted disabled:opacity-30 transition-colors"
                     >Next →</button>
                   </div>
                 )}
@@ -2047,22 +2047,22 @@ function ItemAccordion({
   const totalSkipped = items.filter(i => skips.has(i.name)).length
 
   return (
-    <div className="rounded-xl border border-slate-700 overflow-hidden">
+    <div className="rounded-xl border border-pantheon-border overflow-hidden">
       {/* Accordion header */}
       <button
         onClick={() => setOpen(o => !o)}
-        className="w-full flex items-center gap-3 px-5 py-3.5 bg-slate-800 hover:bg-slate-700/50 transition-colors text-left"
+        className="w-full flex items-center gap-3 px-5 py-3.5 bg-pantheon-bg-card hover:bg-pantheon-bg-elevated/50 transition-colors text-left"
       >
-        {open ? <ChevronUp className="w-4 h-4 text-slate-400 shrink-0" /> : <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />}
-        <span className="font-mono text-sm font-semibold text-white">{label}</span>
-        <span className="text-xs text-slate-500 font-mono">{items.length} total</span>
+        {open ? <ChevronUp className="w-4 h-4 text-pantheon-text-muted shrink-0" /> : <ChevronDown className="w-4 h-4 text-pantheon-text-muted shrink-0" />}
+        <span className="font-mono text-sm font-semibold text-pantheon-text">{label}</span>
+        <span className="text-xs text-pantheon-text-dim font-mono">{items.length} total</span>
         {totalSkipped > 0 && (
-          <span className="ml-auto text-xs font-mono text-orange-400">{totalSkipped} skipped</span>
+          <span className="ml-auto text-xs font-mono text-pantheon-warning">{totalSkipped} skipped</span>
         )}
       </button>
 
       {open && (
-        <div className="border-t border-slate-700 bg-slate-800/40 p-4 space-y-3">
+        <div className="border-t border-pantheon-border bg-pantheon-bg-card/40 p-4 space-y-3">
           {/* Search */}
           <div className="relative">
             <input
@@ -2070,21 +2070,21 @@ function ItemAccordion({
               value={search}
               onChange={e => setSearch(e.target.value)}
               placeholder={`Search ${label.toLowerCase()}… (by name or slug)`}
-              className="w-full rounded-lg border border-slate-600 bg-slate-700 pl-3 pr-8 py-1.5 font-mono text-xs text-white placeholder-slate-500 focus:border-[#FFDC28] focus:outline-none"
+              className="w-full rounded-lg border border-pantheon-border-hi bg-pantheon-bg-elevated pl-3 pr-8 py-1.5 font-mono text-xs text-pantheon-text placeholder-pantheon-text-dim focus:border-pantheon-yellow focus:outline-none"
             />
             {search && (
-              <button onClick={() => setSearch('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white">
+              <button onClick={() => setSearch('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-pantheon-text-dim hover:text-pantheon-text">
                 <X className="w-3 h-3" />
               </button>
             )}
           </div>
 
           {/* Sub-tabs */}
-          <div className="flex gap-1 border-b border-slate-700">
+          <div className="flex gap-1 border-b border-pantheon-border">
             {([['update', `For Update (${forUpdate.length})`], ['skipped', `Skipped (${skipped.length})`]] as [InnerTab, string][]).map(([t, lbl]) => (
               <button key={t} onClick={() => setInnerTab(t)}
                 className={`px-3 py-1.5 text-xs font-mono font-medium transition-colors ${
-                  innerTab === t ? 'border-b-2 border-[#FFDC28] text-[#FFDC28]' : 'text-slate-400 hover:text-slate-200'
+                  innerTab === t ? 'border-b-2 border-pantheon-yellow text-pantheon-yellow' : 'text-pantheon-text-muted hover:text-pantheon-text'
                 }`}>
                 {lbl}
               </button>
@@ -2092,13 +2092,13 @@ function ItemAccordion({
             <div className="flex-1" />
             {innerTab === 'update' && forUpdate.length > 0 && search && (
               <button onClick={skipAllMatching}
-                className="px-2.5 py-1 text-xs font-mono text-orange-400 hover:text-orange-300 border border-orange-500/30 rounded mb-1 transition-colors">
+                className="px-2.5 py-1 text-xs font-mono text-pantheon-warning hover:text-pantheon-warning border border-pantheon-warning/30 rounded mb-1 transition-colors">
                 Skip all ({forUpdate.length})
               </button>
             )}
             {innerTab === 'skipped' && skipped.length > 0 && search && (
               <button onClick={restoreAllMatching}
-                className="px-2.5 py-1 text-xs font-mono text-green-400 hover:text-green-300 border border-green-500/30 rounded mb-1 transition-colors">
+                className="px-2.5 py-1 text-xs font-mono text-pantheon-success hover:text-pantheon-success border border-pantheon-success/30 rounded mb-1 transition-colors">
                 Restore all ({skipped.length})
               </button>
             )}
@@ -2108,33 +2108,33 @@ function ItemAccordion({
           <div className="max-h-64 overflow-y-auto space-y-0.5">
             {innerTab === 'update' && (
               forUpdate.length === 0
-                ? <p className="text-xs text-slate-600 font-mono text-center py-6">
+                ? <p className="text-xs text-pantheon-text-dim font-mono text-center py-6">
                     {search ? `No ${label.toLowerCase()} matching "${search}" in For Update` : `All ${label.toLowerCase()} are in the Skipped list`}
                   </p>
                 : forUpdate.map(i => (
                     <div key={i.name} onClick={() => toggle(i.name)}
-                      className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-slate-700/50 cursor-pointer transition-colors">
-                      <div className="w-4 h-4 rounded border border-[#FFDC28]/60 bg-[#FFDC28]/10 flex items-center justify-center shrink-0">
-                        <Check className="w-2.5 h-2.5 text-[#FFDC28]" />
+                      className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-pantheon-bg-elevated/50 cursor-pointer transition-colors">
+                      <div className="w-4 h-4 rounded border border-pantheon-yellow/60 bg-pantheon-yellow/10 flex items-center justify-center shrink-0">
+                        <Check className="w-2.5 h-2.5 text-pantheon-yellow" />
                       </div>
-                      <span className="text-xs font-mono text-slate-200 flex-1">{i.title}</span>
-                      <span className="text-xs text-slate-600 font-mono">{i.name}</span>
+                      <span className="text-xs font-mono text-pantheon-text flex-1">{i.title}</span>
+                      <span className="text-xs text-pantheon-text-dim font-mono">{i.name}</span>
                     </div>
                   ))
             )}
             {innerTab === 'skipped' && (
               skipped.length === 0
-                ? <p className="text-xs text-slate-600 font-mono text-center py-6">
+                ? <p className="text-xs text-pantheon-text-dim font-mono text-center py-6">
                     {search ? `No ${label.toLowerCase()} matching "${search}" in Skipped` : `No ${label.toLowerCase()} skipped — all will be updated`}
                   </p>
                 : skipped.map(i => (
                     <div key={i.name} onClick={() => toggle(i.name)}
-                      className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-slate-700/50 cursor-pointer transition-colors">
-                      <div className="w-4 h-4 rounded border border-orange-500/60 bg-orange-900/20 flex items-center justify-center shrink-0">
-                        <X className="w-2.5 h-2.5 text-orange-400" />
+                      className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-pantheon-bg-elevated/50 cursor-pointer transition-colors">
+                      <div className="w-4 h-4 rounded border border-pantheon-warning/60 bg-pantheon-warning/20 flex items-center justify-center shrink-0">
+                        <X className="w-2.5 h-2.5 text-pantheon-warning" />
                       </div>
-                      <span className="text-xs font-mono text-slate-500 line-through flex-1">{i.title}</span>
-                      <span className="text-xs text-slate-600 font-mono">{i.name}</span>
+                      <span className="text-xs font-mono text-pantheon-text-dim line-through flex-1">{i.title}</span>
+                      <span className="text-xs text-pantheon-text-dim font-mono">{i.name}</span>
                     </div>
                   ))
             )}
@@ -2157,14 +2157,14 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
   }, [onClose])
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/70 p-4 sm:p-8"
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-pantheon-bg-console/70 p-4 sm:p-8"
       role="dialog" aria-modal="true" aria-label={title} onClick={onClose}>
-      <div className="w-full max-w-3xl rounded-xl border border-slate-700 bg-slate-900 shadow-2xl"
+      <div className="w-full max-w-3xl rounded-xl border border-pantheon-border bg-pantheon-bg shadow-2xl"
         onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between gap-4 border-b border-slate-700 px-5 py-3">
-          <h2 className="font-mono text-sm text-white">{title}</h2>
+        <div className="flex items-center justify-between gap-4 border-b border-pantheon-border px-5 py-3">
+          <h2 className="font-mono text-sm text-pantheon-text">{title}</h2>
           <button onClick={onClose} autoFocus
-            className="rounded border border-slate-600 px-2 py-1 font-mono text-xs text-slate-400 hover:border-slate-400 hover:text-white transition-colors">
+            className="rounded border border-pantheon-border-hi px-2 py-1 font-mono text-xs text-pantheon-text-muted hover:border-pantheon-text-muted hover:text-pantheon-text transition-colors">
             Close
           </button>
         </div>
@@ -2249,27 +2249,27 @@ function UpdateOptionsTab({ site, platform, upstream }: { site: string; platform
 
           {/* Read-only site ID */}
           <div className="space-y-1">
-            <label className="text-xs text-slate-500 font-mono">Site ID (set in Stage tab)</label>
+            <label className="text-xs text-pantheon-text-dim font-mono">Site ID (set in Stage tab)</label>
             <input type="text" value={site || '—'} readOnly
-              className="w-full rounded-lg border border-slate-700 bg-slate-700/40 px-3 py-2 font-mono text-sm text-slate-500 cursor-not-allowed" />
+              className="w-full rounded-lg border border-pantheon-border bg-pantheon-bg-elevated/40 px-3 py-2 font-mono text-sm text-pantheon-text-dim cursor-not-allowed" />
           </div>
 
           {!site.trim() && (
-            <p className="text-sm text-slate-500 font-mono text-center py-4">Enter a site ID in the Stage tab first</p>
+            <p className="text-sm text-pantheon-text-dim font-mono text-center py-4">Enter a site ID in the Stage tab first</p>
           )}
           {loading && (
-            <p className="text-sm text-slate-500 font-mono text-center py-4">
+            <p className="text-sm text-pantheon-text-dim font-mono text-center py-4">
               {isDrupal ? 'Loading module list from live…' : 'Loading plugin list from live…'}
             </p>
           )}
 
           {/* IC Drupal: exclusions managed by Composer */}
           {isIC && (
-            <div className="rounded-lg border border-slate-700 bg-slate-900/50 px-4 py-4 space-y-1">
-              <p className="text-sm font-mono text-slate-300">
+            <div className="rounded-lg border border-pantheon-border bg-pantheon-bg/50 px-4 py-4 space-y-1">
+              <p className="text-sm font-mono text-pantheon-text">
                 This site was built using Composer, so exclusions are disabled.
               </p>
-              <p className="text-xs font-mono text-slate-500">
+              <p className="text-xs font-mono text-pantheon-text-dim">
                 Update types are inherited from Composer.
               </p>
             </div>
@@ -2298,16 +2298,16 @@ function UpdateOptionsTab({ site, platform, upstream }: { site: string; platform
               )}
 
               {/* Save */}
-              <div className="flex items-center gap-3 pt-2 border-t border-slate-700">
+              <div className="flex items-center gap-3 pt-2 border-t border-pantheon-border">
                 <button onClick={save} disabled={saving}
-                  className="rounded-lg bg-[#FFDC28] hover:bg-[#E6C625] px-4 py-2 text-sm font-semibold text-slate-900 transition-colors disabled:opacity-40">
+                  className="rounded-lg bg-pantheon-yellow hover:bg-pantheon-yellow-dark px-4 py-2 text-sm font-semibold text-pantheon-bg transition-colors disabled:opacity-40">
                   {saving ? 'Saving…' : 'Save Preferences'}
                 </button>
                 <button onClick={load} disabled={loading}
-                  className="rounded-lg border border-slate-600 px-4 py-2 text-sm text-slate-400 hover:text-white transition-colors disabled:opacity-40">
+                  className="rounded-lg border border-pantheon-border-hi px-4 py-2 text-sm text-pantheon-text-muted hover:text-pantheon-text transition-colors disabled:opacity-40">
                   Refresh
                 </button>
-                {saved && <span className="text-xs text-green-400 font-mono">✦ Saved</span>}
+                {saved && <span className="text-xs text-pantheon-success font-mono">✦ Saved</span>}
               </div>
             </>
           )}
@@ -2415,14 +2415,14 @@ export default function Page() {
   ]
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
+    <div className="min-h-screen bg-gradient-to-br from-pantheon-bg via-pantheon-bg-card to-pantheon-bg">
       <div className="container mx-auto px-4 py-8 max-w-3xl space-y-6">
 
         {/* Shared MU header — brand block + context-aware app switcher */}
         <Header current="staging" />
 
         {/* Tabs */}
-        <div className="flex gap-1 border-b border-slate-700">
+        <div className="flex gap-1 border-b border-pantheon-border">
           {TABS.map(({ key, label }) => (
             <button
               key={key}
@@ -2430,13 +2430,13 @@ export default function Page() {
               className={[
                 'relative px-4 py-2 text-sm font-medium transition-colors',
                 tab === key
-                  ? 'border-b-2 border-[#FFDC28] text-[#FFDC28]'
-                  : 'text-slate-400 hover:text-slate-200',
+                  ? 'border-b-2 border-pantheon-yellow text-pantheon-yellow'
+                  : 'text-pantheon-text-muted hover:text-pantheon-text',
               ].join(' ')}
             >
               {label}
               {key === 'history' && liveJobs.length > 0 && (
-                <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-yellow-400 animate-pulse" />
+                <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-pantheon-yellow animate-pulse" />
               )}
             </button>
           ))}
@@ -2452,7 +2452,7 @@ export default function Page() {
             />
             <div className="px-6 py-5 space-y-4">
               <div className="space-y-1.5">
-                <label className="text-xs text-slate-400 font-mono">Site ID <span className="text-slate-600 normal-case">(Pantheon machine name or UUID — not display name)</span></label>
+                <label className="text-xs text-pantheon-text-muted font-mono">Site ID <span className="text-pantheon-text-dim normal-case">(Pantheon machine name or UUID — not display name)</span></label>
                 <div className="flex gap-2">
                   <input
                     type="text"
@@ -2461,62 +2461,62 @@ export default function Page() {
                     onKeyDown={(e) => e.key === 'Enter' && !submitting && startJob()}
                     placeholder="my-site-name"
                     disabled={submitting}
-                    className="flex-1 rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 font-mono text-sm text-white placeholder-slate-500 focus:border-[#FFDC28] focus:outline-none disabled:opacity-50"
+                    className="flex-1 rounded-lg border border-pantheon-border-hi bg-pantheon-bg-elevated px-3 py-2 font-mono text-sm text-pantheon-text placeholder-pantheon-text-dim focus:border-pantheon-yellow focus:outline-none disabled:opacity-50"
                   />
                   <button
                     onClick={() => site.trim() && setShowOptions(true)}
                     disabled={!site.trim() || submitting}
                     title="Plugins and themes to skip on this site"
-                    className="rounded-lg border border-slate-600 px-3 py-2 text-xs font-mono text-slate-400 hover:border-[#FFDC28] hover:text-[#FFDC28] transition-colors disabled:opacity-30 disabled:cursor-not-allowed shrink-0"
+                    className="rounded-lg border border-pantheon-border-hi px-3 py-2 text-xs font-mono text-pantheon-text-muted hover:border-pantheon-yellow hover:text-pantheon-yellow transition-colors disabled:opacity-30 disabled:cursor-not-allowed shrink-0"
                   >
                     More Options
                   </button>
                 </div>
               </div>
 
-              <div className="space-y-2 pt-1 border-t border-slate-700">
-                <p className="text-xs text-slate-400 font-mono pt-1">Update options</p>
-                <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
+              <div className="space-y-2 pt-1 border-t border-pantheon-border">
+                <p className="text-xs text-pantheon-text-muted font-mono pt-1">Update options</p>
+                <label className="flex items-center gap-2 text-sm text-pantheon-text cursor-pointer">
                   <input
                     type="checkbox"
                     checked={skipUpstream}
                     onChange={(e) => setSkipUpstream(e.target.checked)}
-                    className="rounded border-slate-600 bg-slate-700 accent-[#FFDC28]"
+                    className="rounded border-pantheon-border-hi bg-pantheon-bg-elevated accent-pantheon-yellow"
                   />
                   Skip upstream updates
                 </label>
-                <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
+                <label className="flex items-center gap-2 text-sm text-pantheon-text cursor-pointer">
                   <input
                     type="checkbox"
                     checked={skipPluginsThemes}
                     onChange={(e) => setSkipPluginsThemes(e.target.checked)}
-                    className="rounded border-slate-600 bg-slate-700 accent-[#FFDC28]"
+                    className="rounded border-pantheon-border-hi bg-pantheon-bg-elevated accent-pantheon-yellow"
                   />
                   Skip plugins &amp; themes
                 </label>
-                <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
+                <label className="flex items-center gap-2 text-sm text-pantheon-text cursor-pointer">
                   <input
                     type="checkbox"
                     checked={securityFastTrack}
                     onChange={(e) => setSecurityFastTrack(e.target.checked)}
-                    className="rounded border-slate-600 bg-slate-700 accent-[#FFDC28]"
+                    className="rounded border-pantheon-border-hi bg-pantheon-bg-elevated accent-pantheon-yellow"
                   />
                   Security / core update only
                 </label>
                 {securityFastTrack && (
-                  <p className="text-[0.7rem] text-slate-500 font-mono pl-6">
+                  <p className="text-[0.7rem] text-pantheon-text-dim font-mono pl-6">
                     Upstream only. Deploys on the 24-hour security window instead of the usual wait,
                     and does not move the site&apos;s staging cadence.
                   </p>
                 )}
               </div>
 
-              <div className="space-y-1.5 pt-1 border-t border-slate-700">
-                <label className="text-xs text-slate-400 font-mono pt-1">Deploy to</label>
+              <div className="space-y-1.5 pt-1 border-t border-pantheon-border">
+                <label className="text-xs text-pantheon-text-muted font-mono pt-1">Deploy to</label>
                 <select
                   value={stageDestination}
                   onChange={(e) => setStageDestination(e.target.value)}
-                  className="w-full rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 text-sm text-white focus:border-[#FFDC28] focus:outline-none"
+                  className="w-full rounded-lg border border-pantheon-border-hi bg-pantheon-bg-elevated px-3 py-2 text-sm text-pantheon-text focus:border-pantheon-yellow focus:outline-none"
                 >
                   <option value="live">Live</option>
                   <option value="test">Test</option>
@@ -2526,11 +2526,11 @@ export default function Page() {
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-xs text-slate-400 font-mono">Schedule deployment after</label>
+                <label className="text-xs text-pantheon-text-muted font-mono">Schedule deployment after</label>
                 <select
                   value={stageDeployDays}
                   onChange={(e) => setStageDeployDays(Number(e.target.value))}
-                  className="w-full rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 text-sm text-white focus:border-[#FFDC28] focus:outline-none"
+                  className="w-full rounded-lg border border-pantheon-border-hi bg-pantheon-bg-elevated px-3 py-2 text-sm text-pantheon-text focus:border-pantheon-yellow focus:outline-none"
                 >
                   <option value={1}>1 business day (e.g. stage Friday → deploy Monday)</option>
                   <option value={2}>2 business days</option>
@@ -2541,10 +2541,10 @@ export default function Page() {
               </div>
 
               {/* Test mode toggle */}
-              <div className="flex items-center justify-between rounded-lg border border-slate-700 px-4 py-3">
+              <div className="flex items-center justify-between rounded-lg border border-pantheon-border px-4 py-3">
                 <div>
-                  <p className="text-xs font-semibold text-slate-300 font-mono">Test Mode</p>
-                  <p className="text-xs text-slate-500 font-mono mt-0.5">
+                  <p className="text-xs font-semibold text-pantheon-text font-mono">Test Mode</p>
+                  <p className="text-xs text-pantheon-text-dim font-mono mt-0.5">
                     {testMode
                       ? `Uses mu-${getPacificYYMMDD()}-t — production mu-${getPacificYYMMDD()} stays untouched`
                       : 'Off — uses standard mu-YYMMDD (client-facing)'}
@@ -2553,10 +2553,10 @@ export default function Page() {
                 <button
                   onClick={() => setTestMode(t => !t)}
                   className={`relative inline-flex h-6 w-11 shrink-0 rounded-full border-2 transition-colors ${
-                    testMode ? 'border-[#FFDC28] bg-[#FFDC28]/20' : 'border-slate-600 bg-slate-700'
+                    testMode ? 'border-pantheon-yellow bg-pantheon-yellow/20' : 'border-pantheon-border-hi bg-pantheon-bg-elevated'
                   }`}
                 >
-                  <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform mt-0.5 ${
+                  <span className={`inline-block h-4 w-4 rounded-full bg-pantheon-text shadow transition-transform mt-0.5 ${
                     testMode ? 'translate-x-5' : 'translate-x-0.5'
                   }`} />
                 </button>
@@ -2567,8 +2567,8 @@ export default function Page() {
                 disabled={submitting || !site.trim()}
                 className={`w-full rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
                   testMode
-                    ? 'bg-slate-600 hover:bg-slate-500 text-white border border-slate-500'
-                    : 'bg-[#FFDC28] hover:bg-[#E6C625] text-slate-900'
+                    ? 'bg-pantheon-bg-neutral hover:bg-pantheon-bg-neutral-hi text-pantheon-text border border-pantheon-text-dim'
+                    : 'bg-pantheon-yellow hover:bg-pantheon-yellow-dark text-pantheon-bg'
                 }`}
               >
                 {submitting ? (
@@ -2598,8 +2598,8 @@ export default function Page() {
             {liveJobs.length > 0 && (
               <div className="space-y-3">
                 <div className="flex items-center gap-2">
-                  <Radio className="w-4 h-4 text-yellow-400 animate-pulse" />
-                  <h3 className="text-sm font-semibold text-yellow-400 uppercase tracking-widest">Live</h3>
+                  <Radio className="w-4 h-4 text-pantheon-yellow animate-pulse" />
+                  <h3 className="text-sm font-semibold text-pantheon-yellow uppercase tracking-widest">Live</h3>
                 </div>
                 {liveJobs.map((job) => (
                   <LiveJobCard key={job.id} job={job} onComplete={handleJobComplete} />
@@ -2610,13 +2610,13 @@ export default function Page() {
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <Layers className="w-4 h-4 text-slate-400" />
-                  <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-widest">Past</h3>
+                  <Layers className="w-4 h-4 text-pantheon-text-muted" />
+                  <h3 className="text-sm font-semibold text-pantheon-text-muted uppercase tracking-widest">Past</h3>
                 </div>
                 <button
                   onClick={loadHistory}
                   disabled={historyLoading}
-                  className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-[#FFDC28] transition-colors disabled:opacity-40"
+                  className="flex items-center gap-1.5 text-xs text-pantheon-text-muted hover:text-pantheon-yellow transition-colors disabled:opacity-40"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${historyLoading ? 'animate-spin' : ''}`} />
                   {historyLoading ? 'Loading…' : 'Refresh'}
@@ -2624,12 +2624,12 @@ export default function Page() {
               </div>
 
               {historyLoading && pastJobs.length === 0 && (
-                <p className="text-sm text-slate-500 font-mono text-center py-6">Loading…</p>
+                <p className="text-sm text-pantheon-text-dim font-mono text-center py-6">Loading…</p>
               )}
               {!historyLoading && pastJobs.length === 0 && liveJobs.length === 0 && (
                 <div className="text-center py-8 space-y-2">
-                  <Package className="w-8 h-8 text-slate-600 mx-auto" />
-                  <p className="text-sm text-slate-500">No staging runs yet</p>
+                  <Package className="w-8 h-8 text-pantheon-text-dim mx-auto" />
+                  <p className="text-sm text-pantheon-text-dim">No staging runs yet</p>
                 </div>
               )}
 
@@ -2664,13 +2664,13 @@ export default function Page() {
                         <button
                           onClick={() => setHistoryPage((p) => Math.max(0, p - 1))}
                           disabled={safePage === 0}
-                          className="rounded border border-slate-600 px-3 py-1 text-xs text-slate-400 hover:border-slate-400 disabled:opacity-30 transition-colors"
+                          className="rounded border border-pantheon-border-hi px-3 py-1 text-xs text-pantheon-text-muted hover:border-pantheon-text-muted disabled:opacity-30 transition-colors"
                         >← Prev</button>
-                        <span className="font-mono text-xs text-slate-500">{safePage + 1} / {totalPages}</span>
+                        <span className="font-mono text-xs text-pantheon-text-dim">{safePage + 1} / {totalPages}</span>
                         <button
                           onClick={() => setHistoryPage((p) => Math.min(totalPages - 1, p + 1))}
                           disabled={safePage >= totalPages - 1}
-                          className="rounded border border-slate-600 px-3 py-1 text-xs text-slate-400 hover:border-slate-400 disabled:opacity-30 transition-colors"
+                          className="rounded border border-pantheon-border-hi px-3 py-1 text-xs text-pantheon-text-muted hover:border-pantheon-text-muted disabled:opacity-30 transition-colors"
                         >Next →</button>
                       </div>
                     )}
