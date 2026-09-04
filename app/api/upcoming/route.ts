@@ -53,6 +53,16 @@ export async function GET() {
       if (target) upcoming.push({ ...base, at: target.toISOString(), due_now: true })
     }
 
+    // A future override_at that hasn't fired yet is invisible to
+    // computeNextOccurrence (cadence-only math) and to the isDueNow branch above
+    // (only active once the moment arrives). Inject it directly so it always
+    // appears in the list — the common case is rescheduling to later in the same day
+    // after the regular cadence slot has already passed.
+    if (sched.override_at && !isDueNow(sched, anchor, now)) {
+      const overrideTarget = new Date(sched.override_at)
+      if (overrideTarget > now) upcoming.push({ ...base, at: sched.override_at, due_now: false })
+    }
+
     // Compute next 3 occurrences per schedule
     let cursor = now
     for (let i = 0; i < 3; i++) {
