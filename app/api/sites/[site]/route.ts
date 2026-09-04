@@ -1,5 +1,6 @@
 import { type NextRequest } from 'next/server'
 import { getSite, updateSite, deleteSite } from '@/lib/sites'
+import { requireCaller } from '@/lib/callerAuth'
 
 export const runtime = 'nodejs'
 
@@ -17,6 +18,9 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ site: string }> },
 ) {
+  const denied = await requireCaller(request)
+  if (denied) return denied
+
   const { site } = await params
   const body = await request.json().catch(() => null)
   if (!body) return Response.json({ error: 'Invalid JSON' }, { status: 400 })
@@ -31,9 +35,12 @@ export async function PATCH(
 }
 
 export async function DELETE(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ site: string }> },
 ) {
+  const denied = await requireCaller(request)
+  if (denied) return denied
+
   const { site } = await params
   await deleteSite(decodeURIComponent(site))
   return Response.json({ ok: true })

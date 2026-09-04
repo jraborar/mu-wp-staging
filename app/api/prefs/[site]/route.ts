@@ -1,5 +1,6 @@
 import { type NextRequest } from 'next/server'
 import { getSiteUpdatePrefs, saveSiteUpdatePrefs } from '@/lib/supabase'
+import { requireCaller } from '@/lib/callerAuth'
 
 export const runtime = 'nodejs'
 
@@ -16,6 +17,9 @@ export async function PUT(
   req: NextRequest,
   { params }: { params: Promise<{ site: string }> },
 ) {
+  const denied = await requireCaller(req)
+  if (denied) return denied
+
   const { site } = await params
   const body = await req.json().catch(() => null)
   if (!body) return Response.json({ error: 'Invalid JSON' }, { status: 400 })

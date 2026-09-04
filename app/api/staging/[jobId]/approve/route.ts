@@ -1,5 +1,6 @@
 import { type NextRequest } from 'next/server'
 import { getJob } from '@/lib/jobStore'
+import { requireCaller } from '@/lib/callerAuth'
 
 export const runtime = 'nodejs'
 
@@ -7,6 +8,9 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ jobId: string }> },
 ) {
+  const denied = await requireCaller(request)
+  if (denied) return denied
+
   const { jobId } = await params
   const body = await request.json().catch(() => null)
   if (!body || typeof body.approved !== 'boolean') {

@@ -5,6 +5,7 @@ import { getPacificYYMMDD } from '@/lib/timezone'
 import { listSchedules, updateScheduleAfterRun } from '@/lib/scheduleStore'
 import { isDueNow, computeNextOccurrence } from '@/lib/cadence'
 import { getSite } from '@/lib/sites'
+import { requireCaller } from '@/lib/callerAuth'
 
 export const runtime = 'nodejs'
 
@@ -58,6 +59,9 @@ function streamJob(job: StagingJob, request: NextRequest): Response {
 }
 
 export async function POST(request: NextRequest) {
+  const denied = await requireCaller(request)
+  if (denied) return denied
+
   const body = await request.json().catch(() => null)
   if (!body) return Response.json({ error: 'Invalid JSON' }, { status: 400 })
 
