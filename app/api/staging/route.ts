@@ -2,6 +2,9 @@ import { type NextRequest } from 'next/server'
 import { createJob, getJob, type StagingJob } from '@/lib/jobStore'
 import { executeJob } from '@/lib/staging'
 import { getPacificYYMMDD } from '@/lib/timezone'
+import { listSchedules, updateScheduleAfterRun } from '@/lib/scheduleStore'
+import { isDueNow, computeNextOccurrence } from '@/lib/cadence'
+import { getSite } from '@/lib/sites'
 
 export const runtime = 'nodejs'
 
@@ -90,6 +93,22 @@ export async function POST(request: NextRequest) {
     deployDestination: typeof deployDestination === 'string' ? deployDestination : undefined,
   })
   void executeJob(job)
+
+  // Stamp the schedule if this manual run coincides with a due occurrence — the
+  // auto-scheduler skips auto_stage:false sites so it never calls
+  // updateScheduleAfterRun for them, leaving last_staged_at null and override_at
+  // dangling after a manually-triggered run. Test-mode runs are not real cadence
+  // fires and must not consume an occurrence.
+  if (!testMode) {
+    const now = new Date()
+    const [schedules, siteRec] = await Promise.all([listSchedules(), getSite(site)])
+    const dueSchedule = schedules.find(s => s.site === site && isDueNow(s, siteRec?.last_deployment, now))
+    if (dueSchedule) {
+      const next = computeNextOccurrence(dueSchedule, now, siteRec?.last_deployment)
+      void updateScheduleAfterRun(dueSchedule.id, next)
+    }
+  }
+
   return streamJob(job, request)
 }
 
