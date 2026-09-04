@@ -939,7 +939,6 @@ interface SiteFormState {
   deploy_days: number
   deploy_destination: 'dev' | 'test' | 'live' | 'multidev'
   scheduleId: string | null
-  biweekly_reference_date: string
   last_deployment: string          // YYYY-MM-DD — cadence anchor (last completed cycle)
 }
 
@@ -948,7 +947,7 @@ const emptySiteForm: SiteFormState = {
   skip_upstream: false, skip_plugins_themes: false, auto_stage: false, vrt_paths_text: '', notes: '',
   managed: false, cadence: 'weekly', day_of_week: 1, week_of_month: 1,
   deploy_days: 1, deploy_destination: 'live',
-  scheduleId: null, biweekly_reference_date: '', last_deployment: '',
+  scheduleId: null, last_deployment: '',
 }
 
 function SitesTab() {
@@ -967,6 +966,11 @@ function SitesTab() {
   const [holdSaving, setHoldSaving]   = useState(false)
 
   const [form, setForm]           = useState<SiteFormState>(emptySiteForm)
+  // last_deployment as loaded, so save() can tell an edit made in THIS session from a
+  // pre-existing value — only an actual edit here should resync biweekly_reference_date;
+  // otherwise a deliberate forward shift made via the Upcoming tab (e.g. to skip a
+  // cycle) would get silently pulled back every time this form is saved for any reason.
+  const [loadedLastDeployment, setLoadedLastDeployment] = useState('')
   const [saving, setSaving]       = useState(false)
   const [busy, setBusy]           = useState<string | null>(null)
   const [error, setError]         = useState<string | null>(null)
@@ -996,10 +1000,11 @@ function SitesTab() {
   // Read-only display of the VRT paths (owned by the VRT app). Not written from here.
   const vrtPaths = form.vrt_paths_text.split('\n').map(p => p.trim()).filter(Boolean)
 
-  const openNew  = () => { setForm(emptySiteForm); setEditing('__new__'); setError(null) }
+  const openNew  = () => { setForm(emptySiteForm); setLoadedLastDeployment(''); setEditing('__new__'); setError(null) }
   const openEdit = (s: Site) => {
     // find any schedule row (even paused) so re-enabling reuses it instead of duplicating
     const sched = schedules.find(x => x.site === s.site)
+    const lastDeployment = (s.last_deployment ?? '').slice(0, 10)
     setForm({
       site: s.site, platform: s.platform,
       update_mode: s.update_mode ?? 'upstream',
@@ -1014,9 +1019,9 @@ function SitesTab() {
       deploy_days: sched?.deploy_days ?? 1,
       deploy_destination: (sched?.deploy_destination as SiteFormState['deploy_destination']) ?? 'live',
       scheduleId: sched?.id ?? null,
-      biweekly_reference_date: sched?.biweekly_reference_date ?? '',
-      last_deployment: (s.last_deployment ?? '').slice(0, 10),
+      last_deployment: lastDeployment,
     })
+    setLoadedLastDeployment(lastDeployment)
     setEditing(s.site); setError(null)
   }
 
@@ -1053,9 +1058,17 @@ function SitesTab() {
         }
         if (store === 'weekly' || store === 'biweekly' || store === 'monthly') body.day_of_week = form.day_of_week
         if (store === 'monthly') body.week_of_month = form.week_of_month
-        // Anchor biweekly parity on the real last-deployment week when known,
-        // so a back-dated site lands on the correct next week (not registration day).
-        if (store === 'biweekly') body.biweekly_reference_date = form.biweekly_reference_date || form.last_deployment || manilaTodayDate()
+        // Resync parity to last_deployment (mirrors what the Upcoming tab's "shift
+        // cadence" does from one date) whenever it's a new schedule OR this edit actually
+        // changed it — last_deployment is the only anchor exposed here, so re-deriving it
+        // from a stale stored biweekly_reference_date instead would silently ignore an
+        // edit made to the one field the user can see. Scoped to an ACTUAL change so an
+        // unrelated field edit doesn't clobber a deliberate forward shift made via the
+        // Upcoming tab (which intentionally sits ahead of last_deployment until the next
+        // completed cycle catches up to it — see parityAnchor() in lib/cadence.ts).
+        if (store === 'biweekly' && (!form.scheduleId || form.last_deployment !== loadedLastDeployment)) {
+          body.biweekly_reference_date = form.last_deployment || manilaTodayDate()
+        }
         if (store === 'bimonthly-week-of-15') { body.bimonthly_ref_month = manilaMonth(); body.bimonthly_day_of_week = form.day_of_week }
 
         const schedRes = form.scheduleId
