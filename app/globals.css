@@ -2,6 +2,13 @@
 
 @import "tailwindcss";
 
+/* shadcn's components style their dark state with `dark:` utilities. Tailwind
+   v4 binds that to prefers-color-scheme by default, but this app is always dark
+   and says so with <html class="dark"> — so without this the dark styles would
+   only apply when the VIEWER's OS happens to be in dark mode. No app code used
+   `dark:` before the kit arrived, so nothing else changes meaning. */
+@custom-variant dark (&:is(.dark *));
+
 /* ═══════════════════════════════════════════════════════════════════════════
    PANTHEON PALETTE — canonical, shared byte-identical across mu-pmu-tool,
    mu-staging, mu-deployment, mu-vrt and mu-sites. Generated from one source,
