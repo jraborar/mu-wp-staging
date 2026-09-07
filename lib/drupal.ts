@@ -793,6 +793,13 @@ export async function runDrupalStaging(job: StagingJob, registrySite: Site | nul
   const phpCtx = { php: registrySite?.php_version ?? '8.2' }
   terminusPhp.enterWith(phpCtx)
 
+  // Seed deploy destination from the site record when not set by the caller.
+  // executeJob() (staging.ts) already does this before handing off here, so this
+  // is a defensive duplicate — guards against any future direct calls to this function.
+  if (!job.deployDestination && registrySite?.deploy_destination) {
+    job.deployDestination = registrySite.deploy_destination
+  }
+
   const log: Logger = (logType, m) => appendLog(job, logType, m)
 
   const STEPS_TOTAL = 12
