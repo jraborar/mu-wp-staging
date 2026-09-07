@@ -11,6 +11,22 @@
 
 const MU_VRT_URL = (process.env.NEXT_PUBLIC_MU_VRT_URL || 'https://mu-vrt-production.up.railway.app').replace(/\/$/, '')
 
+// Headers for the calls that CHANGE something in mu-vrt (start a baseline, run
+// a compare, expire a run). mu-vrt's mutating routes are being gated the same
+// way this app's were — a session or this shared secret — and these are
+// server-to-server, so there is no cookie to send.
+//
+// Sent only when MU_ACTION_SECRET is present, so the two sides roll out
+// independently: mu-vrt ignores an unknown header until its gate ships. The
+// read below (GET /api/runs/:id) stays bare because that route stays open.
+function mutateHeaders(): Record<string, string> {
+  const secret = process.env.MU_ACTION_SECRET
+  return {
+    'content-type': 'application/json',
+    ...(secret ? { authorization: `Bearer ${secret}` } : {}),
+  }
+}
+
 export interface VrtRunResult {
   path: string
   label: string
@@ -54,7 +70,7 @@ export async function startBaseline(
   try {
     const r = await fetch(`${MU_VRT_URL}/api/baseline`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: mutateHeaders(),
       body: JSON.stringify({ site, multidev, base }),
     })
     const data = await r.json().catch(() => ({}))
@@ -73,7 +89,7 @@ export async function startBaseline(
 // a 404 (already gone) counts as success. Returns true if it's gone afterwards.
 export async function deleteVrtRun(runId: string): Promise<boolean> {
   try {
-    const r = await fetch(`${MU_VRT_URL}/api/runs/${runId}`, { method: 'DELETE' })
+    const r = await fetch(`${MU_VRT_URL}/api/runs/${runId}`, { method: 'DELETE', headers: mutateHeaders() })
     if (r.ok || r.status === 404) return true
     console.error('[vrt] deleteVrtRun failed:', r.status)
     return false
@@ -166,7 +182,7 @@ export async function finishCompare(multidev: string, machineName: string, runId
   try {
     const r = await fetch(`${MU_VRT_URL}/api/compare`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: mutateHeaders(),
       body: JSON.stringify({ run_id: runId, base }),
     })
     const data = await r.json().catch(() => ({}))
