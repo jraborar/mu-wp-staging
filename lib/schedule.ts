@@ -3,6 +3,24 @@ import { addBusinessDays, getManilaToday, manilaThreePM, formatAsManilaISO } fro
 import { getScheduledDeploymentTimes } from '@/lib/supabase'
 import { getSite } from '@/lib/sites'
 
+// Headers for the calls that CHANGE something in mu-deployment (pre-book,
+// confirm, cancel). mu-deployment's mutating routes are being gated the same
+// way this app's were — a session cookie or this shared secret — and these are
+// server-to-server, so there is no cookie to send.
+//
+// Sent whenever MU_ACTION_SECRET is present, exactly as mu-pmu-tool's action
+// proxy does, so the two sides can be rolled out independently: mu-deployment
+// ignores an unknown header until its gate ships, and once it ships this app is
+// already authenticating. Reads (`GET /api/schedule`) stay unauthenticated
+// because that route stays open.
+function mutateHeaders(): Record<string, string> {
+  const secret = process.env.MU_ACTION_SECRET
+  return {
+    'Content-Type': 'application/json',
+    ...(secret ? { authorization: `Bearer ${secret}` } : {}),
+  }
+}
+
 // A staging run triggered by the upstream/security auto-scan deploys on the
 // fast-track window (now + security_deploy_hours). All runs now use the `mu-`
 // multidev name, so this is an explicit job flag rather than a name prefix.
@@ -99,7 +117,7 @@ export async function prebookDeployment(job: StagingJob): Promise<void> {
   try {
     const res = await fetch(`${deployUrl}/api/schedule`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: mutateHeaders(),
       body: JSON.stringify({ site: job.site, source: job.multidev, destination, scheduled_for: scheduledFor, notes, consultant: 'WP Staging', anchor_advance: !isFastTrack(job) }),
     })
     if (res.ok) {
@@ -134,14 +152,14 @@ export async function reconcileDeployment(job: StagingJob, keep: boolean): Promi
       const row = Array.isArray(existing) ? existing.find((r) => r.id === id) : null
       await fetch(`${deployUrl}/api/schedule`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: mutateHeaders(),
         body: JSON.stringify({ id, scheduled_for: row?.scheduled_for, notes: `${buildNotes(job, false)} [approval: ${approval}]` }),
       })
       appendLog(job, 'success', `Deployment confirmed for ${job.multidev} — pending in mu-deployment`)
     } else {
       await fetch(`${deployUrl}/api/schedule`, {
         method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
+        headers: mutateHeaders(),
         body: JSON.stringify({ id }),
       })
       appendLog(job, 'info', `Deploy for ${job.multidev} cancelled — nothing to deploy`)
