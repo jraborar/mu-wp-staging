@@ -265,6 +265,15 @@ export async function executeJob(job: StagingJob): Promise<void> {
   // binary (per-command, no global switch). Seed from the registry; refined after env:info.
   const registrySite = await getSite(job.site).catch(() => null)
 
+  // Seed deploy destination from the site record when not explicitly set by the caller.
+  // Manual triggers via POST /api/staging omit deployDestination, leaving it undefined.
+  // Downstream guards (prebookDeployment multidev check, anchor advance branch) rely on
+  // this field — without seeding, multidev-destination sites attempt a mu-deployment
+  // pre-book and miss the anchor advance.
+  if (!job.deployDestination && registrySite?.deploy_destination) {
+    job.deployDestination = registrySite.deploy_destination
+  }
+
   // Drupal (Composer-managed) sites take a completely different pipeline — clone the
   // multidev, resolve composer.lock, push, then drush. Hand off before any WP-specific
   // setup runs (the phpCtx bind happens inside runDrupalStaging).
