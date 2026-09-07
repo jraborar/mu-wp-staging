@@ -14,7 +14,20 @@ export async function POST(request: NextRequest) {
   const signature = request.headers.get('x-slack-signature') ?? ''
   const secret    = process.env.SLACK_SIGNING_SECRET ?? ''
 
-  if (secret && !verifySignature(rawBody, timestamp, signature, secret)) {
+  // Fails CLOSED, matching lib/callerAuth.ts. This was `if (secret && !verify…)`,
+  // which SKIPPED verification entirely when SLACK_SIGNING_SECRET was absent —
+  // and it is not set on the production service, so this route was in fact
+  // unauthenticated there. That mattered because the handler below resolves a
+  // pending approval, i.e. lets updates through to a customer environment.
+  //
+  // Barely exploitable in practice (a caller needs an unguessable randomUUID
+  // jobId AND a run sitting in pendingApproval), and Slack never actually calls
+  // this route — SLACK_APP_TOKEN is set, so interactions arrive over Socket Mode
+  // in lib/socketMode.ts, which handles the same two action_ids. The endpoint is
+  // vestigial. But it is reachable, it writes, and "it verifies its own HMAC" is
+  // the stated reason this route is excluded from requireCaller — so that reason
+  // has to be true rather than conditional on a variable nobody set.
+  if (!secret || !verifySignature(rawBody, timestamp, signature, secret)) {
     return new Response('Unauthorized', { status: 401 })
   }
 
