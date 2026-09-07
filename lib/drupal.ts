@@ -290,18 +290,29 @@ async function detectProfile(job: StagingJob, seedPhp: string, log: Logger): Pro
     'echo "MU_BUILDSTEP=".((preg_match("/^\\s*build_step:\\s*true/m",@file_get_contents("/code/pantheon.yml").' +
     '"\\n".@file_get_contents("/code/pantheon.upstream.yml")))?"1":"0")."\\n";' +
     'echo "MU_COMPOSER=".(file_exists("/code/composer.json")?"1":"0")."\\n";' +
-    'echo "MU_DRUSH=".(defined("DRUSH_VERSION")?DRUSH_VERSION:"?")."\\n";'
+    'echo "MU_DRUSH=".(defined("DRUSH_VERSION")?DRUSH_VERSION:"?")."\\n";' +
+    // drops-8 / drops-7 repos have core dropped into /code/core/ directly — distinct
+    // from composer-managed sites where core lives in /code/vendor/drupal/core/.
+    // If /code/core/includes/bootstrap.inc exists the site is drops-style even when
+    // composer.json is present (legacy composer-for-contrib pattern), and running a
+    // full `composer install` would install drupal/core into vendor/ alongside the
+    // existing /code/core/, causing a fatal "Cannot redeclare" PHP error.
+    'echo "MU_DROPS_CORE=".(file_exists("/code/core/includes/bootstrap.inc")?"1":"0")."\\n";'
   // Retry-guard the probe: a transient SSH failure here would read composer/build_step
   // as absent and misroute the site to the wrong mechanism.
   const probe = await drushRun(`${job.site}.dev`, `php-eval ${shellEscape(probeExpr)}`, log)
   const buildStep = /MU_BUILDSTEP=1/.test(probe.stdout)
   const hasComposer = /MU_COMPOSER=1/.test(probe.stdout)
+  const hasDropsCore = /MU_DROPS_CORE=1/.test(probe.stdout)
   const drushMatch = probe.stdout.match(/MU_DRUSH=(\d+)/)
   const drushMajor = drushMatch ? parseInt(drushMatch[1], 10) : 0
 
   let mechanism: Mechanism
   if (hasComposer && buildStep) mechanism = 'ic'
-  else if (hasComposer) mechanism = 'vendor'
+  // drops-8 sites have composer.json (for contrib) but core at /code/core/ — a
+  // full `composer install` would place drupal/core into vendor/ and conflict.
+  // Treat them the same as drush-only sites: update via upstream + drush pm-update.
+  else if (hasComposer && !hasDropsCore) mechanism = 'vendor'
   else mechanism = 'drush'
 
   // Core major decides cr vs cc all. `framework` is only "drupal7" / "drupal8" (8 for
