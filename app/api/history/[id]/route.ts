@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
+import { requireCaller } from '@/lib/callerAuth'
 
 export const runtime = 'nodejs'
 
@@ -33,6 +34,9 @@ export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const denied = await requireCaller(request)
+  if (denied) return denied
+
   const { id } = await params
   const { db } = getDb()
   if (!db) return Response.json({ error: 'Supabase not configured' }, { status: 500 })

@@ -2,6 +2,7 @@ import { type NextRequest } from 'next/server'
 import { listSchedules, createSchedule, type Cadence } from '@/lib/scheduleStore'
 import { computeNextOccurrence } from '@/lib/cadence'
 import { listSites, getSite } from '@/lib/sites'
+import { requireCaller } from '@/lib/callerAuth'
 
 export const runtime = 'nodejs'
 
@@ -31,6 +32,9 @@ export async function GET() {
 const VALID_CADENCES: Cadence[] = ['weekly', 'biweekly', 'monthly', 'bimonthly-week-of-15', 'security-only', 'once']
 
 export async function POST(request: NextRequest) {
+  const denied = await requireCaller(request)
+  if (denied) return denied
+
   const body = await request.json().catch(() => null)
   if (!body) return Response.json({ error: 'Invalid JSON' }, { status: 400 })
 

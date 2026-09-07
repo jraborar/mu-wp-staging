@@ -2,6 +2,7 @@ import { type NextRequest } from 'next/server'
 import { getSchedule, updateSchedule, deleteSchedule } from '@/lib/scheduleStore'
 import { computeNextOccurrence, isoWeekMondayStr, manilaDayOfWeek } from '@/lib/cadence'
 import { getSite } from '@/lib/sites'
+import { requireCaller } from '@/lib/callerAuth'
 
 export const runtime = 'nodejs'
 
@@ -19,6 +20,9 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const denied = await requireCaller(request)
+  if (denied) return denied
+
   const { id } = await params
   const body = await request.json().catch(() => null)
   if (!body) return Response.json({ error: 'Invalid JSON' }, { status: 400 })
@@ -45,6 +49,9 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const denied = await requireCaller(request)
+  if (denied) return denied
+
   const { id } = await params
   const body = await request.json().catch(() => null)
   if (!body) return Response.json({ error: 'Invalid JSON' }, { status: 400 })
@@ -99,9 +106,12 @@ export async function PATCH(
 }
 
 export async function DELETE(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const denied = await requireCaller(request)
+  if (denied) return denied
+
   const { id } = await params
   await deleteSchedule(id)
   return Response.json({ ok: true })
