@@ -1,5 +1,5 @@
 import { type NextRequest } from 'next/server'
-import { listSchedules, createSchedule, type Cadence } from '@/lib/scheduleStore'
+import { listSchedules, createSchedule, getActiveScheduleForSite, type Cadence } from '@/lib/scheduleStore'
 import { computeNextOccurrence } from '@/lib/cadence'
 import { listSites, getSite } from '@/lib/sites'
 import { requireCaller } from '@/lib/callerAuth'
@@ -51,6 +51,28 @@ export async function POST(request: NextRequest) {
   }
   if (cadence === 'once' && !scheduled_for) {
     return Response.json({ error: 'scheduled_for is required for a one-off (once) schedule' }, { status: 400 })
+  }
+
+  // One active schedule per site — see sql/017. `scph` reached three, two of them
+  // created 16 seconds apart by a double-submit. That is not a concurrency bug
+  // (runDueJobs defers a second run per site) but getActiveSchedules() has no
+  // ORDER BY, so with several rows due in one tick it is nondeterministic which
+  // one supplies deploy_days and deploy_destination to the job.
+  //
+  // The unique index is the real guard; this exists so a double-click gets a
+  // useful message instead of a constraint error surfacing as "Failed to create
+  // schedule". Two near-simultaneous requests can still both pass this check —
+  // the index catches that, and createSchedule returns null, which the existing
+  // 500 below reports.
+  const existing = await getActiveScheduleForSite(site)
+  if (existing) {
+    return Response.json(
+      {
+        error: `${site} already has an active ${existing.cadence} schedule. Update it, or deactivate it first.`,
+        scheduleId: existing.id,
+      },
+      { status: 409 },
+    )
   }
 
   // 'once' fires at the explicit datetime; recurring cadences project the next

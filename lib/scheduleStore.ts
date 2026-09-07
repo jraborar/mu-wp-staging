@@ -99,6 +99,26 @@ export async function deleteSchedule(id: string): Promise<void> {
   if (error) console.error('[supabase] deleteSchedule:', error.message)
 }
 
+// The site's one live schedule, if it has one. Note this does NOT exclude
+// 'security-only' the way getActiveSchedules() does: that exclusion is about
+// which rows the scheduler loop should consider, whereas here we are asking
+// whether the slot is occupied at all — and a security-only row occupies it.
+export async function getActiveScheduleForSite(site: string): Promise<StagingSchedule | null> {
+  const db = getClient()
+  if (!db) return null
+  const { data, error } = await db
+    .from('staging_schedules')
+    .select('*')
+    .eq('site', site)
+    .eq('active', true)
+    .limit(1)
+  if (error) {
+    console.error('[supabase] getActiveScheduleForSite:', error.message)
+    return null
+  }
+  return data?.[0] ?? null
+}
+
 // Candidates for the scheduler loop. Due-ness itself is computed per schedule by
 // isDueNow() (cadence parity + the site's last_deployment anchor), so this no longer
 // filters on next_staging_at — that column is a display projection now.
