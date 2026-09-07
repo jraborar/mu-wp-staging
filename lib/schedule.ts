@@ -39,11 +39,26 @@ async function findFreeSlot(base: Date): Promise<string> {
 // When should this job's deploy land?
 //  - fast-track (security/upstream): now + security_deploy_hours (calendar hours)
 //  - normal: staging-day + deploy_days business days, at the 15:00 PHT slot
-async function computeScheduledFor(job: StagingJob, securityHours: number): Promise<string> {
+//
+// `siteDeployDays` is the registry value, and it sits between the job and the env
+// default for the same reason destination does in prebookDeployment: a manual run
+// via POST /api/staging omits deployDays entirely, and a schedule row may carry
+// null. Without this the env default won every time — and MU_DEPLOY_SCHEDULE_DAYS
+// is '3' in production while 26 of 27 active sites are registered as 1 or 2, so
+// nearly every manual run booked the deploy two days late.
+//
+// `??` and not `||`: deploy_days = 0 means "deploy the same day", which is a real
+// setting the API accepts (it validates 0..30). `||` would silently discard it and
+// fall through to the env default.
+async function computeScheduledFor(
+  job: StagingJob,
+  securityHours: number,
+  siteDeployDays?: number | null,
+): Promise<string> {
   if (isFastTrack(job)) {
     return findFreeSlot(new Date(Date.now() + securityHours * 60 * 60 * 1000))
   }
-  const days = job.deployDays ?? parseInt(process.env.MU_DEPLOY_SCHEDULE_DAYS ?? '1', 10)
+  const days = job.deployDays ?? siteDeployDays ?? parseInt(process.env.MU_DEPLOY_SCHEDULE_DAYS ?? '1', 10)
   const targetDate = addBusinessDays(getManilaToday(), days)
   return findFreeSlot(new Date(manilaThreePM(targetDate)))
 }
@@ -77,7 +92,7 @@ export async function prebookDeployment(job: StagingJob): Promise<void> {
   // Idempotent — don't double-book if a pending deploy for this source already exists
   if (await findPendingDeployment(deployUrl, job.site, job.multidev)) return
 
-  const scheduledFor = await computeScheduledFor(job, securityHours)
+  const scheduledFor = await computeScheduledFor(job, securityHours, site?.deploy_days)
   const approval = site?.deploy_approval ?? 'manual'
   const notes = `${buildNotes(job, true)} [approval: ${approval}]`
 
