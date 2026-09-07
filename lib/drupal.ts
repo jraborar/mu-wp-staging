@@ -151,12 +151,16 @@ function findByPrefix(list: string, prefix: string): string | null {
   return null
 }
 
-// Map a php_version ("8.1.34") to the container's matching CLI binary. The container
-// ships php8.1/8.2/8.3 only — sites on 7.x resolve under 8.1 (logged as a caveat).
+// Map a php_version ("8.1.34") to the container's matching CLI binary.
+// The container ships php7.4, php8.1, php8.2, php8.3, php8.4 (see Dockerfile).
+// PHP 7.2 is not packaged for Debian Bookworm even by sury.org — those sites
+// fall back to php8.1 (acceptable: they use the drush mechanism, not composer).
 function phpBinary(phpVersion?: string | null): string {
   const v = (phpVersion ?? '8.2').trim()
+  if (v.startsWith('7.4')) return 'php7.4'
   if (/^7\./.test(v) || v.startsWith('8.0') || v.startsWith('8.1')) return 'php8.1'
   if (v.startsWith('8.3')) return 'php8.3'
+  if (v.startsWith('8.4')) return 'php8.4'
   return 'php8.2'
 }
 
@@ -323,8 +327,9 @@ async function detectProfile(job: StagingJob, seedPhp: string, log: Logger): Pro
   log('info',
     `Drupal profile: framework=${framework}, mechanism=${mechanism}, core=${coreVersion ?? '?'} ` +
     `(build_step=${buildStep}, composer=${hasComposer}, drush=${drushMajor || '?'})`)
+  // PHP 7.2 is not packaged for Bookworm — warn when we fall back to php8.1.
   if (mechanism !== 'drush' && phpBinary(seedPhp) === 'php8.1' && /^7\./.test((seedPhp ?? '').trim())) {
-    log('warn', `Site PHP is ${seedPhp}; the container has no PHP 7.x — Composer will resolve under php8.1`)
+    log('warn', `Site PHP is ${seedPhp}; no matching container binary — Composer will resolve under php8.1`)
   }
   return { mechanism, framework, upstreamLabel, machineName, siteLabel, maxMultidevs, hasComposer, buildStep, drushMajor, coreMajor }
 }

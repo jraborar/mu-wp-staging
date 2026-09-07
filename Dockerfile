@@ -9,7 +9,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
        > /etc/apt/sources.list.d/sury-php.list \
     && apt-get update
 
-# Install PHP 8.1, 8.2, 8.3 so we can match whatever version the site uses.
+# Install PHP 7.4, 8.1, 8.2, 8.3, 8.4 so we can match whatever version the
+# site uses. All versions are sourced from the ondrej/php PPA above.
+#
+# 7.4 — covers claybuck (WP) and micheal-watson-secretary-of-state (Drupal 8).
+#        EOL upstream but still in service on Pantheon. Composer must resolve
+#        under the real PHP version so platform constraints are not bypassed.
+# 8.4 — covers bcbs-vermont; not yet in Debian Bookworm main repos.
 #
 # `patch` is required, not optional. cweagans/composer-patches tries `git apply
 # --check` at -p1/-p0/-p2/-p4 and only falls back to the `patch` binary when all
@@ -21,9 +27,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # installs packages, so only it applies patches — which is why the IC sites
 # never surfaced this.
 RUN apt-get install -y --no-install-recommends \
+    php7.4-cli php7.4-curl php7.4-mbstring php7.4-xml php7.4-zip \
     php8.1-cli php8.1-curl php8.1-mbstring php8.1-xml php8.1-zip \
     php8.2-cli php8.2-curl php8.2-mbstring php8.2-xml php8.2-zip \
     php8.3-cli php8.3-curl php8.3-mbstring php8.3-xml php8.3-zip \
+    php8.4-cli php8.4-curl php8.4-mbstring php8.4-xml php8.4-zip \
     git \
     openssh-client \
     unzip \
@@ -56,9 +64,13 @@ RUN curl -fsSL \
     && chmod +x /usr/local/bin/terminus-4
 
 # Wrapper: picks php + terminus PER COMMAND from MU_TERMINUS_PHP (the site's php_version,
-# set per-job by the app). ≤8.1 → php8.1 + terminus-3; 8.2+ → php8.2 + terminus-4.
-# No global `update-alternatives` — concurrent jobs on different PHP versions can't race.
-RUN printf '#!/bin/sh\nV="${MU_TERMINUS_PHP:-8.2}"\ncase "$V" in\n  7.*|8.0|8.1) exec php8.1 /usr/local/bin/terminus-3 "$@" ;;\n  *)           exec php8.2 /usr/local/bin/terminus-4 "$@" ;;\nesac\n' \
+# set per-job by the app). No global `update-alternatives` — concurrent jobs on different
+# PHP versions cannot race.
+#   7.4        → php7.4  + terminus-3  (exact match — avoids wrong platform constraints)
+#   7.x / 8.1  → php8.1  + terminus-3  (7.2 not packaged for Bookworm; 8.0 EOL)
+#   8.2 / 8.3  → matching php + terminus-4
+#   8.4+       → php8.4  + terminus-4
+RUN printf '#!/bin/sh\nV="${MU_TERMINUS_PHP:-8.2}"\ncase "$V" in\n  7.4*)        exec php7.4 /usr/local/bin/terminus-3 "$@" ;;\n  7.*|8.0|8.1) exec php8.1 /usr/local/bin/terminus-3 "$@" ;;\n  8.3*)        exec php8.3 /usr/local/bin/terminus-4 "$@" ;;\n  8.4*)        exec php8.4 /usr/local/bin/terminus-4 "$@" ;;\n  *)           exec php8.2 /usr/local/bin/terminus-4 "$@" ;;\nesac\n' \
     > /usr/local/bin/terminus \
     && chmod +x /usr/local/bin/terminus \
     && terminus --version
