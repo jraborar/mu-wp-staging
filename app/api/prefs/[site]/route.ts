@@ -5,9 +5,12 @@ import { requireCaller } from '@/lib/callerAuth'
 export const runtime = 'nodejs'
 
 export async function GET(
-  _req: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ site: string }> },
 ) {
+  const denied = await requireCaller(request)
+  if (denied) return denied
+
   const { site } = await params
   const prefs = await getSiteUpdatePrefs(site)
   return Response.json(prefs ?? { site, plugin_skips: [], theme_skips: [] })

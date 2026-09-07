@@ -1,6 +1,7 @@
 import { type NextRequest } from 'next/server'
 import { run, cleanJson } from '@/lib/terminus'
 import { parseWpJson } from '@/lib/wordpress'
+import { requireCaller } from '@/lib/callerAuth'
 
 export const runtime = 'nodejs'
 
@@ -46,6 +47,9 @@ function parseDrushPmList(raw: string): { name: string; title: string }[] {
 }
 
 export async function GET(req: NextRequest) {
+  const denied = await requireCaller(req)
+  if (denied) return denied
+
   const site     = req.nextUrl.searchParams.get('site')
   const platform = req.nextUrl.searchParams.get('platform')
   const upstream = req.nextUrl.searchParams.get('upstream')

@@ -1,10 +1,14 @@
 import { listSchedules } from '@/lib/scheduleStore'
 import { computeNextOccurrence, currentWindowTarget, isDueNow } from '@/lib/cadence'
 import { listSites } from '@/lib/sites'
+import { requireCaller } from '@/lib/callerAuth'
 
 export const runtime = 'nodejs'
 
-export async function GET() {
+export async function GET(request: Request) {
+  const denied = await requireCaller(request)
+  if (denied) return denied
+
   const [schedules, sites] = await Promise.all([listSchedules(), listSites()])
   const now = new Date()
 

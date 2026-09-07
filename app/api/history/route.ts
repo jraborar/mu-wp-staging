@@ -1,10 +1,14 @@
 import { listStagingHistory } from '@/lib/supabase'
 import { listSites } from '@/lib/sites'
 import { getAllJobs } from '@/lib/jobStore'
+import { requireCaller } from '@/lib/callerAuth'
 
 export const runtime = 'nodejs'
 
-export async function GET() {
+export async function GET(request: Request) {
+  const denied = await requireCaller(request)
+  if (denied) return denied
+
   // site key is the UUID; resolve machine_name + platform for display from the registry.
   const sites = await listSites()
   const mn = new Map(sites.map((s) => [s.site, s.machine_name ?? null]))
