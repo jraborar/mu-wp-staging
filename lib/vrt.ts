@@ -11,20 +11,24 @@
 
 const MU_VRT_URL = (process.env.NEXT_PUBLIC_MU_VRT_URL || 'https://mu-vrt-production.up.railway.app').replace(/\/$/, '')
 
-// Headers for the calls that CHANGE something in mu-vrt (start a baseline, run
-// a compare, expire a run). mu-vrt's mutating routes are being gated the same
-// way this app's were — a session or this shared secret — and these are
-// server-to-server, so there is no cookie to send.
+// Credentials for every call this app makes to mu-vrt — the read included.
+//
+// The mutating calls were authenticated in #225, when mu-vrt's write routes
+// were gated (its #95). `GET /api/runs/:id` was left bare then because that
+// route was staying open. It no longer needs to be: mu-vrt's PUBLIC report page
+// does not use the API at all — `app/report/[id]/page.tsx` calls `getRun()`
+// server-side — so this app is that endpoint's only consumer, and gating it
+// costs the shareable report nothing.
 //
 // Sent only when MU_ACTION_SECRET is present, so the two sides roll out
-// independently: mu-vrt ignores an unknown header until its gate ships. The
-// read below (GET /api/runs/:id) stays bare because that route stays open.
-function mutateHeaders(): Record<string, string> {
+// independently: mu-vrt ignores an unknown header until its read gate ships.
+function authHeader(): Record<string, string> {
   const secret = process.env.MU_ACTION_SECRET
-  return {
-    'content-type': 'application/json',
-    ...(secret ? { authorization: `Bearer ${secret}` } : {}),
-  }
+  return secret ? { authorization: `Bearer ${secret}` } : {}
+}
+
+function mutateHeaders(): Record<string, string> {
+  return { 'content-type': 'application/json', ...authHeader() }
 }
 
 export interface VrtRunResult {
@@ -107,7 +111,7 @@ export function runIdFromReportUrl(url: string): string | null {
 
 async function getRun(runId: string): Promise<VrtRun | null> {
   try {
-    const r = await fetch(`${MU_VRT_URL}/api/runs/${runId}`, { cache: 'no-store' })
+    const r = await fetch(`${MU_VRT_URL}/api/runs/${runId}`, { cache: 'no-store', headers: authHeader() })
     if (!r.ok) return null
     return (await r.json()) as VrtRun
   } catch {

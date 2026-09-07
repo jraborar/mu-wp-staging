@@ -3,22 +3,26 @@ import { addBusinessDays, getManilaToday, manilaThreePM, formatAsManilaISO } fro
 import { getScheduledDeploymentTimes } from '@/lib/supabase'
 import { getSite } from '@/lib/sites'
 
-// Headers for the calls that CHANGE something in mu-deployment (pre-book,
-// confirm, cancel). mu-deployment's mutating routes are being gated the same
-// way this app's were — a session cookie or this shared secret — and these are
-// server-to-server, so there is no cookie to send.
+// Credentials for every call this app makes to mu-deployment — reads included.
 //
-// Sent whenever MU_ACTION_SECRET is present, exactly as mu-pmu-tool's action
-// proxy does, so the two sides can be rolled out independently: mu-deployment
-// ignores an unknown header until its gate ships, and once it ships this app is
-// already authenticating. Reads (`GET /api/schedule`) stay unauthenticated
-// because that route stays open.
-function mutateHeaders(): Record<string, string> {
+// The mutating calls (pre-book, confirm, cancel) were authenticated first, in
+// #223, when mu-deployment's write routes were gated. Its READS were left bare
+// then, on the grounds that `GET /api/schedule` was staying open. That is no
+// longer the plan: mu-deployment's open GETs hand out the whole customer
+// registry — `/api/sites` alone returns all 27 sites with platform, PHP version
+// and upstream repo — to anyone who can resolve the host.
+//
+// So `authHeader()` now goes on the reads too. Sent only when MU_ACTION_SECRET
+// is present, exactly as mu-pmu-tool's action proxy does, so the two sides roll
+// out independently: mu-deployment ignores an unknown header until its read
+// gate ships, and once it ships this app is already authenticating.
+function authHeader(): Record<string, string> {
   const secret = process.env.MU_ACTION_SECRET
-  return {
-    'Content-Type': 'application/json',
-    ...(secret ? { authorization: `Bearer ${secret}` } : {}),
-  }
+  return secret ? { authorization: `Bearer ${secret}` } : {}
+}
+
+function mutateHeaders(): Record<string, string> {
+  return { 'Content-Type': 'application/json', ...authHeader() }
 }
 
 // A staging run triggered by the upstream/security auto-scan deploys on the
@@ -84,7 +88,7 @@ async function computeScheduledFor(
 // Look up a pending deployment in mu-deployment by (site, source multidev).
 async function findPendingDeployment(deployUrl: string, site: string, source: string): Promise<string | null> {
   try {
-    const res = await fetch(`${deployUrl}/api/schedule`, { cache: 'no-store' })
+    const res = await fetch(`${deployUrl}/api/schedule`, { cache: 'no-store', headers: authHeader() })
     if (!res.ok) return null
     const rows = await res.json()
     const match = Array.isArray(rows)
@@ -148,7 +152,7 @@ export async function reconcileDeployment(job: StagingJob, keep: boolean): Promi
       // Confirm: update notes to the final change summary (drop the "planned" prefix)
       const site = await getSite(job.site)
       const approval = site?.deploy_approval ?? 'manual'
-      const existing = await (await fetch(`${deployUrl}/api/schedule`, { cache: 'no-store' })).json().catch(() => [])
+      const existing = await (await fetch(`${deployUrl}/api/schedule`, { cache: 'no-store', headers: authHeader() })).json().catch(() => [])
       const row = Array.isArray(existing) ? existing.find((r) => r.id === id) : null
       await fetch(`${deployUrl}/api/schedule`, {
         method: 'PATCH',
