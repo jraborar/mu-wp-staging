@@ -145,9 +145,14 @@ interface Site {
 }
 
 const UPDATE_MODE_LABELS: Record<UpdateMode, string> = {
-  upstream: 'Pantheon upstream',
-  composer: 'Composer-managed',
-  none:     'No core updates',
+  upstream:          'Pantheon Upstream',
+  drops7:            'Drops 7',
+  composer:          'Integrated Composer',
+  drupal8:           'Drupal 8',
+  empty:             'Empty',
+  'drupal-composer': 'Drupal with Composer',
+  drupal9:           'Drupal 9',
+  none:              'No core updates',
 }
 
 const PLATFORM_LABELS: Record<Platform, string> = {
