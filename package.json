@@ -6,6 +6,7 @@
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
+    "typecheck": "tsc --noEmit",
     "ship": "bash scripts/ship.sh",
     "check:cadence": "node scripts/cadence-check.ts"
   },

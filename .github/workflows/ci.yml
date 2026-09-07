@@ -1,0 +1,76 @@
+name: CI
+
+# The gate this repo did not have. Both other workflows are housekeeping
+# (issue links, reviewer requests) and neither compiles anything, so until now
+# a PR could typecheck-fail or break the production build and still merge
+# green — Railway would be the first thing to notice, after main already had
+# the bad commit. This app runs 40-minute Terminus jobs against customer
+# production, so that is the wrong place to find out.
+#
+# Runs on main too, not just PRs: a merge commit is a tree no PR run ever
+# tested, and a semantic conflict between two independently-green PRs shows up
+# nowhere else.
+#
+# No lint step: this repo has TypeScript but no eslint installed. Adding one is
+# a separate change, because it will surface a pre-existing backlog and a gate
+# that is red on day one gets ignored.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A force-push or a quick second commit supersedes the run in flight. Without
+# this they both finish, and the slower one can report last.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # 22 to match the Dockerfile's node:22-bookworm-slim. A gate that builds
+      # on a different major than production is testing the wrong thing.
+      #
+      # The cadence check below also depends on this: it is a .ts file run
+      # directly by node, which needs type stripping on by default (Node
+      # >= 22.18). setup-node with '22' resolves to the latest 22.x, so this
+      # holds — but that is why the version is not pinned narrower.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      # `ci` not `install`: installs exactly the lockfile, and fails if
+      # package.json and package-lock.json have drifted — itself a bug worth
+      # failing on.
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # 49 assertions over lib/cadence.ts — the ISO-week due-ness and
+      # projection math the scheduler runs on, and the closest thing this
+      # family has to a test suite. It was previously run by hand only, which
+      # means it was run when someone remembered. Fixed dates, no env, no
+      # network, and it already exits non-zero on failure.
+      #
+      # This is the highest-value step in the file: a cadence regression does
+      # not throw, it silently stages the wrong site in the wrong week.
+      - name: Cadence check
+        run: npm run check:cadence
+
+      # Deliberately NO env vars. Verified: the build succeeds with .env.local
+      # moved aside, which is what CI actually has. The Dockerfile passes no
+      # secret as a build ARG either — its only ARGs are the two Terminus
+      # versions. If this step ever starts needing a secret, that is the
+      # regression.
+      - name: Build
+        run: npm run build
