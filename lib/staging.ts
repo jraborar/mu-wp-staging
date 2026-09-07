@@ -908,8 +908,8 @@ export async function executeJob(job: StagingJob): Promise<void> {
     if (job.deployDestination === 'multidev') {
       // Multidev-only: mu_deploy never deploys (customer promotes it), so THIS
       // completion is the terminal cycle event — advance the cadence anchor.
-      // Fast-track (security/upstream) runs are out-of-band and never reset it.
-      if (!job.securityFastTrack) {
+      // Fast-track and test runs (-t suffix) are out-of-band and must not reset it.
+      if (!job.securityFastTrack && !job.multidev.endsWith('-t')) {
         await updateSite(job.site, { last_deployment: new Date().toISOString() }).catch(() => {})
       }
       // Keep in Multidev — notify in thread, skip deployment scheduling
@@ -946,7 +946,15 @@ export async function executeJob(job: StagingJob): Promise<void> {
     finishJob(job, upstreamOnlyNoOp ? 'failed' : 'completed')
     if (job.deployDestination !== 'multidev') {
       await reconcileDeployment(job, anythingUpdated)
-      if (!anythingUpdated) log('info', 'Nothing was updated — pre-booked deploy cancelled')
+      if (!anythingUpdated) {
+        log('info', 'Nothing was updated — pre-booked deploy cancelled')
+        // Advance the cadence anchor even on a no-update run so the next scheduled
+        // week is counted from today, not from the last actual deployment.
+        // Fast-track and test runs (-t suffix) are out-of-band and must not reset it.
+        if (!job.securityFastTrack && !job.multidev.endsWith('-t')) {
+          await updateSite(job.site, { last_deployment: new Date().toISOString() }).catch(() => {})
+        }
+      }
     }
     await finalizeStagingRecord(job.id, {
       site_name: job.site_name,

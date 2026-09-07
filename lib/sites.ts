@@ -95,8 +95,14 @@ export async function getSite(site: string): Promise<Site | null> {
   const db = getClient()
   if (!db) return null
   const { data, error } = await db.from('sites').select('*').eq('site', site).single()
-  if (error && error.code !== 'PGRST116') console.error('[supabase] getSite:', error.message)
-  return data ?? null
+  if (!error) return data ?? null
+  if (error.code !== 'PGRST116') { console.error('[supabase] getSite:', error.message); return null }
+  // Guardrail: early registrations stored a Pantheon UUID in `site` instead of the
+  // machine name. Fall back to machine_name so those sites are found correctly until
+  // sql/016 migrates their primary key.
+  const { data: byMachine, error: mErr } = await db.from('sites').select('*').eq('machine_name', site).single()
+  if (mErr && mErr.code !== 'PGRST116') console.error('[supabase] getSite(machine_name):', mErr.message)
+  return byMachine ?? null
 }
 
 // Best-effort resolve of site_name / upstream / php_version from terminus.

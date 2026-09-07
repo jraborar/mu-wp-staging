@@ -965,7 +965,7 @@ export async function runDrupalStaging(job: StagingJob, registrySite: Site | nul
       `${job.plugins.updated.length} module(s), ${job.themes.updated.length} theme(s), ${job.composerDeps.length} dependency update(s)`)
 
     if (job.deployDestination === 'multidev') {
-      if (!job.securityFastTrack) await updateSite(job.site, { last_deployment: new Date().toISOString() }).catch(() => {})
+      if (!job.securityFastTrack && !job.multidev.endsWith('-t')) await updateSite(job.site, { last_deployment: new Date().toISOString() }).catch(() => {})
       postStep(`✅ *Staging complete* — multidev \`${job.multidev}\` is ready for client review${vrtSummary}`)
       void notifyInThread(slackThreadTs,
         buildMultidevReadyBlocks(siteLabel, job.multidev, job.site !== siteLabel ? job.site : undefined),
@@ -980,7 +980,14 @@ export async function runDrupalStaging(job: StagingJob, registrySite: Site | nul
     finishJob(job, 'completed')
     if (job.deployDestination !== 'multidev') {
       await reconcileDeployment(job, outcome.anythingUpdated)
-      if (!outcome.anythingUpdated) log('info', 'Nothing was updated — pre-booked deploy cancelled')
+      if (!outcome.anythingUpdated) {
+        log('info', 'Nothing was updated — pre-booked deploy cancelled')
+        // Advance the cadence anchor so the next scheduled week counts from today,
+        // not from the last actual deployment. Fast-track and test runs (-t) never reset it.
+        if (!job.securityFastTrack && !job.multidev.endsWith('-t')) {
+          await updateSite(job.site, { last_deployment: new Date().toISOString() }).catch(() => {})
+        }
+      }
     }
     await finalizeStagingRecord(job.id, drupalRecord(job, 'completed'))
   } catch (err) {
