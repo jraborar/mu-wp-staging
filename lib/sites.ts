@@ -15,7 +15,15 @@ function getClient(): SupabaseClient | null {
 
 export type Platform = 'wp-single' | 'wp-multisite' | 'drupal'
 export type DeployDestination = 'dev' | 'test' | 'live' | 'multidev'
-export type UpdateMode = 'upstream' | 'composer' | 'none'
+export type UpdateMode =
+  | 'upstream'        // Pantheon Upstream — WP, WP Multisite
+  | 'drops7'          // Drops 7 — drupal 7 (Pantheon upstream under the hood)
+  | 'composer'        // Integrated Composer — drupal-composer-managed (IC, build_step=true)
+  | 'drupal8'         // Drupal 8 — drops-8 upstream (drush mechanism)
+  | 'empty'           // Empty — empty upstream, behaves like drops-8 (drush mechanism)
+  | 'drupal-composer' // Drupal with Composer — drupal-project upstream (IC-like, deprecated)
+  | 'drupal9'         // Drupal 9 — drupal-recommended upstream (IC-like, deprecated D9)
+  | 'none'            // No core updates
 export type DeployApproval = 'manual' | 'auto'
 
 export interface Site {
