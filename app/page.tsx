@@ -114,7 +114,7 @@ interface UpcomingEntry {
 }
 
 type Platform = 'wp-single' | 'wp-multisite' | 'drupal'
-type UpdateMode = 'upstream' | 'composer' | 'none'
+type UpdateMode = 'upstream' | 'drops7' | 'composer' | 'drupal8' | 'empty' | 'drupal-composer' | 'drupal9' | 'none'
 
 interface Site {
   site: string
