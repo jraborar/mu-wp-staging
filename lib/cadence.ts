@@ -235,8 +235,30 @@ export function isDueNow(
 ): boolean {
   if (!sched.active || sched.cadence === 'security-only') return false
 
-  // An explicit pin ("this occurrence only") outranks cadence parity.
-  if (sched.override_at) return parseAnchor(sched.override_at) <= now
+  // An explicit pin ("this occurrence only") outranks cadence parity — but only
+  // until something serves it.
+  //
+  // This used to be a bare `return parseAnchor(sched.override_at) <= now`, which
+  // early-returns TRUE and so skips every completion check below it. A pin is
+  // normally cleared by updateScheduleAfterRun(), but that runs only for
+  // auto_stage sites (via the scheduler) and, since 2026-09-04, manual runs that
+  // go through POST /api/staging. Any other path — a run predating that fix, a
+  // deploy booked straight in mu-deployment — leaves the pin behind, and the
+  // site then reads "due now" forever no matter how many times it has actually
+  // been staged and deployed.
+  //
+  // Real case: lgla-merge was pinned to 2026-08-28, staged that day and deployed
+  // to live on 08-31 (completed 09-01), and was still reporting due_now 11 days
+  // later. Clearing the row alone would not have fixed it — the next dangling
+  // pin would do the same thing — so treat a pin as spent once a run or a
+  // deployment has landed at or after it.
+  if (sched.override_at) {
+    const pin = parseAnchor(sched.override_at)
+    if (pin > now) return false
+    if (sched.last_staged_at && new Date(sched.last_staged_at) >= pin) return false
+    if (lastDeployment && parseAnchor(lastDeployment) >= pin) return false
+    return true
+  }
   // A one-off has no cadence — it fires at its stored datetime, once.
   if (sched.cadence === 'once') return !!sched.next_staging_at && new Date(sched.next_staging_at) <= now
 

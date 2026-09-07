@@ -52,6 +52,15 @@ check('stale next_staging_at, off-parity → no make-up',
 console.log('\noverrides')
 check('override_at passed, off-parity week → due',  isDueNow(s({ ...biwk, override_at: '2026-08-25T09:00:00+08:00' }), '2026-08-03', D('2026-08-25T10:00:00+08:00')), true)
 check('override_at in future → not due',            isDueNow(s({ ...biwk, override_at: '2026-08-25T09:00:00+08:00' }), '2026-08-03', D('2026-08-25T08:00:00+08:00')), false)
+// A pin is spent once its occurrence has been served. updateScheduleAfterRun()
+// normally clears it, but not on every path, and a pin left behind used to pin
+// the site "due" forever — it early-returned before the completion checks.
+check('override_at, staged after the pin → spent',  isDueNow(s({ ...biwk, override_at: '2026-08-25T09:00:00+08:00', last_staged_at: '2026-08-25T10:00:00+08:00' }), '2026-08-03', D('2026-08-27T09:00:00+08:00')), false)
+check('override_at, deployed after the pin → spent',isDueNow(s({ ...biwk, override_at: '2026-08-25T09:00:00+08:00' }), '2026-08-26', D('2026-08-27T09:00:00+08:00')), false)
+check('override_at, run predates the pin → still due', isDueNow(s({ ...biwk, override_at: '2026-08-25T09:00:00+08:00', last_staged_at: '2026-08-20T10:00:00+08:00' }), '2026-08-03', D('2026-08-25T10:00:00+08:00')), true)
+// lgla-merge, exactly as found in production: pinned 08-28, staged 08-24 (before
+// the pin, so it does not clear it), deployed to live 09-01. Read due_now for 11 days.
+check('lgla-merge: pinned, then deployed → spent',  isDueNow(s({ ...biwk, override_at: '2026-08-28T15:35:00+08:00', last_staged_at: '2026-08-24T15:04:00+08:00' }), '2026-09-01', D('2026-09-08T03:00:00+08:00')), false)
 check('once, datetime passed → due',                isDueNow(s({ cadence: 'once', next_staging_at: '2026-08-20T09:00:00+08:00' }), null, D('2026-08-20T10:00:00+08:00')), true)
 check('once, datetime future → not due',            isDueNow(s({ cadence: 'once', next_staging_at: '2026-08-21T09:00:00+08:00' }), null, D('2026-08-20T10:00:00+08:00')), false)
 check('inactive → not due',                         isDueNow(s({ ...weekly, active: false }), '2026-08-10', D('2026-08-20T15:00:00+08:00')), false)
