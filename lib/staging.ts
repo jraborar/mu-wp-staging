@@ -46,6 +46,141 @@ function checkCancelled(job: StagingJob): void {
   if (job.cancelRequested) throw new CancelledError()
 }
 
+type LogFn = (logType: Parameters<typeof appendLog>[1], message: string) => void
+
+// Pantheon's framework string for a WordPress network. This is the authoritative
+// multisite signal — NOT sites.platform. That column is correct for both multisite
+// customers today, but nothing enforces it, and an inert label is precisely how the
+// multisite gap survived unnoticed. Note that SUPPORTED_UPSTREAMS' 'wordpress-multisite'
+// matches nothing real: Pantheon says `wordpress_network`.
+const MULTISITE_FRAMEWORKS = ['wordpress_network']
+
+function isMultisiteFramework(framework: string): boolean {
+  return MULTISITE_FRAMEWORKS.includes(framework)
+}
+
+const HOSTNAME_RE = /^[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z]{2,}$/
+
+// Pull a bare hostname out of `wp db query --skip-column-names` output, which arrives
+// interleaved with terminus' own " [warning] ..." / " [notice] ..." lines. Those all
+// contain spaces, so a hostname match is unambiguous.
+function extractHost(stdout: string): string | null {
+  const hosts = stdout.split('\n').map((l) => l.trim()).filter((l) => HOSTNAME_RE.test(l))
+  return hosts.length > 0 ? hosts[hosts.length - 1] : null
+}
+
+/**
+ * Rewrite a WordPress network's hostname in the database after a multidev is created.
+ *
+ * Multisite stores the network host in `wp_site` / `wp_blogs`, and `ms-load.php` resolves
+ * which site a request belongs to by matching DOMAIN_CURRENT_SITE against those rows —
+ * before WP_HOME/WP_SITEURL exist. Pantheon's `wp-config-pantheon.php` derives
+ * WP_HOME/WP_SITEURL from HTTP_HOST, which is why a single-site multidev needs no rewrite
+ * at all. But a PHP constant cannot patch a table, so on multisite the rows must be
+ * rewritten or every request dies in `ms_not_installed()` under the badly misleading
+ * title "Error establishing a database connection".
+ *
+ * `multidev:create` clones live's database verbatim, so this is required on every fresh
+ * multisite multidev. Without it the whole WP half of the pipeline fails silently:
+ * every `wp` call errors, the readiness poll downgrades to a warning, and the run reports
+ * success having applied zero updates.
+ *
+ * Idempotent — a no-op when the rows already carry the multidev domain, so re-runs and
+ * hand-repaired environments are safe.
+ *
+ * Throws on any partial or unverifiable result, by design. A half-rewritten network boots
+ * into the same error while still looking like a success, which is the exact failure mode
+ * this function exists to remove.
+ */
+async function rewriteMultisiteDomain(job: StagingJob, log: LogFn): Promise<void> {
+  // Take the new domain from Pantheon rather than assembling
+  // `${multidev}-${site}.pantheonsite.io` — job.site is the registry key and may be a UUID.
+  const envInfo = await run(`terminus env:info ${env(job)} --format=json 2>&1`)
+  let newDomain = ''
+  try {
+    newDomain = String(JSON.parse(cleanJson(envInfo.stdout))?.domain ?? '').trim()
+  } catch {}
+  if (!HOSTNAME_RE.test(newDomain)) {
+    throw new Error(`Multisite rewrite: could not resolve the multidev domain from env:info (got "${newDomain}")`)
+  }
+
+  // `wp db query` does not fully bootstrap WordPress, so it still works on a network
+  // whose rows point at the wrong host — unlike every other wp subcommand.
+  const siteRow = await run(wp(job, 'db query "SELECT domain FROM wp_site LIMIT 1;" --skip-column-names'))
+  const oldDomain = extractHost(siteRow.stdout)
+  if (!oldDomain) {
+    throw new Error(`Multisite rewrite: could not read wp_site.domain (exit ${siteRow.code})`)
+  }
+
+  if (oldDomain === newDomain) {
+    log('info', `Multisite network domain is already ${newDomain} — no rewrite needed`)
+    return
+  }
+
+  log('status', `Multisite: rewriting network domain ${oldDomain} → ${newDomain}...`)
+
+  // --network reaches every subsite's tables, not just the bootstrapped blog (measured on
+  // niacc: wp_2/wp_3/wp_9_options, wp_blogs, wp_site, wp_sitemeta).
+  // --all-tables-with-prefix would add ~443 plugin tables and ~166k further replacements
+  // without changing whether the network boots, so it is left off to keep the multidev a
+  // faithful copy of live.
+  // --url must be the OLD domain: it is the only host present in wp_blogs, so it is what
+  // lets WP-CLI bootstrap at all — and it stops working the instant the rows change,
+  // which is why the search-replace has to come before any manual UPDATE.
+  // --skip-columns=guid: guid is a permanent feed identifier and must not be rewritten.
+  const sr = await runStream(
+    wp(job, `search-replace ${shellEscape(oldDomain)} ${shellEscape(newDomain)}`
+      + ` --network --url=${shellEscape(oldDomain)} --skip-columns=guid`),
+    (line) => log('info', line),
+  )
+  if (sr.code !== 0) throw new Error(`Multisite rewrite: search-replace failed (exit ${sr.code})`)
+
+  // Verify the rows actually landed. Counting residuals is cheap and catches a partial
+  // rewrite, which otherwise looks exactly like success.
+  const residual = await run(wp(job,
+    `db query "SELECT count(*) FROM (SELECT domain FROM wp_site UNION ALL SELECT domain FROM wp_blogs) d`
+    + ` WHERE domain <> '${newDomain}';" --skip-column-names`))
+  const leftover = (residual.stdout.match(/^\s*(\d+)\s*$/m) ?? [])[1]
+  if (leftover === undefined) {
+    throw new Error('Multisite rewrite: could not verify wp_site/wp_blogs after the rewrite')
+  }
+  if (Number(leftover) > 0) {
+    throw new Error(`Multisite rewrite: ${leftover} wp_site/wp_blogs row(s) still do not point at ${newDomain}`)
+  }
+
+  // WP-CLI prints this reminder itself: the object cache still holds the old siteurl.
+  await runStream(wp(job, 'cache flush'), (line) => log('info', line))
+  await run(`terminus env:clear-cache ${env(job)} 2>&1`)
+
+  // Confirm the network boots. The symptom being guarded against is a 500 from
+  // ms_not_installed(), so a 5xx here means the rewrite did not take. A locked multidev
+  // answers 401/403 before PHP runs, which says nothing either way — warn, don't fail.
+  const url = `https://${newDomain}/`
+  let verified = false
+  let lastSeen = ''
+  for (let attempt = 1; attempt <= 4 && !verified; attempt++) {
+    const probe = await fetch(url, { redirect: 'manual' })
+      .then((r) => ({ status: r.status, error: '' }))
+      .catch((e) => ({ status: 0, error: e instanceof Error ? e.message : String(e) }))
+
+    if (probe.status === 401 || probe.status === 403) {
+      log('warn', `${url} → HTTP ${probe.status} (environment locked) — boot not verifiable, continuing`)
+      verified = true
+    } else if (probe.status >= 200 && probe.status < 500) {
+      log('info', `${url} → HTTP ${probe.status}`)
+      verified = true
+    } else {
+      lastSeen = probe.error || `HTTP ${probe.status}`
+      if (attempt < 4) await new Promise((r) => setTimeout(r, 15_000))
+    }
+  }
+  if (!verified) {
+    throw new Error(`Multisite rewrite: ${url} did not come up after the rewrite (last: ${lastSeen})`)
+  }
+
+  log('success', `Multisite network domain rewritten to ${newDomain}`)
+}
+
 // Find a multidev whose name exactly matches prefix-YYMMDD
 function findByPrefix(list: string, prefix: string): string | null {
   const re = new RegExp(`^${prefix}-\\d{6}$`)
@@ -457,11 +592,16 @@ export async function executeJob(job: StagingJob): Promise<void> {
 
     const siteInfoRaw = await run(`terminus site:info ${job.site} --format=json 2>&1`)
     let maxMultidevs = 10
+    // Pantheon's own framework string — the authoritative multisite signal. Deliberately
+    // not sites.platform: that column is correct today, but nothing enforces it, and a
+    // label nothing consumes is exactly how the multisite gap survived this long.
+    let framework = ''
     try {
       const siteData = JSON.parse(cleanJson(siteInfoRaw.stdout))
       maxMultidevs = siteData?.max_num_cdes ?? siteData?.max_multidevs ?? 10
       siteLabel = siteData?.label ?? siteData?.name ?? job.site
       if (siteLabel !== job.site) job.site_name = siteLabel
+      framework = String(siteData?.framework ?? '').toLowerCase()
     } catch {}
 
     const multidevListResult = await run(`terminus multidev:list ${job.site} --field=id 2>&1`)
@@ -546,6 +686,24 @@ export async function executeJob(job: StagingJob): Promise<void> {
     job.multidevCreated = true
     log('success', `Multidev ${job.multidev} created`)
     postStep(`✓ Multidev \`${job.multidev}\` created`)
+
+    // ── Multisite network domain rewrite ─────────────────────────────────────
+    // Must run here: before the VRT baseline (which would otherwise photograph the
+    // "Error establishing a database connection" page as the "before" image) and before
+    // any wp command (all of which fail on a network whose rows still point at live).
+    // Unconditional for a wordpress_network site — never gated on a registry label, and
+    // never downgraded to a warning. See rewriteMultisiteDomain().
+    // Intentionally no step() call: STEPS is built before site:info runs, so the name is
+    // not in the list and step() would report "0 of N". This is a sub-action of
+    // "Creating multidev", handled the same way as the VRT baseline below.
+    if (isMultisiteFramework(framework)) {
+      log('info', `Framework is ${framework} — a network domain rewrite is required`)
+      if (registrySite && registrySite.platform !== 'wp-multisite') {
+        log('warn', `Registry lists ${job.site} as "${registrySite.platform}" but Pantheon reports ${framework} — trusting Pantheon`)
+      }
+      await rewriteMultisiteDomain(job, log)
+      postStep(`✓ Multisite network domain pointed at \`${job.multidev}\``)
+    }
 
     // Pre-book the deploy now that the source multidev exists — visible/committed
     // without waiting for staging to finish; reconciled (kept/cancelled) at the end.
@@ -721,16 +879,25 @@ export async function executeJob(job: StagingJob): Promise<void> {
     // WordPress readiness poll (new multidev needs DB sync time)
     log('status', 'Verifying WordPress database is ready...')
     let wpReady = false
+    let lastWpError = ''
     for (let attempt = 1; attempt <= 6; attempt++) {
       const check = await run(wp(job, 'core is-installed'))
       if (check.code === 0) { wpReady = true; break }
+      lastWpError = check.stdout.trim().split('\n').filter(Boolean).slice(-2).join(' ')
       if (attempt < 6) {
         log('info', `WordPress not ready yet (attempt ${attempt}/6) — waiting 30s...`)
         await new Promise((r) => setTimeout(r, 30000))
       }
     }
+    // Hard failure, deliberately. This used to be a warning that left wpReady false and
+    // skipped every update, so the run finished green having applied nothing — which is
+    // how multisite sites silently received zero updates for months. A WordPress that
+    // never becomes usable is a failed run, not a successful no-op.
     if (!wpReady) {
-      log('warn', 'WordPress not ready after 3 minutes — plugin/theme updates will be skipped')
+      throw new Error(
+        `WordPress never became ready on ${job.multidev} after 3 minutes — refusing to `
+        + `report a successful run with no updates applied. Last error: ${lastWpError || 'none captured'}`,
+      )
     }
 
     // ── 11–14. Plugin + theme updates (skippable) ────────────────────────────
@@ -744,7 +911,9 @@ export async function executeJob(job: StagingJob): Promise<void> {
 
     if (!job.skipPluginsThemes) {
       step('Updating plugins')
-      const pluginSummary = wpReady ? await runPluginOrThemeUpdates(job, 'plugin', pluginSkipPrefs) : { updated: [], skipped: [] }
+      // wpReady is guaranteed true here — an unready WordPress now throws above rather
+      // than falling through to an empty summary.
+      const pluginSummary = await runPluginOrThemeUpdates(job, 'plugin', pluginSkipPrefs)
       job.plugins = pluginSummary
 
       if (pluginSummary.updated.length > 0 || pluginSummary.skipped.length > 0) {
@@ -765,7 +934,7 @@ export async function executeJob(job: StagingJob): Promise<void> {
       }
 
       step('Updating themes')
-      const themeSummary = wpReady ? await runPluginOrThemeUpdates(job, 'theme', themeSkipPrefs) : { updated: [], skipped: [] }
+      const themeSummary = await runPluginOrThemeUpdates(job, 'theme', themeSkipPrefs)
       job.themes = themeSummary
 
       if (themeSummary.updated.length > 0 || themeSummary.skipped.length > 0) {
