@@ -7,9 +7,12 @@ import { requireCaller } from '@/lib/callerAuth'
 export const runtime = 'nodejs'
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const denied = await requireCaller(request)
+  if (denied) return denied
+
   const { id } = await params
   const schedule = await getSchedule(id)
   if (!schedule) return Response.json({ error: 'Not found' }, { status: 404 })

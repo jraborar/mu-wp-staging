@@ -5,9 +5,12 @@ import { requireCaller } from '@/lib/callerAuth'
 export const runtime = 'nodejs'
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ site: string }> },
 ) {
+  const denied = await requireCaller(request)
+  if (denied) return denied
+
   const { site } = await params
   const s = await getSite(decodeURIComponent(site))
   if (!s) return Response.json({ error: 'Not found' }, { status: 404 })

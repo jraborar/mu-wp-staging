@@ -1,13 +1,17 @@
 import { type NextRequest } from 'next/server'
 import { getJob } from '@/lib/jobStore'
+import { requireCaller } from '@/lib/callerAuth'
 
 export const runtime = 'nodejs'
 
 // Returns current job metadata (non-streaming, for polling state)
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ jobId: string }> },
 ) {
+  const denied = await requireCaller(request)
+  if (denied) return denied
+
   const { jobId } = await params
   const job = getJob(jobId)
   if (!job) return Response.json({ error: 'Job not found' }, { status: 404 })
