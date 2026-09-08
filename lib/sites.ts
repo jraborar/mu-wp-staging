@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { run, cleanJson } from '@/lib/terminus'
+import { platformFromFramework, updateModeFromUpstream } from '@/lib/platform'
 
 // Shared Sites registry client. Identical contract in mu-wp-staging + mu-deployment
 // (Option A: each app writes directly to the shared `sites` table; guardrails live
@@ -105,12 +106,20 @@ export async function getSite(site: string): Promise<Site | null> {
   return byMachine ?? null
 }
 
-// Best-effort resolve of site_name / upstream / php_version from terminus.
-export async function resolveSiteMeta(
-  site: string,
-): Promise<{ site_name?: string; machine_name?: string; upstream?: string; php_version?: string }> {
+// Best-effort resolve of site_name / upstream / php_version / platform /
+// update_mode from terminus.
+interface SiteMeta {
+  site_name?: string
+  machine_name?: string
+  upstream?: string
+  php_version?: string
+  platform?: Platform
+  update_mode?: UpdateMode
+}
+
+export async function resolveSiteMeta(site: string): Promise<SiteMeta> {
   if (!SITE_RE.test(site)) return {}
-  const meta: { site_name?: string; machine_name?: string; upstream?: string; php_version?: string } = {}
+  const meta: SiteMeta = {}
   try {
     const token = process.env.TERMINUS_TOKEN
     if (token) await run(`terminus auth:login --machine-token="${token}" 2>&1`)
@@ -121,6 +130,10 @@ export async function resolveSiteMeta(
       meta.site_name    = d?.label ?? d?.name ?? undefined
       meta.machine_name = d?.name ?? undefined
       meta.upstream     = d?.upstream_product_label ?? d?.upstream ?? undefined
+      meta.platform     = platformFromFramework(String(d?.framework ?? ''))
+      // Derive from the raw `upstream` field, never from meta.upstream — that one
+      // prefers a friendly product label, which carries no repo slug.
+      meta.update_mode  = updateModeFromUpstream(String(d?.upstream ?? ''))
     } catch {}
 
     const envInfo = await run(`terminus env:info ${site}.dev --format=json 2>&1`)
@@ -148,11 +161,14 @@ export async function registerSite(input: Partial<Site> & { site: string }): Pro
     machine_name:        input.machine_name       ?? meta.machine_name ?? existing?.machine_name ?? null,
     site_name:           input.site_name          ?? meta.site_name   ?? existing?.site_name   ?? null,
     site_uuid:           input.site_uuid          ?? existing?.site_uuid ?? null,
-    platform:            input.platform           ?? existing?.platform ?? 'wp-single',
+    // `existing` outranks `meta` on both detected columns: a human correction to a
+    // site already in the registry must survive a re-sync. Detection only fills a
+    // column the caller left out on a site that has none yet.
+    platform:            input.platform           ?? existing?.platform ?? meta.platform ?? 'wp-single',
     parent_site:         input.parent_site        ?? existing?.parent_site ?? null,
     php_version:         input.php_version        ?? meta.php_version ?? existing?.php_version ?? null,
     upstream:            input.upstream           ?? meta.upstream    ?? existing?.upstream    ?? null,
-    update_mode:         input.update_mode         ?? existing?.update_mode         ?? 'upstream',
+    update_mode:         input.update_mode         ?? existing?.update_mode         ?? meta.update_mode ?? 'upstream',
     skip_upstream:       input.skip_upstream       ?? existing?.skip_upstream       ?? false,
     skip_plugins_themes: input.skip_plugins_themes ?? existing?.skip_plugins_themes ?? false,
     deploy_days:         input.deploy_days         ?? existing?.deploy_days         ?? 1,

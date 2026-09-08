@@ -935,9 +935,13 @@ function formatStandingSchedule(s: StagingSchedule): string {
 
 interface SiteFormState {
   site: string
-  platform: Platform
+  // 'auto' = leave the field out of the POST so registerSite derives it from
+  // terminus (framework → platform, upstream repo → update_mode). Offered on new
+  // registrations only; editing an existing site always sends a concrete value,
+  // since a correction must not hand the column back to detection.
+  platform: Platform | 'auto'
   // update policy — SITE FACTS (write to the registry; read by runUpstreamCheck)
-  update_mode: UpdateMode
+  update_mode: UpdateMode | 'auto'
   skip_upstream: boolean
   skip_plugins_themes: boolean
   auto_stage: boolean
@@ -955,7 +959,7 @@ interface SiteFormState {
 }
 
 const emptySiteForm: SiteFormState = {
-  site: '', platform: 'wp-single', update_mode: 'upstream',
+  site: '', platform: 'auto', update_mode: 'auto',
   skip_upstream: false, skip_plugins_themes: false, auto_stage: false, vrt_paths_text: '', notes: '',
   managed: false, cadence: 'weekly', day_of_week: 1, week_of_month: 1,
   deploy_days: 1, deploy_destination: 'live',
@@ -1049,8 +1053,13 @@ function SitesTab() {
         method: isNew ? 'POST' : 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          site, platform: form.platform,
-          update_mode: form.update_mode,
+          site,
+          // Omitted when 'auto' so registerSite's terminus fallback fills them in.
+          // Sending the key at all — even as the old 'wp-single'/'upstream' default —
+          // wins over detection, which is why these are conditional rather than
+          // coerced to a value here.
+          ...(form.platform    !== 'auto' && { platform: form.platform }),
+          ...(form.update_mode !== 'auto' && { update_mode: form.update_mode }),
           skip_upstream: form.skip_upstream, skip_plugins_themes: form.skip_plugins_themes,
           // auto_stage from #148; vrt_paths deliberately NOT sent — the VRT app
           // owns that config now and this form only displays it.
@@ -1303,7 +1312,7 @@ function SitesTab() {
           <CardHeader
             icon={<Globe className="w-5 h-5" />}
             title={editing === '__new__' ? 'Register Site' : `Edit ${form.site}`}
-            description={editing === '__new__' ? 'Name, PHP version & upstream are auto-resolved from Pantheon.' : undefined}
+            description={editing === '__new__' ? 'Name, PHP version, upstream, platform & core-update mode are auto-resolved from Pantheon.' : undefined}
           />
           <div className="px-6 py-5 space-y-4">
             {editing === '__new__' && (
@@ -1316,8 +1325,9 @@ function SitesTab() {
 
             <div className="space-y-1.5">
               <label className={labelCls}>Platform</label>
-              <select value={form.platform} onChange={e => setForm(f => ({ ...f, platform: e.target.value as Platform }))}
+              <select value={form.platform} onChange={e => setForm(f => ({ ...f, platform: e.target.value as Platform | 'auto' }))}
                 className={inputCls}>
+                {editing === '__new__' && <option value="auto">Auto-detect from Pantheon</option>}
                 {(Object.keys(PLATFORM_LABELS) as Platform[]).map(p => (
                   <option key={p} value={p}>{PLATFORM_LABELS[p]}</option>
                 ))}
@@ -1329,8 +1339,9 @@ function SitesTab() {
               <p className="font-mono text-xs uppercase tracking-widest text-pantheon-text-muted pt-1">Update policy</p>
               <div className="space-y-1.5">
                 <label className={labelCls}>Core updates</label>
-                <select value={form.update_mode} onChange={e => setForm(f => ({ ...f, update_mode: e.target.value as UpdateMode }))}
+                <select value={form.update_mode} onChange={e => setForm(f => ({ ...f, update_mode: e.target.value as UpdateMode | 'auto' }))}
                   className={inputCls}>
+                  {editing === '__new__' && <option value="auto">Auto-detect from Pantheon</option>}
                   {(Object.keys(UPDATE_MODE_LABELS) as UpdateMode[]).map(m => (
                     <option key={m} value={m}>{UPDATE_MODE_LABELS[m]}</option>
                   ))}
