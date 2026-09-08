@@ -28,11 +28,30 @@ export function platformFromFramework(framework: string): Platform | undefined {
   return undefined
 }
 
-// Keyed on the upstream REPO SLUG rather than the product label: site:info omits
-// `upstream_label` on some sites, but the git URL is always present.
+// Keyed on the upstream REPO SLUG, not on `upstream_label`.
+//
+// The label is the more readable key and it is always present — every one of the 28
+// registered sites has one. It is still the wrong thing to match on, because it is
+// NOT a stable identifier for an upstream: an organisation creates its own upstream
+// record pointing at a Pantheon repo and names it whatever it likes. Two sites here
+// prove it — same repo, two upstream UUIDs, two labels:
+//
+//   niacc           19fc7977…  "WordPress Multisite"
+//   tstc-multisite  e68b6362…  "Wordpress Multisite Upstream"
+//
+// A label-keyed map needs a row per spelling and silently misses the next org that
+// names one differently — falling through to the 'upstream' default, which is a
+// WordPress mode and would be actively wrong on a Drupal site. The slug is identical
+// for both. (`platform` is unaffected either way: it comes from `framework`.)
+//
+// The remaining gap is an org that forks a Pantheon upstream into its OWN repo — a
+// slug this table does not know. That returns undefined and the caller's default
+// applies, same as before detection existed.
 //
 // Each mode is paired with the upstream whose `upstream_label` Pantheon actually
-// reports for it, read from a live site rather than inferred:
+// reports for it, read from a live site rather than inferred. All but
+// wordpress-network are a single shared UUID — one canonical Pantheon product
+// upstream — so these labels are Pantheon's own, not an org's:
 //
 //   wordpress               "WordPress"                            → upstream
 //   wordpress-network       "WordPress Multisite"                  → upstream

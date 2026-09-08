@@ -67,7 +67,7 @@ jobs:
       - name: Cadence check
         run: npm run check:cadence
 
-      # 31 assertions over lib/platform.ts — the framework → platform and
+      # 36 assertions over lib/platform.ts — the framework → platform and
       # upstream-slug → update_mode mapping registration classifies a new site
       # with. Its table is the real production registry (every distinct
       # combination across all 28 sites), so a mapping edit that contradicts a

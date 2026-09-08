@@ -66,6 +66,23 @@ check('case folded',              upstreamSlug(gh('WordPress')), 'wordpress')
 check('non-github host still ok', upstreamSlug('uuid: git@example.com:custom/drops-7.git'), 'drops-7')
 check('empty string → empty',     upstreamSlug(''), '')
 
+// Why the slug and not `upstream_label`, which reads far better. An org creates its
+// own upstream record against a Pantheon repo and names it freely, so the label is
+// not a stable identifier: these two real sites share the wordpress-network repo but
+// carry different upstream UUIDs and different labels. Keyed on the slug they agree;
+// keyed on the label, tstc-multisite needs a second table row to avoid falling
+// through to the WordPress default.
+console.log('\nsame repo, different org-authored labels — why the slug is the key')
+const NIACC = '19fc7977-656c-42f0-817e-73696a15a87a: https://github.com/pantheon-systems/wordpress-network.git'
+const TSTC  = 'e68b6362-2ef4-4d94-b9b5-51b854718d9c: https://github.com/pantheon-systems/wordpress-network.git'
+check('niacc          "WordPress Multisite"         → upstream', updateModeFromUpstream(NIACC), 'upstream')
+check('tstc-multisite "Wordpress Multisite Upstream" → upstream', updateModeFromUpstream(TSTC), 'upstream')
+check('both resolve to one slug', upstreamSlug(NIACC) === upstreamSlug(TSTC), true)
+check('…which is wordpress-network', upstreamSlug(TSTC), 'wordpress-network')
+// pantheon-systems vs pantheon-upstreams — the org segment of the URL varies too,
+// and the slug extraction must not care.
+check('host org segment ignored', upstreamSlug(NIACC), upstreamSlug(gh('wordpress-network')))
+
 console.log('\nunknown input falls through to the caller default (never guesses)')
 check('unknown framework',   platformFromFramework('joomla'), undefined)
 check('empty framework',     platformFromFramework(''), undefined)
