@@ -88,9 +88,20 @@ function extractHost(stdout: string): string | null {
  * Idempotent — a no-op when the rows already carry the multidev domain, so re-runs and
  * hand-repaired environments are safe.
  *
- * Throws on any partial or unverifiable result, by design. A half-rewritten network boots
- * into the same error while still looking like a success, which is the exact failure mode
- * this function exists to remove.
+ * Runs in two phases, because a single ten-minute SSH channel is what broke job fca2af2b:
+ *
+ *   1. The boot-critical tables (wp_site, wp_blogs, wp_blogmeta, wp_sitemeta and every
+ *      blog's *_options) — ~12s on niacc. Retried, hard-verified, and fatal if it cannot
+ *      be confirmed. The residual row count is the verdict; the exit code is only a hint,
+ *      because exit 255 is SSH transport and has already accompanied a rewrite that fully
+ *      succeeded.
+ *   2. The bulk in-content rewrite (~600s on niacc) — retried, then downgraded to a
+ *      warning. The network already resolves by then, so failing the run over link
+ *      rewriting would repeat the very mistake phase 1 is guarded against.
+ *
+ * The cache flush is in a `finally`: a rewritten database behind a stale object cache
+ * serves the old siteurl, which leaves the multidev redirecting to production — worse
+ * than the 500 this function exists to remove.
  */
 async function rewriteMultisiteDomain(job: StagingJob, log: LogFn): Promise<void> {
   // Take the new domain from Pantheon rather than assembling
@@ -119,38 +130,116 @@ async function rewriteMultisiteDomain(job: StagingJob, log: LogFn): Promise<void
 
   log('status', `Multisite: rewriting network domain ${oldDomain} → ${newDomain}...`)
 
-  // --network reaches every subsite's tables, not just the bootstrapped blog (measured on
-  // niacc: wp_2/wp_3/wp_9_options, wp_blogs, wp_site, wp_sitemeta).
-  // --all-tables-with-prefix would add ~443 plugin tables and ~166k further replacements
-  // without changing whether the network boots, so it is left off to keep the multidev a
-  // faithful copy of live.
-  // --url must be the OLD domain: it is the only host present in wp_blogs, so it is what
-  // lets WP-CLI bootstrap at all — and it stops working the instant the rows change,
-  // which is why the search-replace has to come before any manual UPDATE.
-  // --skip-columns=guid: guid is a permanent feed identifier and must not be rewritten.
-  const sr = await runStream(
-    wp(job, `search-replace ${shellEscape(oldDomain)} ${shellEscape(newDomain)}`
-      + ` --network --url=${shellEscape(oldDomain)} --skip-columns=guid`),
-    (line) => log('info', line),
-  )
-  if (sr.code !== 0) throw new Error(`Multisite rewrite: search-replace failed (exit ${sr.code})`)
-
-  // Verify the rows actually landed. Counting residuals is cheap and catches a partial
-  // rewrite, which otherwise looks exactly like success.
-  const residual = await run(wp(job,
-    `db query "SELECT count(*) FROM (SELECT domain FROM wp_site UNION ALL SELECT domain FROM wp_blogs) d`
-    + ` WHERE domain <> '${newDomain}';" --skip-column-names`))
-  const leftover = (residual.stdout.match(/^\s*(\d+)\s*$/m) ?? [])[1]
-  if (leftover === undefined) {
-    throw new Error('Multisite rewrite: could not verify wp_site/wp_blogs after the rewrite')
+  // The boot-critical rows are a tiny fraction of the work. Measured on niacc: these 12
+  // tables are 67 replacements and ~12s, against 124,314 replacements and ~600s for the
+  // full --network sweep. Everything that decides whether the network resolves is here;
+  // the rest is in-content links, which affect where a link points and never whether the
+  // site loads. Holding one SSH channel open for ten minutes is what dropped job
+  // fca2af2b (exit 255, "closed by remote host"), so the part that must not fail is kept
+  // short and the long part is made non-fatal below.
+  //
+  // Derived, not hardcoded: gaps from deleted blogs (niacc has no blog 4) are handled by
+  // construction. WP-CLI takes tables POSITIONALLY — there is no --include-tables flag.
+  const blogRows = await run(wp(job, 'db query "SELECT blog_id FROM wp_blogs;" --skip-column-names'))
+  const blogIds = blogRows.stdout.split('\n').map((l) => l.trim()).filter((l) => /^\d+$/.test(l))
+  if (blogIds.length === 0) {
+    throw new Error(`Multisite rewrite: could not enumerate wp_blogs (exit ${blogRows.code})`)
   }
-  if (Number(leftover) > 0) {
-    throw new Error(`Multisite rewrite: ${leftover} wp_site/wp_blogs row(s) still do not point at ${newDomain}`)
+  // The wp_ prefix is assumed, as it was in #233 — and implicitly verified, since the
+  // wp_site read above could not have succeeded otherwise. Deriving it properly needs a
+  // bootstrapped WordPress, which is exactly what is unavailable at this point.
+  const criticalTables = [
+    'wp_site', 'wp_blogs', 'wp_blogmeta', 'wp_sitemeta',
+    ...blogIds.map((id) => (id === '1' ? 'wp_options' : `wp_${id}_options`)),
+  ]
+
+  const countResidual = async (): Promise<number | null> => {
+    const r = await run(wp(job,
+      `db query "SELECT count(*) FROM (SELECT domain FROM wp_site UNION ALL SELECT domain FROM wp_blogs) d`
+      + ` WHERE domain <> '${newDomain}';" --skip-column-names`))
+    const m = (r.stdout.match(/^\s*(\d+)\s*$/m) ?? [])[1]
+    return m === undefined ? null : Number(m)
   }
 
-  // WP-CLI prints this reminder itself: the object cache still holds the old siteurl.
-  await runStream(wp(job, 'cache flush'), (line) => log('info', line))
-  await run(`terminus env:clear-cache ${env(job)} 2>&1`)
+  // Everything past this point has written, or may have written, to the database. A
+  // rewritten DB behind a stale object cache serves the OLD siteurl, which on job
+  // fca2af2b left the multidev 301-redirecting to production — strictly worse than the
+  // 500 this whole feature exists to remove. So the flush runs on every exit path,
+  // including the throws.
+  try {
+    // ── Phase 1: boot-critical, must succeed ────────────────────────────────
+    // --url must be the OLD domain here: it is the only host present in wp_blogs, so it
+    // is what lets WP-CLI bootstrap at all.
+    // --skip-columns=guid: guid is a permanent feed identifier and must not be rewritten.
+    let leftover: number | null = null
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const sr = await runStream(
+        wp(job, `search-replace ${shellEscape(oldDomain)} ${shellEscape(newDomain)}`
+          + ` ${criticalTables.join(' ')}`
+          + ` --url=${shellEscape(oldDomain)} --skip-columns=guid`),
+        (line) => log('info', line),
+      )
+
+      // The exit code is a hint, not the verdict. Exit 255 is SSH transport, and on
+      // fca2af2b it accompanied a rewrite that had fully succeeded — the residual count
+      // is the source of truth. search-replace is idempotent, so a retry after a partial
+      // run simply does less work and converges.
+      leftover = await countResidual()
+      if (leftover === 0) break
+
+      const why = leftover === null ? 'could not verify' : `${leftover} row(s) still stale`
+      if (attempt < 3) {
+        log('warn', `Critical rewrite attempt ${attempt}/3 inconclusive (exit ${sr.code}, ${why}) — retrying...`)
+        await new Promise((r) => setTimeout(r, 10_000))
+      } else {
+        throw new Error(`Multisite rewrite: ${why} after 3 attempts (last exit ${sr.code})`)
+      }
+    }
+    log('success', `Multisite routing tables now point at ${newDomain}`)
+
+    // ── Phase 2: bulk in-content rewrite, best-effort ───────────────────────
+    // --url must now be the NEW domain: phase 1 removed the old host from wp_blogs, so
+    // --url=<old> can no longer bootstrap. Same ordering trap as #233, inverted.
+    //
+    // Non-fatal by design. The network already boots; failing the whole run over
+    // cosmetic link rewriting would repeat the mistake this PR fixes.
+    log('status', 'Multisite: rewriting in-content links (best-effort)...')
+    let contentDone = false
+    for (let attempt = 1; attempt <= 3 && !contentDone; attempt++) {
+      const bulk = await runStream(
+        wp(job, `search-replace ${shellEscape(oldDomain)} ${shellEscape(newDomain)}`
+          + ` --network --url=${shellEscape(newDomain)} --skip-columns=guid`),
+        (line) => log('info', line),
+      )
+      if (bulk.code === 0) { contentDone = true; break }
+      if (attempt < 3) {
+        log('warn', `In-content rewrite attempt ${attempt}/3 failed (exit ${bulk.code}) — retrying...`)
+        await new Promise((r) => setTimeout(r, 10_000))
+      }
+    }
+    if (!contentDone) {
+      log('warn', `In-content link rewrite did not complete after 3 attempts — the network `
+        + `resolves correctly, but some post content may still link to ${oldDomain}. Not blocking the run.`)
+    }
+  } finally {
+    // WP-CLI prints this reminder itself: the object cache still holds the old siteurl.
+    //
+    // Never allowed to throw. If phase 1 failed with the network half-rewritten, `wp
+    // cache flush` may not be able to bootstrap — and a throw raised inside a `finally`
+    // REPLACES the original error, so the run would report a cache-flush failure instead
+    // of the rewrite failure that actually caused it. The edge cache clear is a terminus
+    // call and works regardless, so it is attempted separately.
+    try {
+      await runStream(wp(job, 'cache flush'), (line) => log('info', line))
+    } catch (e) {
+      log('warn', `Object cache flush failed: ${e instanceof Error ? e.message : String(e)}`)
+    }
+    try {
+      await run(`terminus env:clear-cache ${env(job)} 2>&1`)
+    } catch (e) {
+      log('warn', `Edge cache clear failed: ${e instanceof Error ? e.message : String(e)}`)
+    }
+  }
 
   // Confirm the network boots. The symptom being guarded against is a 500 from
   // ms_not_installed(), so a 5xx here means the rewrite did not take. A locked multidev
