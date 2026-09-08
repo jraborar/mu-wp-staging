@@ -89,3 +89,18 @@ export function upstreamSlug(upstream: string): string {
 export function updateModeFromUpstream(upstream: string): UpdateMode | undefined {
   return UPSTREAM_MODES[upstreamSlug(upstream)]
 }
+
+// Is this a drops-style Drupal site — core dropped into /code/core/ rather than
+// composer-managed? drops-7 and drops-8 are the two, and they are the sites whose
+// contrib modules this tool can list over drush. Everything else Drupal is IC-like,
+// where exclusions are Composer's business.
+//
+// Reads update_mode, NOT a substring of the upstream string. The checks this
+// replaces were `upstream.includes('drops-7')`, which only ever worked because
+// sites.upstream happened to hold the raw git URL (…/pantheon-upstreams/drops-7.git).
+// Now that the column stores the product label terminus actually reports, "Drupal 7"
+// carries no `drops-7` substring and those tests would silently reclassify the site
+// as Integrated Composer — showing an empty module list and skipping drush entirely.
+export function isDropsUpdateMode(mode: UpdateMode | null | undefined): boolean {
+  return mode === 'drops7' || mode === 'drupal8'
+}
