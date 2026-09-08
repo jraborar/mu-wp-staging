@@ -22,8 +22,11 @@ export type UpdateMode =
   | 'composer'        // Integrated Composer — drupal-composer-managed (IC, build_step=true)
   | 'drupal8'         // Drupal 8 — drops-8 upstream (drush mechanism)
   | 'empty'           // Empty — empty upstream, behaves like drops-8 (drush mechanism)
-  | 'drupal-composer' // Drupal with Composer — drupal-project upstream (IC-like, deprecated)
-  | 'drupal9'         // Drupal 9 — drupal-recommended upstream (IC-like, deprecated D9)
+  // These two were documented the other way round. Pantheon reports
+  // upstream_label "Drupal with Composer (deprecated)" for drupal-recommended and
+  // "Drupal 9 (deprecated)" for drupal-project — see UPSTREAM_MODES in lib/platform.ts.
+  | 'drupal-composer' // Drupal with Composer — drupal-recommended upstream (IC-like, deprecated)
+  | 'drupal9'         // Drupal 9 — drupal-project upstream (IC-like, deprecated D9)
   | 'none'            // No core updates
 export type DeployApproval = 'manual' | 'auto'
 

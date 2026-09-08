@@ -5,7 +5,9 @@
 // The REGISTRY table below is the real thing, not a set of illustrative cases:
 // every distinct (upstream repo, platform, update_mode) combination across the 28
 // sites in the production registry, all classified by hand before detection
-// existed. If detection disagrees with any row, detection is wrong.
+// existed. Detection reproduces 26 of them; the two `drupal-project` /
+// `drupal-recommended` rows were transposed by hand and detection follows
+// Pantheon's own upstream_label instead — see UPSTREAM_MODES in lib/platform.ts.
 //
 // The `framework` column was read from Pantheon for one representative site of
 // each upstream, so no value here is inferred:
@@ -28,26 +30,33 @@ function check(name: string, actual: unknown, expected: unknown) {
 const gh = (repo: string) =>
   `bde48795-b16d-443f-af01-8b1790caa1af: https://github.com/pantheon-upstreams/${repo}.git`
 
-// [upstream repo, framework, expected platform, expected update_mode, site count]
-const REGISTRY: [string, string, string, string, number][] = [
-  ['WordPress',               'wordpress',         'wp-single',    'upstream',        13],
-  ['drupal-composer-managed', 'drupal8',           'drupal',       'composer',         7],
-  ['wordpress-network',       'wordpress_network', 'wp-multisite', 'upstream',         2],
-  ['drops-7',                 'drupal',            'drupal',       'drops7',           2],
-  ['drupal-project',          'drupal8',           'drupal',       'drupal-composer',  1],
-  ['empty',                   'drupal8',           'drupal',       'empty',            1],
-  ['drops-8',                 'drupal8',           'drupal',       'drupal8',          1],
-  ['drupal-recommended',      'drupal8',           'drupal',       'drupal9',          1],
+// [upstream repo, framework, expected platform, expected update_mode, site count,
+//  update_mode stored in the registry when it DIFFERS from expected]
+const REGISTRY: [string, string, string, string, number, string?][] = [
+  ['WordPress',               'wordpress',         'wp-single',    'upstream',         13],
+  ['drupal-composer-managed', 'drupal8',           'drupal',       'composer',          7],
+  ['wordpress-network',       'wordpress_network', 'wp-multisite', 'upstream',          2],
+  ['drops-7',                 'drupal',            'drupal',       'drops7',            2],
+  ['empty',                   'drupal8',           'drupal',       'empty',             1],
+  ['drops-8',                 'drupal8',           'drupal',       'drupal8',           1],
+  // The two hand-classified rows that were transposed. Detection follows Pantheon's
+  // own upstream_label; the stored value is recorded here so the disagreement is
+  // visible rather than looking like a mapping bug.
+  ['drupal-project',          'drupal8',           'drupal',       'drupal9',           1, 'drupal-composer'],
+  ['drupal-recommended',      'drupal8',           'drupal',       'drupal-composer',   1, 'drupal9'],
 ]
 
 console.log('production registry — all 28 sites, hand-classified before detection existed')
-let covered = 0
-for (const [repo, framework, platform, mode, count] of REGISTRY) {
+let covered = 0, transposed = 0
+for (const [repo, framework, platform, mode, count, stored] of REGISTRY) {
   covered += count
+  if (stored) transposed += count
+  const note = stored ? ` [registry says ${stored} — transposed by hand]` : ''
   check(`${repo} (${count}x) → platform`, platformFromFramework(framework), platform)
-  check(`${repo} (${count}x) → update_mode`, updateModeFromUpstream(gh(repo)), mode)
+  check(`${repo} (${count}x) → update_mode${note}`, updateModeFromUpstream(gh(repo)), mode)
 }
 check('rows cover the whole registry', covered, 28)
+check('detection agrees with 26 of the 28 stored rows', covered - transposed, 26)
 
 console.log('\nupstream slug extraction')
 check('trailing .git stripped',   upstreamSlug(gh('drops-7')), 'drops-7')

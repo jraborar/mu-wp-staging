@@ -29,16 +29,36 @@ export function platformFromFramework(framework: string): Platform | undefined {
 }
 
 // Keyed on the upstream REPO SLUG rather than the product label: site:info omits
-// `upstream_label` on some sites, but the git URL is always present. This mapping
-// reproduces the hand-entered update_mode of all 28 registered sites exactly.
+// `upstream_label` on some sites, but the git URL is always present.
+//
+// Each mode is paired with the upstream whose `upstream_label` Pantheon actually
+// reports for it, read from a live site rather than inferred:
+//
+//   wordpress               "WordPress"                            → upstream
+//   wordpress-network       "WordPress Multisite"                  → upstream
+//   drops-7                 "Drupal 7"                             → drops7
+//   drops-8                 "Drupal 8"                             → drupal8
+//   drupal-composer-managed "Drupal (Composer Managed)"            → composer
+//   drupal-project          "Drupal 9 (deprecated)"                → drupal9
+//   drupal-recommended      "Drupal with Composer (deprecated)"    → drupal-composer
+//   empty                   "Empty Upstream"                       → empty
+//
+// NOTE the last two. `drupal-project` is Pantheon's "Drupal 9" and
+// `drupal-recommended` is its "Drupal with Composer" — the reverse of what the
+// UpdateMode comments in lib/sites.ts claimed, and of how the two affected sites
+// (hfu, saddlebackd9) were classified by hand. Corrected here to follow Pantheon,
+// since these two modes are labels only: nothing branches on the difference, and
+// lib/drupal.ts detects the real mechanism from the live env ("authoritative — the
+// registry's update_mode drifts, never guess"). The two live rows keep their
+// existing values regardless, because `existing` outranks detection.
 const UPSTREAM_MODES: Record<string, UpdateMode> = {
   'wordpress':               'upstream',
   'wordpress-network':       'upstream',
   'drops-7':                 'drops7',
   'drops-8':                 'drupal8',
   'drupal-composer-managed': 'composer',
-  'drupal-project':          'drupal-composer',
-  'drupal-recommended':      'drupal9',
+  'drupal-project':          'drupal9',
+  'drupal-recommended':      'drupal-composer',
   'empty':                   'empty',
 }
 
