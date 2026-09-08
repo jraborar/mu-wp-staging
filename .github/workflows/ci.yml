@@ -67,6 +67,15 @@ jobs:
       - name: Cadence check
         run: npm run check:cadence
 
+      # 36 assertions over lib/platform.ts — the framework → platform and
+      # upstream-slug → update_mode mapping registration classifies a new site
+      # with. Its table is the real production registry (every distinct
+      # combination across all 28 sites), so a mapping edit that contradicts a
+      # live site fails here. Same shape as the cadence check: fixed inputs, no
+      # env, no network, exits non-zero.
+      - name: Platform detection check
+        run: npm run check:platform
+
       # Deliberately NO env vars. Verified: the build succeeds with .env.local
       # moved aside, which is what CI actually has. The Dockerfile passes no
       # secret as a build ARG either — its only ARGs are the two Terminus
