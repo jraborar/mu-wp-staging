@@ -7,6 +7,7 @@ import {
   Calendar, CalendarClock, Trash2, Plus, Pause, X, Check, Globe, ExternalLink,
 } from 'lucide-react'
 import Header from '@/app/components/Header'
+import { isDropsUpdateMode } from '@/lib/platform'
 
 // mu-vrt hosts the per-site VRT config (paths + threshold). The registry rows
 // link out to it; override per environment if the service URL changes.
@@ -1543,7 +1544,7 @@ function SitesTab() {
           title={optionsFor.machine_name ?? optionsFor.site_name ?? optionsFor.site}
           onClose={() => setOptionsFor(null)}
         >
-          <UpdateOptionsTab site={optionsFor.site} platform={optionsFor.platform} upstream={optionsFor.upstream} />
+          <UpdateOptionsTab site={optionsFor.site} platform={optionsFor.platform} updateMode={optionsFor.update_mode} />
         </Modal>
       )}
     </div>
@@ -2210,10 +2211,11 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
   )
 }
 
-function UpdateOptionsTab({ site, platform, upstream }: { site: string; platform?: string | null; upstream?: string | null }) {
+function UpdateOptionsTab({ site, platform, updateMode }: { site: string; platform?: string | null; updateMode?: UpdateMode | null }) {
   const isDrupal = platform === 'drupal'
-  const up       = (upstream ?? '').toLowerCase()
-  const isIC     = isDrupal && !up.includes('drops-7') && !up.includes('drops-8')
+  // Keyed on update_mode, not on a substring of the upstream string — see
+  // isDropsUpdateMode in lib/platform.ts.
+  const isIC     = isDrupal && !isDropsUpdateMode(updateMode)
   const pluginLabel = isDrupal ? 'Modules' : 'Plugins'
 
   const [loading, setLoading]         = useState(false)
@@ -2233,7 +2235,7 @@ function UpdateOptionsTab({ site, platform, upstream }: { site: string; platform
     try {
       const params = new URLSearchParams({ site: site.trim() })
       if (platform) params.set('platform', platform)
-      if (upstream) params.set('upstream', upstream)
+      if (updateMode) params.set('update_mode', updateMode)
       const [pluginsRes, prefsRes] = await Promise.all([
         fetch(`/api/site-plugins?${params}`),
         fetch(`/api/prefs/${encodeURIComponent(site.trim())}`),

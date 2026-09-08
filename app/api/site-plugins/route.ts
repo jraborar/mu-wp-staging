@@ -2,6 +2,8 @@ import { type NextRequest } from 'next/server'
 import { run, cleanJson } from '@/lib/terminus'
 import { parseWpJson } from '@/lib/wordpress'
 import { requireCaller } from '@/lib/callerAuth'
+import { isDropsUpdateMode } from '@/lib/platform'
+import type { UpdateMode } from '@/lib/sites'
 
 export const runtime = 'nodejs'
 
@@ -12,16 +14,15 @@ interface WpPlugin {
   version: string
 }
 
-function isDrupalIC(platform: string | null, upstream: string | null): boolean {
-  if (platform !== 'drupal') return false
-  const up = (upstream ?? '').toLowerCase()
-  return !up.includes('drops-7') && !up.includes('drops-8')
+// Both keyed on update_mode, not on a substring of the upstream string — see
+// isDropsUpdateMode. `platform` still gates them, so a WordPress site with any
+// update_mode takes neither branch.
+function isDrupalIC(platform: string | null, updateMode: UpdateMode | null): boolean {
+  return platform === 'drupal' && !isDropsUpdateMode(updateMode)
 }
 
-function isDrupalDrops(platform: string | null, upstream: string | null): boolean {
-  if (platform !== 'drupal') return false
-  const up = (upstream ?? '').toLowerCase()
-  return up.includes('drops-7') || up.includes('drops-8')
+function isDrupalDrops(platform: string | null, updateMode: UpdateMode | null): boolean {
+  return platform === 'drupal' && isDropsUpdateMode(updateMode)
 }
 
 // Parse `drush pm-list --format=json` output into {name, title}[].
@@ -50,9 +51,9 @@ export async function GET(req: NextRequest) {
   const denied = await requireCaller(req)
   if (denied) return denied
 
-  const site     = req.nextUrl.searchParams.get('site')
-  const platform = req.nextUrl.searchParams.get('platform')
-  const upstream = req.nextUrl.searchParams.get('upstream')
+  const site       = req.nextUrl.searchParams.get('site')
+  const platform   = req.nextUrl.searchParams.get('platform')
+  const updateMode = req.nextUrl.searchParams.get('update_mode') as UpdateMode | null
 
   if (!site || !/^[a-zA-Z0-9_-]+$/.test(site)) {
     return Response.json({ error: 'Invalid site' }, { status: 400 })
@@ -62,12 +63,12 @@ export async function GET(req: NextRequest) {
   if (token) await run(`terminus auth:login --machine-token="${token}" 2>&1`)
 
   // IC Drupal: exclusions are managed by Composer, not by this tool.
-  if (isDrupalIC(platform, upstream)) {
+  if (isDrupalIC(platform, updateMode)) {
     return Response.json({ plugins: [], themes: [], ic: true })
   }
 
   // Drops7 / drops8 Drupal: list contrib modules and themes via drush.
-  if (isDrupalDrops(platform, upstream)) {
+  if (isDrupalDrops(platform, updateMode)) {
     const [modRes, themeRes] = await Promise.all([
       run(`terminus drush ${site}.live -- pm-list --type=module --no-core --format=json 2>&1`),
       run(`terminus drush ${site}.live -- pm-list --type=theme --format=json 2>&1`),

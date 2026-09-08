@@ -18,7 +18,12 @@
 // other Drupal upstream — composer-managed, drops-8, and `empty` alike — is 'drupal8'.
 // That is exactly why update_mode cannot be derived from framework and needs the
 // upstream slug.
-import { platformFromFramework, updateModeFromUpstream, upstreamSlug } from '../lib/platform.ts'
+import {
+  isDropsUpdateMode,
+  platformFromFramework,
+  updateModeFromUpstream,
+  upstreamSlug,
+} from '../lib/platform.ts'
 
 let pass = 0, fail = 0
 function check(name: string, actual: unknown, expected: unknown) {
@@ -96,6 +101,32 @@ check(' drupal8 padded',     platformFromFramework('  drupal8  '), 'drupal')
 // years, but the prefix match means a future 'drupal11' lands on 'drupal' too
 // rather than silently defaulting the site to WordPress.
 check('hypothetical drupal11', platformFromFramework('drupal11'), 'drupal')
+
+// The drops/IC split decides whether the Update Options tab lists contrib modules
+// over drush or reports "managed by Composer". Every mode is asserted explicitly:
+// this replaced `upstream.includes('drops-7')` tests that only worked while
+// sites.upstream held a git URL, so a silent flip here mislabels a live site.
+console.log('\ndrops-style vs IC-style Drupal (drives the module list)')
+for (const [mode, drops] of [
+  ['drops7',          true],   // drops-7  — core in /code/core/, drush
+  ['drupal8',         true],   // drops-8  — same, despite the composer.json
+  ['composer',        false],  // IC
+  ['drupal-composer', false],  // drupal-recommended, IC-like
+  ['drupal9',         false],  // drupal-project, IC-like
+  ['empty',           false],  // empty upstream — no dropped core to protect
+  ['upstream',        false],  // WordPress; platform gates this out anyway
+  ['none',            false],
+] as [string, boolean][]) {
+  check(`${mode} → drops-style = ${drops}`, isDropsUpdateMode(mode as never), drops)
+}
+check('null → not drops (never guesses IC-drush from nothing)', isDropsUpdateMode(null), false)
+check('undefined → not drops', isDropsUpdateMode(undefined), false)
+
+// Regression guard for the reason isDropsUpdateMode exists: a product label carries
+// no repo slug, so the substring tests this replaced would have called policyed1 IC.
+console.log('\nwhy a substring test on the upstream string cannot work')
+check('product label has no drops-7 substring', 'Drupal 7'.toLowerCase().includes('drops-7'), false)
+check('but its update_mode still says drops',   isDropsUpdateMode('drops7'), true)
 
 console.log(`\n${pass} passed, ${fail} failed`)
 if (fail > 0) process.exit(1)

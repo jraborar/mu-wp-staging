@@ -132,7 +132,11 @@ export async function resolveSiteMeta(site: string): Promise<SiteMeta> {
       const d = JSON.parse(cleanJson(info.stdout))
       meta.site_name    = d?.label ?? d?.name ?? undefined
       meta.machine_name = d?.name ?? undefined
-      meta.upstream     = d?.upstream_product_label ?? d?.upstream ?? undefined
+      // `upstream_label` — NOT `upstream_product_label`, which is not a key terminus
+      // emits. That typo meant this always fell through to the raw
+      // "<uuid>: <git url>" string, so all 28 registered sites stored a URL where a
+      // product label ("Drupal (Composer Managed)") was intended.
+      meta.upstream     = d?.upstream_label ?? d?.upstream ?? undefined
       meta.platform     = platformFromFramework(String(d?.framework ?? ''))
       // Derive from the raw `upstream` field, never from meta.upstream — that one
       // prefers a friendly product label, which carries no repo slug.
