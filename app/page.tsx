@@ -12,6 +12,13 @@ import Header from '@/app/components/Header'
 // link out to it; override per environment if the service URL changes.
 const MU_VRT_URL = process.env.NEXT_PUBLIC_MU_VRT_URL || 'https://mu-vrt-production.up.railway.app'
 
+// The editor opens in a new tab, and rel="noopener noreferrer" leaves it with
+// no way to tell where it came from — so name ourselves. Its Exit button reads
+// this to send the user back here when the browser won't let it close the tab.
+function vrtConfigUrl(site: string): string {
+  return `${MU_VRT_URL}/vrt/${encodeURIComponent(site)}?from=staging`
+}
+
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 type Tab = 'sites' | 'stage' | 'schedule' | 'upcoming' | 'history'
@@ -1144,7 +1151,7 @@ function SitesTab() {
             <button onClick={() => openHold(s)}
               className="text-xs text-pantheon-text-muted hover:text-pantheon-warning transition-colors" title="Pause managed updates for this site">Pause</button>
           )}
-          <a href={`${MU_VRT_URL}/vrt/${encodeURIComponent(s.site)}`} target="_blank" rel="noopener noreferrer"
+          <a href={vrtConfigUrl(s.site)} target="_blank" rel="noopener noreferrer"
             className="text-xs text-pantheon-text-muted hover:text-pantheon-info transition-colors inline-flex items-center gap-1" title="Configure VRT (paths + threshold)">
             <Globe className="w-3.5 h-3.5" /> VRT
           </a>
@@ -1430,7 +1437,7 @@ function SitesTab() {
                 <p className="font-mono text-xs text-pantheon-text-dim">No VRT paths configured.</p>
               )}
               {editing !== '__new__' && (
-                <a href={`${MU_VRT_URL}/vrt/${encodeURIComponent(form.site)}`} target="_blank" rel="noopener noreferrer"
+                <a href={vrtConfigUrl(form.site)} target="_blank" rel="noopener noreferrer"
                   className="inline-flex items-center gap-1 text-xs text-pantheon-yellow hover:underline">
                   Edit paths, thresholds &amp; exclusions in the VRT app <ExternalLink className="w-3 h-3" />
                 </a>
