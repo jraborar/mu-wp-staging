@@ -24,6 +24,7 @@ import {
   parseCoreUpdate,
   collapseByProject,
 } from '../lib/inventoryParse.ts'
+import { parseSiteFacts } from '../lib/siteFactsParse.ts'
 
 let pass = 0, fail = 0
 function check(name: string, actual: unknown, expected: unknown) {
@@ -142,6 +143,57 @@ check('a bare object is not a list', parseWpComponents('{"name":"x"}', 'plugin')
 check('rows with no name are dropped',
   parseWpComponents('[{"name":"","status":"active"}]', 'plugin'), [])
 check('unparseable drush yields nothing', parseDrushComponents('<html>', 'module'), [])
+
+// ── terminus site:info ─────────────────────────────────────────────────────
+// Verbatim output of `terminus site:info umary-prime-matters --format=json`,
+// captured 2026-09-09. Chosen because it is one of the 13 registry rows with
+// NO site_uuid — `id` here is the value the registry is missing.
+console.log('\nterminus site:info')
+const SITE_INFO = JSON.stringify({
+  id: '3069c332-d927-44f1-be94-72dbdd0c9126',
+  name: 'umary-prime-matters',
+  label: 'UMARY Prime Matters',
+  created: 1587408570,
+  framework: 'drupal8',
+  region: 'United States',
+  organization: '21783355-4ec5-49f6-96e7-fc5b62c45b87',
+  plan_name: 'Performance Small',
+  max_num_cdes: 15,
+  upstream: 'bde48795-b16d-443f-af01-8b1790caa1af: https://github.com/pantheon-upstreams/drupal-composer-managed.git',
+  upstream_label: 'Drupal (Composer Managed)',
+  holder_type: 'organization',
+  holder_id: '21783355-4ec5-49f6-96e7-fc5b62c45b87',
+  owner: '85e806c5-a330-4fd8-afdf-3c7b04237d0e',
+  frozen: false,
+  last_frozen_at: 1602730365,
+})
+const facts = parseSiteFacts(SITE_INFO)
+check('the site UUID is read', facts.id, '3069c332-d927-44f1-be94-72dbdd0c9126')
+check('the label is read', facts.label, 'UMARY Prime Matters')
+check('the organization is read', facts.organization, '21783355-4ec5-49f6-96e7-fc5b62c45b87')
+check('created stays a number', facts.created, 1587408570)
+check('frozen:false survives (not coerced to null)', facts.frozen, false)
+
+// holder_id repeats the organization on an org-held site, so it is a usable
+// fallback — but only there. A user-held site's holder_id is a PERSON, and
+// /organizations/<user-uuid> would 404.
+console.log('\n  organization fallback')
+const orgHeld = parseSiteFacts(JSON.stringify({
+  id: 'x', holder_type: 'organization', holder_id: 'org-uuid',
+}))
+check('falls back to holder_id when org-held', orgHeld.organization, 'org-uuid')
+const userHeld = parseSiteFacts(JSON.stringify({
+  id: 'x', holder_type: 'user', holder_id: 'person-uuid',
+}))
+check('but NEVER for a user-held site', userHeld.organization, null)
+
+console.log('\n  malformed site:info')
+// site:info answers with an object. An array means something else came back,
+// and reading field names off it would produce a body of nulls the UI renders
+// as blank fields.
+check('an array is not a site', parseSiteFacts('[{"id":"x"}]').id, null)
+check('unparseable input yields nulls', parseSiteFacts('nope').id, null)
+check('an empty string field becomes null', parseSiteFacts('{"id":"x","label":"  "}').label, null)
 
 console.log(`\n${pass} passed, ${fail} failed`)
 if (fail > 0) process.exit(1)
