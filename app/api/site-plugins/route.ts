@@ -1,50 +1,30 @@
 import { type NextRequest } from 'next/server'
-import { run, cleanJson } from '@/lib/terminus'
-import { parseWpJson } from '@/lib/wordpress'
+import { listInventory, type ComponentKind } from '@/lib/inventory'
 import { requireCaller } from '@/lib/callerAuth'
 import { isDropsUpdateMode } from '@/lib/platform'
 import type { UpdateMode } from '@/lib/sites'
 
 export const runtime = 'nodejs'
 
-interface WpPlugin {
-  name: string
-  title?: string
-  status: string
-  version: string
-}
+/**
+ * Components a site's exclusion picker can offer, as `{name, title}`.
+ *
+ * The listing itself moved to lib/inventory.ts, which /api/site-components also
+ * uses — one place now knows how to ask Pantheon what is installed, instead of
+ * two copies of the drush-JSON-shape handling drifting apart.
+ *
+ * THE OUTPUT SHAPE HERE IS DELIBERATELY UNCHANGED. No versions, no update
+ * state, and WordPress components still filtered to active|inactive: must-use
+ * plugins and drop-ins cannot be excluded from an update run, so listing them
+ * would offer a control that does nothing. Read the full inventory from
+ * /api/site-components.
+ */
 
-// Both keyed on update_mode, not on a substring of the upstream string — see
-// isDropsUpdateMode. `platform` still gates them, so a WordPress site with any
-// update_mode takes neither branch.
+// Kept keyed on update_mode rather than a substring of the upstream string —
+// see isDropsUpdateMode. `platform` still gates it, so a WordPress site with
+// any update_mode is never treated as Composer-managed.
 function isDrupalIC(platform: string | null, updateMode: UpdateMode | null): boolean {
   return platform === 'drupal' && !isDropsUpdateMode(updateMode)
-}
-
-function isDrupalDrops(platform: string | null, updateMode: UpdateMode | null): boolean {
-  return platform === 'drupal' && isDropsUpdateMode(updateMode)
-}
-
-// Parse `drush pm-list --format=json` output into {name, title}[].
-// D7 (drush 8): JSON array of objects with name/display_name/type keys.
-// D8+ (drush 9+): JSON object keyed by machine name with nested name/status keys.
-function parseDrushPmList(raw: string): { name: string; title: string }[] {
-  try {
-    const parsed = JSON.parse(cleanJson(raw))
-    if (Array.isArray(parsed)) {
-      return parsed.map((p: Record<string, string>) => ({
-        name: p.name ?? '',
-        title: p.display_name ?? p.title ?? p.name ?? '',
-      })).filter(p => p.name)
-    }
-    if (typeof parsed === 'object' && parsed !== null) {
-      return Object.entries(parsed).map(([key, val]) => {
-        const v = val as Record<string, string>
-        return { name: key, title: v.name ?? v.title ?? key }
-      })
-    }
-  } catch {}
-  return []
 }
 
 export async function GET(req: NextRequest) {
@@ -59,38 +39,24 @@ export async function GET(req: NextRequest) {
     return Response.json({ error: 'Invalid site' }, { status: 400 })
   }
 
-  const token = process.env.TERMINUS_TOKEN
-  if (token) await run(`terminus auth:login --machine-token="${token}" 2>&1`)
-
-  // IC Drupal: exclusions are managed by Composer, not by this tool.
+  // IC Drupal answers with the `ic` marker its caller already branches on.
+  // Checked before the inventory call so it still costs no Terminus round trip.
   if (isDrupalIC(platform, updateMode)) {
     return Response.json({ plugins: [], themes: [], ic: true })
   }
 
-  // Drops7 / drops8 Drupal: list contrib modules and themes via drush.
-  if (isDrupalDrops(platform, updateMode)) {
-    const [modRes, themeRes] = await Promise.all([
-      run(`terminus drush ${site}.live -- pm-list --type=module --no-core --format=json 2>&1`),
-      run(`terminus drush ${site}.live -- pm-list --type=theme --format=json 2>&1`),
-    ])
-    return Response.json({
-      plugins: parseDrushPmList(modRes.stdout),
-      themes:  parseDrushPmList(themeRes.stdout),
-    })
-  }
+  const inventory = await listInventory(site, platform, updateMode)
 
-  // WordPress: existing wp-cli behaviour.
-  const [pluginRes, themeRes] = await Promise.all([
-    run(`terminus wp ${site}.live -- plugin list --format=json --fields=name,title,status 2>&1`),
-    run(`terminus wp ${site}.live -- theme list --format=json --fields=name,title,status 2>&1`),
-  ])
+  // Drupal modules land in `plugins`, which is what this endpoint has always
+  // called the first list — the picker keys off position, not vocabulary.
+  const project = (kinds: ComponentKind[], filterInactive: boolean) =>
+    inventory.components
+      .filter((c) => kinds.includes(c.kind))
+      .filter((c) => !filterInactive || c.status === 'active' || c.status === 'inactive')
+      .map((c) => ({ name: c.name, title: c.title }))
 
-  const plugins = parseWpJson<WpPlugin>(cleanJson(pluginRes.stdout))
-    .filter(p => p.status === 'active' || p.status === 'inactive')
-    .map(p => ({ name: p.name, title: p.title || p.name }))
-
-  const themes = parseWpJson<WpPlugin>(cleanJson(themeRes.stdout))
-    .map(t => ({ name: t.name, title: t.title || t.name }))
-
-  return Response.json({ plugins, themes })
+  return Response.json({
+    plugins: project(['plugin', 'module'], inventory.source === 'wp-cli'),
+    themes:  project(['theme'], false),
+  })
 }
