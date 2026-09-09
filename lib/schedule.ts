@@ -1,5 +1,8 @@
 import { type StagingJob, appendLog } from '@/lib/jobStore'
-import { addBusinessDays, getManilaToday, manilaThreePM, formatAsManilaISO } from '@/lib/timezone'
+import {
+  addBusinessDays, getManilaToday, manilaThreePM, formatAsManilaISO,
+  isManilaWeekend, avoidManilaWeekend,
+} from '@/lib/timezone'
 import { getScheduledDeploymentTimes } from '@/lib/supabase'
 import { getSite } from '@/lib/sites'
 
@@ -58,9 +61,37 @@ async function findFreeSlot(base: Date): Promise<string> {
   return formatAsManilaISO(candidate)
 }
 
+/**
+ * findFreeSlot, with the no-weekend rule enforced on the way out.
+ *
+ * Enforced here rather than per lane because it is absolute, and because BOTH
+ * lanes can reach a weekend by different routes:
+ *
+ *  - the fast-track lane is pure clock arithmetic (`now + security_deploy_hours`),
+ *    so it lands on a Saturday or Sunday roughly two days in seven. Detected
+ *    Friday 16:00 it booked Saturday 17:00.
+ *  - the normal lane targets 15:00 on a business day, which looks safe, but
+ *    findFreeSlot walks forward an hour at a time on collisions and can roll past
+ *    midnight — Friday needs only 15:00–23:00 taken to spill into Saturday.
+ *
+ * One re-floor is sufficient. avoidManilaWeekend returns a Monday 15:00, and the
+ * collision walk would have to consume nine consecutive hours to leave that day —
+ * at which point it is Tuesday, still a weekday.
+ */
+async function findBookableSlot(base: Date): Promise<string> {
+  const slot = await findFreeSlot(avoidManilaWeekend(base))
+  if (!isManilaWeekend(new Date(slot))) return slot
+  return findFreeSlot(avoidManilaWeekend(new Date(slot)))
+}
+
 // When should this job's deploy land?
 //  - fast-track (security/upstream): now + security_deploy_hours (calendar hours)
 //  - normal: staging-day + deploy_days business days, at the 15:00 PHT slot
+//
+// Both go out through findBookableSlot, so neither can land on a weekend —
+// `security_deploy_hours` stays the target, the weekend is a floor on top of it.
+// The two are indistinguishable Monday to Thursday; the rule only bites on a
+// Friday or weekend detection, which is exactly when nobody is on shift.
 //
 // `siteDeployDays` is the registry value, and it sits between the job and the env
 // default for the same reason destination does in prebookDeployment: a manual run
@@ -78,11 +109,11 @@ async function computeScheduledFor(
   siteDeployDays?: number | null,
 ): Promise<string> {
   if (isFastTrack(job)) {
-    return findFreeSlot(new Date(Date.now() + securityHours * 60 * 60 * 1000))
+    return findBookableSlot(new Date(Date.now() + securityHours * 60 * 60 * 1000))
   }
   const days = job.deployDays ?? siteDeployDays ?? parseInt(process.env.MU_DEPLOY_SCHEDULE_DAYS ?? '1', 10)
   const targetDate = addBusinessDays(getManilaToday(), days)
-  return findFreeSlot(new Date(manilaThreePM(targetDate)))
+  return findBookableSlot(new Date(manilaThreePM(targetDate)))
 }
 
 // Look up a pending deployment in mu-deployment by (site, source multidev).

@@ -39,6 +39,36 @@ export function addBusinessDays(start: Date, days: number): Date {
   return result
 }
 
+// True when `date` falls on a Saturday or Sunday in Manila. Asked in Manila and
+// not UTC on purpose: a UTC Friday 17:00 is already Saturday 01:00 in Manila, and
+// it is the Manila working week that decides who is on shift.
+export function isManilaWeekend(date: Date): boolean {
+  const weekday = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Manila', weekday: 'short',
+  }).format(date)
+  return weekday === 'Sat' || weekday === 'Sun'
+}
+
+/**
+ * Pull a would-be deploy instant off a Manila weekend and onto the next business
+ * day's 15:00 slot. A weekday instant is returned unchanged.
+ *
+ * NO DEPLOY MAY LAND ON A WEEKEND. There is no MU shift, and neither the
+ * customer's developer nor their support is on either — so a failure sits unseen
+ * until Monday, and the on-call CSE who does see it cannot tell a platform fault
+ * from an MU staging/deployment one.
+ *
+ * 15:00 rather than preserving the original time-of-day: that is already the slot
+ * the normal deploy lane books (see manilaThreePM in computeScheduledFor), so a
+ * displaced security deploy lands where someone is expecting to look.
+ */
+export function avoidManilaWeekend(date: Date): Date {
+  if (!isManilaWeekend(date)) return date
+  // From a Saturday this advances Sun (not counted) then Mon (counted); from a
+  // Sunday, straight to Mon. Either way the next business day.
+  return new Date(manilaThreePM(addBusinessDays(date, 1)))
+}
+
 // Returns today's date as a Date anchored to Manila midnight (UTC+8).
 // Philippines does not observe DST — offset is always +08:00.
 export function getManilaToday(): Date {
