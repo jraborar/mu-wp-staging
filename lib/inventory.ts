@@ -1,7 +1,7 @@
 import { run, cleanJson } from '@/lib/terminus'
 import { isDropsUpdateMode } from '@/lib/platform'
 import {
-  parseWpComponents, parseDrushComponents, parseCoreUpdate,
+  parseWpComponents, parseDrushComponents, parseCoreUpdate, collapseByProject,
   type Component, type ComponentKind,
 } from '@/lib/inventoryParse'
 import type { UpdateMode } from '@/lib/sites'
@@ -36,8 +36,11 @@ export interface Inventory {
   /** Core / upstream update, when `wp core check-update` reports one. */
   core: { version: string; available: string } | null
   /**
-   * Set when components are managed by Composer rather than by this tool, so
-   * an inventory would imply a control that does not exist here.
+   * Set when components are managed by Composer rather than by this tool.
+   *
+   * These sites ARE still inventoried — drush answers the same on them. The
+   * flag says where an UPGRADE comes from (a Composer run and a pull request),
+   * not whether the list is available.
    */
   composerManaged: boolean
   /** Which mechanism produced the list, so the reader can judge it. */
@@ -57,23 +60,30 @@ export async function listInventory(
   const token = process.env.TERMINUS_TOKEN
   if (token) await run(`terminus auth:login --machine-token="${token}" 2>&1`)
 
-  // Integrated-Composer Drupal: contrib is pinned in composer.json and this
-  // tool manages no exclusions for it. Same posture /api/site-plugins takes.
-  if (platform === 'drupal' && !isDropsUpdateMode(updateMode)) {
-    return base('none', true)
-  }
-
   if (platform === 'drupal') {
+    // Integrated-Composer sites are listed TOO, which they were not at first.
+    //
+    // The original reasoning conflated two things: exclusions on an IC site are
+    // Composer's business, so /api/site-plugins rightly declines to offer them.
+    // But an INVENTORY is a read, and drush answers it identically on IC and
+    // drops — verified against baseball-hall-of-fame (167 modules) and hfu
+    // (243), both Integrated Composer. Returning an empty list told the reader
+    // "nothing to see" when the truth was "nobody asked".
+    //
+    // `composerManaged` still travels, so the console can say updates come
+    // through a Composer run and a pull request rather than from here.
+    const composerManaged = !isDropsUpdateMode(updateMode)
     const [mod, theme] = await Promise.all([
       run(`terminus drush ${site}.live -- pm-list --type=module --no-core --format=json 2>&1`),
       run(`terminus drush ${site}.live -- pm-list --type=theme --format=json 2>&1`),
     ])
     return {
-      ...base('drush'),
-      components: [
+      ...base('drush', composerManaged),
+      // One row per project, not per module. See collapseByProject.
+      components: collapseByProject([
         ...parseDrushComponents(cleanJson(mod.stdout), 'module'),
         ...parseDrushComponents(cleanJson(theme.stdout), 'theme'),
-      ],
+      ]),
     }
   }
 

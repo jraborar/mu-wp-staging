@@ -22,6 +22,7 @@ import {
   parseWpComponents,
   parseDrushComponents,
   parseCoreUpdate,
+  collapseByProject,
 } from '../lib/inventoryParse.ts'
 
 let pass = 0, fail = 0
@@ -85,21 +86,55 @@ check('unknown installed version is labelled, not blank',
   parseCoreUpdate('[{"version":"6.9.1"}]', null)?.version, 'unknown')
 
 // ── drush, both shapes ─────────────────────────────────────────────────────
-// D7 (drush 8) returns an array; D8+ (drush 9+) returns an object keyed by
+// D7 (drush 8) can return an array; D8+ (drush 9+) returns an object keyed by
 // machine name. Both families are live in the registry — policyed1 is drops-7,
-// micheal-watson-secretary-of-state is drops-8.
+// baseball-hall-of-fame and hfu are Integrated Composer.
+//
+// The DRUSH_IC rows below are verbatim from
+// `terminus drush baseball-hall-of-fame.live -- pm:list --type=module
+//  --no-core --format=json` (167 modules; four of them admin_toolbar's).
 console.log('\ndrush pm-list, both shapes')
 const d7 = parseDrushComponents(
-  '[{"name":"views","display_name":"Views","status":"Enabled"}]', 'module')
-check('D7 array shape parses', [d7.length, d7[0].name, d7[0].title], [1, 'views', 'Views'])
+  '[{"name":"views","display_name":"Views (views)","status":"Enabled","version":"7.x-3.22+78-dev"}]',
+  'module')
+check('D7 array shape parses', [d7.length, d7[0].name], [1, 'views'])
+// The earlier claim that drush reports no version was simply wrong.
+check('D7 version IS read', d7[0].version, '7.x-3.22+78-dev')
+check('  and the "(slug)" suffix is stripped from the title', d7[0].title, 'Views')
 
-const d8 = parseDrushComponents(
-  '{"pathauto":{"name":"Pathauto","status":"Enabled"}}', 'module')
-check('D8 object shape parses', [d8.length, d8[0].name, d8[0].title], [1, 'pathauto', 'Pathauto'])
-check('drush rows report no version', [d8[0].version, d8[0].available], [null, null])
-// drush pm-list says nothing about updates, so a dash here would be a claim
-// the data does not support.
-check('  and are unknown, never "current"', d8[0].updateUnknown, true)
+const DRUSH_IC = JSON.stringify({
+  admin_toolbar: { project: 'admin_toolbar', display_name: 'Admin Toolbar (admin_toolbar)', name: 'admin_toolbar', type: 'module', path: 'modules/contrib/admin_toolbar', status: 'Enabled', version: '3.6.3' },
+  admin_toolbar_links_access_filter: { project: 'admin_toolbar', display_name: 'Admin Toolbar Links Access Filter (admin_toolbar_links_access_filter)', name: 'admin_toolbar_links_access_filter', type: 'module', path: 'modules/contrib/admin_toolbar/admin_toolbar_links_access_filter', status: 'Disabled', version: '3.6.3' },
+  admin_toolbar_search: { project: 'admin_toolbar', display_name: 'Admin Toolbar Search (admin_toolbar_search)', name: 'admin_toolbar_search', type: 'module', path: 'modules/contrib/admin_toolbar/admin_toolbar_search', status: 'Disabled', version: '3.6.3' },
+  admin_toolbar_tools: { project: 'admin_toolbar', display_name: 'Admin Toolbar Extra Tools (admin_toolbar_tools)', name: 'admin_toolbar_tools', type: 'module', path: 'modules/contrib/admin_toolbar/admin_toolbar_tools', status: 'Enabled', version: '3.6.3' },
+  my_site_core: { project: 'my_site_core', display_name: 'My Site Core (my_site_core)', name: 'my_site_core', type: 'module', path: 'modules/custom/my_site_core', status: 'Enabled', version: '1.0.0' },
+})
+const ic = parseDrushComponents(DRUSH_IC, 'module')
+
+check('D8/IC object shape parses', ic.length, 5)
+check('version is read', ic[0].version, '3.6.3')
+check('project is carried', ic[1].project, 'admin_toolbar')
+check('a contrib path is not custom', ic[0].custom, false)
+check('a modules/custom path IS custom', ic[4].custom, true)
+// pm:security has been REMOVED from modern Drush ("use `composer audit`"),
+// which cannot run against a Pantheon environment. So no Drupal row can claim
+// to be current — that is a fact about Drush, not about the site.
+check('no available version is reported', ic[0].available, null)
+check('  so every Drupal row stays unknown', ic.every((c) => c.updateUnknown), true)
+
+console.log('\ncollapsing modules to projects')
+const collapsed = collapseByProject(ic)
+check('five modules become two projects', collapsed.length, 2)
+const at = collapsed.find((c) => c.name === 'admin_toolbar')!
+check('the project keeps its own version', at.version, '3.6.3')
+// Two of admin_toolbar's four sub-modules are Disabled. The project is running.
+check('Enabled wins over Disabled across sub-modules', at.status, 'Enabled')
+check('the count of absorbed rows is shown', at.title, 'Admin Toolbar +3')
+check('a single-module project gains no suffix',
+  collapsed.find((c) => c.name === 'my_site_core')!.title, 'My Site Core')
+// WordPress plugins have no `project`, so collapsing must leave them alone.
+check('components with no project pass through untouched',
+  collapseByProject(plugins).length, plugins.length)
 
 console.log('\nmalformed input')
 check('unparseable JSON yields no components', parseWpComponents('not json', 'plugin'), [])

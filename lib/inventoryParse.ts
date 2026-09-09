@@ -16,7 +16,7 @@ export interface Component {
   name: string
   title: string
   kind: ComponentKind
-  /** active | inactive | must-use | dropin | parent | enabled | disabled */
+  /** active | inactive | must-use | dropin | parent | Enabled | Disabled */
   status: string
   version: string | null
   /** The version available, when one is. */
@@ -30,6 +30,22 @@ export interface Component {
    * reassuring dash.
    */
   updateUnknown: boolean
+  /**
+   * Drupal only: the PROJECT this module belongs to.
+   *
+   * Drupal ships many modules per project — admin_toolbar alone contributes
+   * four, all at the same version. Updates happen per project, not per module,
+   * so a reader wants the project list; 243 module rows for one site is not an
+   * inventory anyone reads. Left undefined for WordPress, where the plugin IS
+   * the unit.
+   */
+  project?: string
+  /**
+   * Drupal only: true when the module lives outside modules/contrib — a custom
+   * module, which has no update channel at all and must not be counted as
+   * contrib that happens to be current.
+   */
+  custom?: boolean
 }
 
 /** WP-CLI plugin/theme list row, with the fields lib/inventory.ts requests. */
@@ -90,38 +106,123 @@ export function parseWpComponents(cleaned: string, kind: ComponentKind): Compone
 }
 
 /**
- * Parse `drush pm-list --format=json`. D7 (drush 8) returns an ARRAY of objects
- * with name/display_name keys; D8+ (drush 9+) returns an OBJECT keyed by
- * machine name with nested name/status. Both shapes are live in the registry.
+ * drush's `display_name` is "Admin Toolbar (admin_toolbar)" — the label with
+ * the machine name appended. The console shows the slug in its own column, so
+ * the suffix is stripped rather than printed twice.
+ */
+function cleanDrushTitle(display: string, name: string): string {
+  const stripped = display.replace(/\s*\(\s*[a-z0-9_]+\s*\)\s*$/i, '').trim()
+  return stripped || name
+}
+
+interface DrushRow {
+  name: string
+  title: string
+  status: string
+  version: string | null
+  project?: string
+  path?: string
+}
+
+/**
+ * Parse `drush pm-list --format=json` / `pm:list`.
  *
- * drush reports no version and no update state, so every row is marked unknown
- * rather than implied current.
+ * TWO SHAPES, both live in the registry: D7 (drush 8) can return an ARRAY of
+ * objects, while D8+ (drush 9+) returns an OBJECT keyed by machine name. Verified
+ * against policyed1 (drops-7) and baseball-hall-of-fame / hfu (Integrated
+ * Composer) — the latter two answer with 167 and 243 modules respectively.
+ *
+ * VERSION IS PRESENT and is now read. An earlier version of this file asserted
+ * drush reported none, which was simply wrong: policyed1 answers
+ * "7.x-3.22+78-dev" and the IC sites answer "3.6.3".
+ *
+ * AVAILABLE VERSIONS ARE NOT. `drush pm:security` has been REMOVED from modern
+ * Drush — it now errors with "Please use `composer audit`", which cannot run
+ * against a Pantheon environment. So every Drupal row keeps updateUnknown, and
+ * that is a statement about Drush, not about the site being current.
  */
 export function parseDrushComponents(cleaned: string, kind: ComponentKind): Component[] {
-  let rows: { name: string; title: string; status: string }[] = []
+  let rows: DrushRow[] = []
+  const read = (v: Record<string, string>, fallbackName: string): DrushRow => {
+    const name = v.name ?? fallbackName
+    return {
+      name,
+      title: cleanDrushTitle(v.display_name ?? v.title ?? name, name),
+      status: v.status ?? 'unknown',
+      version: v.version?.trim() || null,
+      project: v.project?.trim() || undefined,
+      path: v.path,
+    }
+  }
   try {
     const parsed = JSON.parse(cleaned)
     if (Array.isArray(parsed)) {
       rows = parsed
-        .map((p: Record<string, string>) => ({
-          name: p.name ?? '',
-          title: p.display_name ?? p.title ?? p.name ?? '',
-          status: p.status ?? 'unknown',
-        }))
+        .map((p: Record<string, string>) => read(p, p.name ?? ''))
         .filter((p) => p.name)
     } else if (typeof parsed === 'object' && parsed !== null) {
-      rows = Object.entries(parsed).map(([key, val]) => {
-        const v = (val ?? {}) as Record<string, string>
-        return { name: key, title: v.name ?? v.title ?? key, status: v.status ?? 'unknown' }
-      })
+      rows = Object.entries(parsed).map(([key, val]) =>
+        read((val ?? {}) as Record<string, string>, key),
+      )
     }
   } catch {
     /* a parse failure is not an update state — report nothing */
   }
   return rows.map((r) => ({
-    name: r.name, title: r.title, kind, status: r.status,
-    version: null, available: null, updateAvailable: false, updateUnknown: true,
+    name: r.name,
+    title: r.title,
+    kind,
+    status: r.status,
+    version: r.version,
+    available: null,
+    updateAvailable: false,
+    updateUnknown: true,
+    project: r.project,
+    // A module with no path is not evidence of anything, so absence is not
+    // treated as custom. Only an explicit non-contrib path counts.
+    custom: r.path ? !r.path.includes('/contrib/') : undefined,
   }))
+}
+
+/**
+ * Collapse Drupal modules to one row per PROJECT.
+ *
+ * 243 module rows is not something anyone reads, and it overstates the site:
+ * admin_toolbar's four sub-modules are one thing to update. Kept here rather
+ * than in the UI so `npm run check:inventory` covers it.
+ *
+ * The surviving row is the one whose name equals the project — the project's
+ * own module — falling back to the first seen. Status becomes Enabled if ANY
+ * sub-module is enabled, because a project with one enabled sub-module is
+ * running on that site.
+ */
+export function collapseByProject(components: Component[]): Component[] {
+  const byProject = new Map<string, Component[]>()
+  const passthrough: Component[] = []
+
+  for (const c of components) {
+    if (!c.project) { passthrough.push(c); continue }
+    const key = `${c.kind}:${c.project}`
+    const arr = byProject.get(key)
+    if (arr) arr.push(c)
+    else byProject.set(key, [c])
+  }
+
+  const collapsed = [...byProject.values()].map((group) => {
+    const lead = group.find((c) => c.name === c.project) ?? group[0]
+    const enabled = group.some((c) => /^enabled$/i.test(c.status))
+    const subs = group.length - 1
+    return {
+      ...lead,
+      name: lead.project!,
+      status: enabled ? 'Enabled' : lead.status,
+      // Surfaced in the title because the count is the reason the row is one
+      // row: it tells the reader nothing was dropped.
+      title: subs > 0 ? `${lead.title} +${subs}` : lead.title,
+    }
+  })
+
+  return [...collapsed, ...passthrough]
 }
 
 /**
