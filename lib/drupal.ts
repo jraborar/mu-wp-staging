@@ -271,7 +271,8 @@ function parseAudit(raw: string, constraints: Record<string, string>): SecurityA
 
 type Logger = (t: Parameters<typeof appendLog>[1], m: string) => void
 
-// ── Mechanism detection (reads the LIVE dev env, before any multidev exists) ──────
+// ── Mechanism detection (reads the live env — the one step 4 clones the multidev from,
+//    and the only long-lived env guaranteed to exist before that multidev does) ──────
 async function detectProfile(job: StagingJob, seedPhp: string, log: Logger): Promise<DrupalProfile> {
   const info = await run(`terminus site:info ${job.site} --format=json 2>&1`)
   let framework = '', upstreamLabel = '', machineName = job.site, siteLabel = job.site, maxMultidevs = 10
@@ -302,14 +303,42 @@ async function detectProfile(job: StagingJob, seedPhp: string, log: Logger): Pro
     // full `composer install` would install drupal/core into vendor/ alongside the
     // existing /code/core/, causing a fatal "Cannot redeclare" PHP error.
     'echo "MU_DROPS_CORE=".(file_exists("/code/core/includes/bootstrap.inc")?"1":"0")."\\n";'
+  // Probe LIVE, not dev. Step 4 creates the multidev with `multidev:create <site>.live`,
+  // so live's codebase IS the codebase we are about to update; dev is a different tree and
+  // a different database that this run never touches. Profiling dev only ever agreed with
+  // live by luck, and on cemsed9 the luck ran out — a corrupt theme registry in dev's DB
+  // made every bootstrap-requiring drush command there die, which read as "no composer.json"
+  // and routed an Integrated Composer site down the drush path for four consecutive runs.
+  //
   // Retry-guard the probe: a transient SSH failure here would read composer/build_step
   // as absent and misroute the site to the wrong mechanism.
-  const probe = await drushRun(`${job.site}.dev`, `php-eval ${shellEscape(probeExpr)}`, log)
+  const probe = await drushRun(`${job.site}.live`, `php-eval ${shellEscape(probeExpr)}`, log)
   const buildStep = /MU_BUILDSTEP=1/.test(probe.stdout)
   const hasComposer = /MU_COMPOSER=1/.test(probe.stdout)
   const hasDropsCore = /MU_DROPS_CORE=1/.test(probe.stdout)
   const drushMatch = probe.stdout.match(/MU_DRUSH=(\d+)/)
   const drushMajor = drushMatch ? parseInt(drushMatch[1], 10) : 0
+
+  // Fail CLOSED. Absent markers are indistinguishable from a genuine "no composer.json",
+  // so a probe that never ran used to fall through to `mechanism = 'drush'` and ship a
+  // no-op run as a success. Now that live is the only environment consulted, a broken live
+  // has no second opinion to hide behind and must be loud.
+  //
+  // Matching `=[01]` is what separates a real answer from the echo: terminus repeats the
+  // command in its own [notice] line, where each marker appears as `MU_COMPOSER=".(file_…`
+  // — the name is present but never followed by a 0 or a 1.
+  if (!/MU_BUILDSTEP=[01]/.test(probe.stdout) || !/MU_COMPOSER=[01]/.test(probe.stdout)) {
+    const detail = probe.stdout
+      .split('\n')
+      .map(l => l.trim())
+      .find(l => /error|exception|fatal|TypeError|denied|not found/i.test(l))
+    throw new Error(
+      `Could not read the Drupal update mechanism from ${job.site}.live — the probe returned ` +
+      `no MU_* markers (drush exit ${probe.code}). Refusing to guess: defaulting to the drush ` +
+      `mechanism here would silently skip every Composer update and report the run as ` +
+      `"no updates".${detail ? ` First error: ${detail}` : ''}`,
+    )
+  }
 
   let mechanism: Mechanism
   if (hasComposer && buildStep) mechanism = 'ic'
@@ -321,7 +350,7 @@ async function detectProfile(job: StagingJob, seedPhp: string, log: Logger): Pro
 
   // Core major decides cr vs cc all. `framework` is only "drupal7" / "drupal8" (8 for
   // ALL D8+), so read the real version from drush status.
-  const coreVersion = await drushCoreVersion(`${job.site}.dev`, log)
+  const coreVersion = await drushCoreVersion(`${job.site}.live`, log)
   const coreMajor = coreVersion ? parseInt(coreVersion.split('.')[0], 10) || 0 : (framework === 'drupal7' ? 7 : 0)
 
   log('info',
@@ -731,6 +760,20 @@ async function drushStrategy(
   setStep(job, 'Updating contrib (drush)', job.stepIndex + 1, job.stepTotal)
   log('status', 'Checking contrib module/theme updates (drush pm-updatestatus)...')
   const statusRaw = await drushRun(env(job), 'pm-updatestatus --format=json', log)
+  // A failed command leaves no JSON, and parseUpdateStatus answers "no `{`" with an empty
+  // list — which downstream prints as "all modules/themes current". That is a hard error
+  // wearing a clean result's clothes, and it is how cemsed9 reported four consecutive
+  // zero-update runs: routed here by mistake, its Drush 13 has no `pm-updatestatus` at all
+  // ("Command not defined", exit 1). Never claim "current" on the strength of output we
+  // could not read.
+  if (statusRaw.code !== 0) {
+    throw new Error(
+      `drush pm-updatestatus failed on ${env(job)} (exit ${statusRaw.code}) — refusing to ` +
+      `report "no contrib updates" from a command that did not run. If this site is ` +
+      `Composer-managed it should not be on the drush path at all; check the detected ` +
+      `mechanism in the profile line above.`,
+    )
+  }
   let projects = parseUpdateStatus(statusRaw.stdout).filter(p => p.name !== 'drupal' && p.type !== 'core')
 
   // Honour per-site skip lists (module machine names) if the site is registered.
