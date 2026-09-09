@@ -1,10 +1,14 @@
--- Reconcile the eight settings where `sites` and `staging_schedules` disagree.
+-- Reconcile the ten settings where `sites` and `staging_schedules` disagree.
 --
 -- Surfaced by mu-pmu-tool's per-site conflicts panel, which is the first thing
 -- that could show a divergence at all — a cross-site list cannot, because the
 -- comparison is per row pair. Audited 2026-09-09 across all 28 registry rows
 -- against their active schedule (28 schedules, exactly one active each, none
 -- with two — 017 holds).
+--
+-- Sections 1-4 are the eight both-set conflicts from that audit. Sections 5-6
+-- close the two destination rows it deferred (cemsed9, fia-tech), which needed
+-- a human to state the intended destination — given 2026-09-10.
 --
 -- ═══ WHICH SIDE ACTUALLY WINS ═══════════════════════════════════════════════
 -- This is the whole reason the eight rows are not one problem but three, and
@@ -117,24 +121,63 @@ update public.staging_schedules
    and active
    and deploy_destination = 'live';
 
+-- ── 5. cemsed9: registry destination 'live' → 'dev' ────────────────────────
+-- sites.deploy_destination = 'live' (never written — sql/001's default) vs
+-- sched.deploy_destination = 'dev'. The schedule is right; the registry is the
+-- column nobody set.
+--
+-- Deferred by the first pass pending someone stating whether a manual run here
+-- should reach production. Answered 2026-09-10: it should not. Managed Updates
+-- delivers to dev and the customer promotes to test/live themselves.
+--
+-- This was live, not theoretical. auto_stage is off, so the 'dev' schedule
+-- never fires and every run on this site is hand-started — which takes the
+-- registry path. The 2026-09-09 run pre-booked "mu-260909 → live on
+-- 2026-09-10 at 22:00 PHT" and self-cancelled only because it staged nothing.
+update public.sites
+   set deploy_destination = 'dev'
+ where site = 'cemsed9'
+   and deploy_destination = 'live';
+
+-- ── 6. fia-tech: registry destination 'live' → 'test' ──────────────────────
+-- Same shape as cemsed9 — sites.deploy_destination is the untouched 'live'
+-- default against a schedule of 'test' — and the same answer on 2026-09-10,
+-- except that this site's agreed destination is 'test', not 'dev'. A manual
+-- stage was reaching production where the schedule says test.
+--
+-- leadingage-wp needs no statement here: it already reads 'test' on BOTH
+-- sides, so there is nothing to reconcile.
+update public.sites
+   set deploy_destination = 'test'
+ where site = 'fia-tech'
+   and deploy_destination = 'live';
+
 -- ── what is deliberately NOT touched ──────────────────────────────────────
--- The 21 `default-drift` rows — 19 sites where sites.deploy_days is still
--- sql/001's `default 1` against a schedule of 2 or 3, plus fia-tech and
--- cemsed9 where sites.deploy_destination is the default 'live' against a
--- schedule of 'test'/'dev'.
+-- 1. The 19 `default-drift` rows where sites.deploy_days is still sql/001's
+--    `default 1` against a schedule of 2 or 3.
 --
--- These are not misconfigurations in the same sense: one column was never
--- written, which is a different fact from two columns being set to different
--- things. But they are NOT harmless either, and the earlier belief that they
--- were rested on "the schedule is the one that runs" — true only for a
--- scheduled run. A hand-started stage on any of the 19 books its deploy on the
--- untouched `default 1` instead of the schedule's 2 or 3, and a hand-started
--- stage on fia-tech deploys to 'live' where its schedule says 'test'.
+--    This is not a misconfiguration in the same sense: one column was never
+--    written, which is a different fact from two columns being set to
+--    different things. But it is NOT harmless, and the earlier belief that it
+--    was rested on "the schedule is the one that runs" — true only for a
+--    scheduled run. A hand-started stage on any of the 19 books its deploy on
+--    the untouched `default 1` instead of the schedule's 2 or 3.
 --
--- Backfilling 21 rows is a bigger, separate change: it needs the contracted
--- window confirmed per site rather than copied from a schedule row, and
--- fia-tech/cemsed9 need someone to say out loud whether a manual run on them
--- should reach production. Left for that pass.
+--    Backfilling needs the contracted window confirmed per site rather than
+--    copied from a schedule row. Left for that pass.
+--
+-- 2. The 24 sites that read 'live' on BOTH sides. They are internally
+--    consistent, so they are out of scope for a reconciliation migration.
+--    Normalizing the fleet to 'dev' was considered and explicitly DECLINED on
+--    2026-09-10. Recorded so this is not re-opened as an oversight: three of
+--    them have auto_stage on and therefore keep booking automated deploys
+--    straight to production — apexorderpickup, bowside-capital, scph.
+--
+-- 3. The two other places 'live' is baked in, for the same reason:
+--      sql/001:18        deploy_destination text not null default 'live'
+--      lib/schedule.ts   `|| process.env.MU_DEPLOY_DESTINATION || 'live'`
+--                        (MU_DEPLOY_DESTINATION is unset)
+--    So a newly registered site still inherits 'live'.
 
 commit;
 
