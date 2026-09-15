@@ -78,6 +78,35 @@ export function shellEscape(str: string): string {
   return "'" + str.replace(/'/g, "'\\''") + "'"
 }
 
+// Balanced span starting at `start` (which must be a '[' or '{').
+//
+// Balanced bracket matching, not a greedy regex — a regex fails when terminus
+// appends "2026-08-05 10:44:31 UTC[+0000]" on the same line as the JSON output.
+// Returns the rest of the string when the brackets never balance, so a truncated
+// payload still reaches the caller (and still fails its parse) as it always has.
+function balancedSpan(s: string, start: number): string {
+  let depth = 0
+  let inString = false
+  let escape = false
+
+  for (let i = start; i < s.length; i++) {
+    const c = s[i]
+    if (escape)   { escape = false; continue }
+    if (inString) {
+      if (c === '\\') escape = true
+      else if (c === '"') inString = false
+      continue
+    }
+    if (c === '"') { inString = true; continue }
+    if (c === '[' || c === '{') depth++
+    else if (c === ']' || c === '}') {
+      depth--
+      if (depth === 0) return s.slice(start, i + 1)
+    }
+  }
+  return s.slice(start)
+}
+
 export function cleanJson(raw: string): string {
   const cleaned = raw
     .split('\n')
@@ -90,32 +119,33 @@ export function cleanJson(raw: string): string {
     .join('\n')
     .trim()
 
-  // Use balanced bracket matching — greedy regex fails when terminus appends
-  // "2026-08-05 10:44:31 UTC[+0000]" on the same line as the JSON output.
-  const start = Math.min(
-    cleaned.includes('[') ? cleaned.indexOf('[') : Infinity,
-    cleaned.includes('{') ? cleaned.indexOf('{') : Infinity,
-  )
-  if (start === Infinity) return cleaned
-
-  let depth = 0
-  let inString = false
-  let escape = false
-
-  for (let i = start; i < cleaned.length; i++) {
+  // Try EVERY opening bracket and return the first balanced span that actually
+  // parses — don't commit to the first '[' in the output.
+  //
+  // The line filter above cannot catch a PHP notice that arrives mid-line or in a
+  // shape it doesn't recognise, and such a notice can carry brackets of its own.
+  // claybuck's `wp plugin list --context=admin` emits a backtrace fragment
+  // "[/code/wp-includes/class-wp-hook.php:355]" ahead of the payload; locking onto
+  // that bracket returned the fragment and threw the real JSON away, so 16
+  // available plugin updates were read as an empty list on two separate runs
+  // (mu-260820, mu-260915) and silently never applied.
+  let first: string | null = null
+  for (let i = 0; i < cleaned.length; i++) {
     const c = cleaned[i]
-    if (escape)   { escape = false; continue }
-    if (inString) {
-      if (c === '\\') escape = true
-      else if (c === '"') inString = false
-      continue
-    }
-    if (c === '"') { inString = true; continue }
-    if (c === '[' || c === '{') depth++
-    else if (c === ']' || c === '}') {
-      depth--
-      if (depth === 0) return cleaned.slice(start, i + 1)
+    if (c !== '[' && c !== '{') continue
+    const span = balancedSpan(cleaned, i)
+    if (first === null) first = span
+    try {
+      JSON.parse(span)
+      return span
+    } catch {
+      // Not the payload — keep scanning. Skip past this span's opening bracket
+      // only, since a valid object can legitimately start inside it.
     }
   }
-  return cleaned.slice(start)
+
+  // Nothing parsed. Hand back the first span (or the whole cleaned string when
+  // there were no brackets at all) — byte-identical to the old behaviour, so the
+  // caller logs and reports exactly what terminus said.
+  return first ?? cleaned
 }
