@@ -6,6 +6,7 @@ import {
   buildUpdateSummary,
   buildCommitMessage,
   parseWpJson,
+  parseWpJsonStrict,
   type UpdateSummary,
 } from '@/lib/wordpress'
 import { createStagingRecord, finalizeStagingRecord, getSiteUpdatePrefs, getSiteVrtEnabled } from '@/lib/supabase'
@@ -338,15 +339,24 @@ async function runPluginOrThemeUpdates(
     listResult = await run(wp(job, `${type} list --update=available --format=json`))
     adminContext = false
     if (listResult.code !== 0) {
-      log('error', `${label} list failed — skipping ${label.toLowerCase()} updates for this site`)
-      return { updated: [], skipped: [] }
+      log('error', `${label} list failed — cannot tell whether ${label.toLowerCase()} updates are available`)
+      return { updated: [], skipped: [], checkFailed: true }
     }
   }
 
   const cleaned = cleanJson(listResult.stdout)
   log('info', `${label} list cleaned: ${cleaned.slice(0, 300) || '(empty)'}`)
 
-  const available = parseWpJson<{ name: string; title?: string; version?: string }>(cleaned)
+  // Strict parse: an unreadable list is a FAILED CHECK, never "nothing to update".
+  // WP-CLI prints a real `[]` for an empty list, so anything else means we did not
+  // get an answer — and the old lenient parse turned that into a confident zero.
+  const available = parseWpJsonStrict<{ name: string; title?: string; version?: string }>(cleaned)
+  if (available === null) {
+    log('error',
+      `${label} list did not return valid JSON — refusing to assume there are no ` +
+      `${label.toLowerCase()} updates. Raw output: ${listResult.stdout.slice(0, 400).replace(/\n/g, ' ') || '(empty)'}`)
+    return { updated: [], skipped: [], checkFailed: true }
+  }
 
   // Full BEFORE state (every installed item) so we can detect ANY version change caused by
   // `${type} update --all` — not just entries in the pre-update "available" list, which can be
@@ -1172,7 +1182,25 @@ export async function executeJob(job: StagingJob): Promise<void> {
       )
     }
 
-    if (job.deployDestination === 'multidev') {
+    // The plugin/theme update CHECK could not be read — we do not know whether this
+    // site needed updates, and none were applied. That is a failed run, not a clean
+    // one: claybuck reported "0 plugin(s) updated" twice while 16 updates sat waiting,
+    // because an unparseable list was treated as an empty list. Decided here, ahead of
+    // the notifications, so no channel ever says "✅ Staging complete" about it.
+    const updateCheckFailed = Boolean(job.plugins.checkFailed || job.themes.checkFailed)
+    const failedCheckLabel = [job.plugins.checkFailed && 'plugin', job.themes.checkFailed && 'theme']
+      .filter(Boolean).join(' and ')
+    if (updateCheckFailed) {
+      const detail = `Could not read the ${failedCheckLabel} update list — nothing was applied, and ` +
+        `this site may still have updates pending. Re-stage after checking the raw output in the run log.`
+      log('error', detail)
+      postStep(`❌ *Staging failed* — ${failedCheckLabel} update check unreadable${vrtSummary}\n${detail}`)
+      void notifyInThread(
+        slackThreadTs,
+        buildFailedBlocks(siteLabel, job.multidev, detail, job.site !== siteLabel ? job.site : undefined),
+        `Staging failed on ${siteLabel} (${job.multidev}) — ${failedCheckLabel} update check unreadable`,
+      )
+    } else if (job.deployDestination === 'multidev') {
       // Multidev-only: mu_deploy never deploys (customer promotes it), so THIS
       // completion is the terminal cycle event — advance the cadence anchor.
       // Fast-track and test runs (-t suffix) are out-of-band and must not reset it.
@@ -1210,7 +1238,7 @@ export async function executeJob(job: StagingJob): Promise<void> {
     // and someone takes it to the customer. A run that also updated plugins/themes
     // did real work, so it stays completed with the conflict called out.
     const upstreamOnlyNoOp = job.upstreamConflict && !anythingUpdated
-    finishJob(job, upstreamOnlyNoOp ? 'failed' : 'completed')
+    finishJob(job, (upstreamOnlyNoOp || updateCheckFailed) ? 'failed' : 'completed')
     if (job.deployDestination !== 'multidev') {
       await reconcileDeployment(job, anythingUpdated)
       if (!anythingUpdated) {
@@ -1218,7 +1246,10 @@ export async function executeJob(job: StagingJob): Promise<void> {
         // Advance the cadence anchor even on a no-update run so the next scheduled
         // week is counted from today, not from the last actual deployment.
         // Fast-track and test runs (-t suffix) are out-of-band and must not reset it.
-        if (!job.securityFastTrack && !job.multidev.endsWith('-t')) {
+        // A failed update check must not advance it either — "we could not look" is
+        // not "there was nothing to do", and advancing would silently push the site
+        // a full cadence period out on the strength of a broken read.
+        if (!job.securityFastTrack && !job.multidev.endsWith('-t') && !updateCheckFailed) {
           await updateSite(job.site, { last_deployment: new Date().toISOString() }).catch(() => {})
         }
       }
@@ -1243,7 +1274,7 @@ export async function executeJob(job: StagingJob): Promise<void> {
       vrt_report_url: job.vrtReportUrl ?? undefined,
       vrt_flagged_count: job.vrtFlaggedCount ?? undefined,
       vrt_status: job.vrtStatus ?? undefined,
-      status: upstreamOnlyNoOp ? 'failed' : 'completed',
+      status: (upstreamOnlyNoOp || updateCheckFailed) ? 'failed' : 'completed',
       completed_at: new Date().toISOString(),
       logs: job.logs,
     })

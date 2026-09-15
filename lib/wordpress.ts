@@ -16,6 +16,10 @@ export interface SkippedItem {
 export interface UpdateSummary {
   updated: UpdatedItem[]
   skipped: SkippedItem[]
+  // True when the update CHECK itself failed, so this summary means "we don't know",
+  // not "there was nothing to do". Set it and the run is reported failed, the cadence
+  // anchor is left alone, and nobody reads the empty arrays as a clean bill of health.
+  checkFailed?: boolean
 }
 
 // WP-CLI plugin/theme list --format=json entry
@@ -60,6 +64,27 @@ export function parseWpJson<T>(raw: string): T[] {
     return Array.isArray(parsed) ? (parsed as T[]) : []
   } catch {
     return []
+  }
+}
+
+// parseWpJson, but a failure is reported instead of swallowed.
+//
+//   null → the output was not a JSON array at all: an unfiltered PHP notice, a
+//          fatal, truncated output, or nothing.
+//   []   → WP-CLI genuinely reported an empty list.
+//
+// Those two must never be conflated. `wp plugin list --update=available` prints a
+// real `[]` when nothing needs updating, so an unparseable payload is always a
+// broken read — and reading it as "no updates available" is what silently skipped
+// 16 plugin updates on claybuck twice. Callers that act on the result use this;
+// parseWpJson stays for the places where an empty fallback is genuinely fine.
+export function parseWpJsonStrict<T>(raw: string): T[] | null {
+  if (raw.trim() === '') return null
+  try {
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? (parsed as T[]) : null
+  } catch {
+    return null
   }
 }
 
