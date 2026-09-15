@@ -119,8 +119,8 @@ export function cleanJson(raw: string): string {
     .join('\n')
     .trim()
 
-  // Try EVERY opening bracket and return the first balanced span that actually
-  // parses — don't commit to the first '[' in the output.
+  // Try EVERY opening bracket and return the first balanced span that looks like a
+  // terminus/WP-CLI payload — don't commit to the first '[' in the output.
   //
   // The line filter above cannot catch a PHP notice that arrives mid-line or in a
   // shape it doesn't recognise, and such a notice can carry brackets of its own.
@@ -129,23 +129,62 @@ export function cleanJson(raw: string): string {
   // that bracket returned the fragment and threw the real JSON away, so 16
   // available plugin updates were read as an empty list on two separate runs
   // (mu-260820, mu-260915) and silently never applied.
-  let first: string | null = null
+  //
+  // "Parses as JSON" is NOT a strong enough test on its own, which cost a second
+  // run: claybuck's next list emitted a bare "[0]" ahead of the payload, that IS
+  // valid JSON, and it was returned as a one-element list — reported as "Found 1
+  // plugin(s) with available updates" when there were 16. So prefer a span whose
+  // SHAPE matches what these commands actually return: an object, or an array that
+  // is empty or holds objects. A scalar array is a fragment, never a payload.
+  // An EMPTY payload ("[]", "{}") only wins if no non-empty one exists anywhere,
+  // because "[]" is indistinguishable from a legitimate "nothing to update" and would
+  // otherwise shadow the real list: noise containing a bare "[]" — or the inner "[]"
+  // of a nested "[[]]" — would land us straight back on the original bug, an empty
+  // list read as "no updates available".
+  let firstSpan: string | null = null
+  let firstParsed: string | null = null
+  let firstEmptyPayload: string | null = null
   for (let i = 0; i < cleaned.length; i++) {
     const c = cleaned[i]
     if (c !== '[' && c !== '{') continue
     const span = balancedSpan(cleaned, i)
-    if (first === null) first = span
+    if (firstSpan === null) firstSpan = span
+    let parsed: unknown
     try {
-      JSON.parse(span)
-      return span
+      parsed = JSON.parse(span)
     } catch {
-      // Not the payload — keep scanning. Skip past this span's opening bracket
-      // only, since a valid object can legitimately start inside it.
+      // Not JSON at all — keep scanning. Advance one character only, since a valid
+      // payload can legitimately begin inside this span.
+      continue
+    }
+    if (isPayloadShaped(parsed)) {
+      if (!isEmptyPayload(parsed)) return span
+      if (firstEmptyPayload === null) firstEmptyPayload = span
+    } else if (firstParsed === null) {
+      firstParsed = span
     }
   }
 
-  // Nothing parsed. Hand back the first span (or the whole cleaned string when
-  // there were no brackets at all) — byte-identical to the old behaviour, so the
-  // caller logs and reports exactly what terminus said.
-  return first ?? cleaned
+  // No non-empty payload. Prefer a genuine empty one, then the first span that at
+  // least parsed, then the first span, then the whole cleaned string — so a caller
+  // still logs what terminus actually said instead of a silently different string.
+  return firstEmptyPayload ?? firstParsed ?? firstSpan ?? cleaned
+}
+
+// Does this parsed value have the shape terminus and WP-CLI actually emit for
+// --format=json? Objects (env:info, site:info) and arrays of records (plugin/theme
+// list, upstream:updates:list, drush pm:list) qualify; an empty array is a legitimate
+// "nothing here". An array of scalars does not: "[0]" or "[1,2]" lifted out of a PHP
+// notice parses cleanly but is never a payload.
+function isPayloadShaped(v: unknown): boolean {
+  const isRecord = (x: unknown) => x !== null && typeof x === 'object' && !Array.isArray(x)
+  if (Array.isArray(v)) return v.length === 0 || v.every(isRecord)
+  return isRecord(v)
+}
+
+// "[]" / "{}" — well-shaped but carrying nothing, so it must not outrank a real payload
+// found later in the same output. See the scan above.
+function isEmptyPayload(v: unknown): boolean {
+  if (Array.isArray(v)) return v.length === 0
+  return v !== null && typeof v === 'object' && Object.keys(v).length === 0
 }

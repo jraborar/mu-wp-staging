@@ -55,6 +55,34 @@ check('nothing parseable → first span (unchanged behaviour)',
 check('unbalanced payload → slice to end (unchanged behaviour)',
   cleanJson('[{"name":"akismet"'), '[{"name":"akismet"')
 
+console.log('\ncleanJson — junk that PARSES (the second regression)')
+// The gap that let the first fix through: every junk fixture above is unparseable, so
+// "first span that parses" looked sufficient. claybuck's mu-260915 re-run then emitted a
+// bare "[0]" ahead of the payload — valid JSON — and it was returned as the list, read
+// as one plugin against an actual 16. Shape, not just syntax.
+check('bare [0] ahead of payload is skipped',   cleanJson(`[0]\n${PAYLOAD}`), PAYLOAD)
+check('[0] mid-line, same line as payload',     cleanJson(`menu[0] ${PAYLOAD}`), PAYLOAD)
+check('scalar array [1,2] skipped',             cleanJson(`[1,2]\n${PAYLOAD}`), PAYLOAD)
+check('string array ["x"] skipped',             cleanJson(`["x"]\n${PAYLOAD}`), PAYLOAD)
+check('null array [null] skipped',              cleanJson(`[null]\n${PAYLOAD}`), PAYLOAD)
+check('nested array [[]] skipped',              cleanJson(`[[]]\n${PAYLOAD}`), PAYLOAD)
+check('bare number in braces is not an object', cleanJson(`[0] [1]\n${PAYLOAD}`), PAYLOAD)
+// An empty array IS a legitimate payload, so it must still win over later junk.
+check('genuine [] beats trailing scalar junk',  cleanJson('[]\n[0]'), '[]')
+// But an empty array must NEVER shadow a real payload found later — that is the
+// original bug wearing a different hat: "[]" read as "no updates available".
+check('stray [] does not shadow the payload',   cleanJson(`notice [] here\n${PAYLOAD}`), PAYLOAD)
+check('stray {} does not shadow the payload',   cleanJson(`notice {} here\n${PAYLOAD}`), PAYLOAD)
+check('stray {} does not shadow an object',     cleanJson('noise {}\n{"php_version":"8.3"}'), '{"php_version":"8.3"}')
+check('empty payload still wins when alone',    cleanJson('noise []'), '[]')
+// Object payloads (env:info, site:info) still resolve, and a scalar array before one
+// must not shadow it.
+check('[0] before an object payload',           cleanJson('[0]\n{"php_version":"7.4"}'), '{"php_version":"7.4"}')
+check('object payload with nested array',       cleanJson('[0]\n{"paths":["/","/about"]}'), '{"paths":["/","/about"]}')
+// Nothing payload-shaped at all: fall back to the first span that parsed, so the caller
+// still logs something real rather than a silently different string.
+check('only scalar arrays → first parsed span', cleanJson('noise [0] more [1]'), '[0]')
+
 console.log('\nparseWpJsonStrict — a failed read is never an empty list')
 check('valid array',        parseWpJsonStrict(PAYLOAD), JSON.parse(PAYLOAD))
 check('empty array is []',  parseWpJsonStrict('[]'), [])
@@ -63,8 +91,19 @@ check('empty string null',  parseWpJsonStrict(''), null)
 check('whitespace null',    parseWpJsonStrict('   \n '), null)
 check('non-array JSON null', parseWpJsonStrict('{"a":1}'), null)
 check('truncated null',     parseWpJsonStrict('[{"name":"akismet"'), null)
+// Second layer for the parseable-junk case: even if cleanJson hands back something that
+// parses, an array of scalars is a broken read and must fail closed here rather than
+// become a phantom one-item list.
+check('[0] is null, not a 1-item list', parseWpJsonStrict('[0]'), null)
+check('[1,2] is null',      parseWpJsonStrict('[1,2]'), null)
+check('["x"] is null',      parseWpJsonStrict('["x"]'), null)
+check('[null] is null',     parseWpJsonStrict('[null]'), null)
+check('[[]] is null',       parseWpJsonStrict('[[]]'), null)
+check('mixed records+scalar is null', parseWpJsonStrict('[{"name":"akismet"},0]'), null)
 // The contrast that matters: the lenient parser reports the same [] for both.
 check('lenient parser conflates junk with empty', parseWpJson('[/code/foo.php:355]'), [])
+// And the lenient parser happily returns the phantom list that caused this.
+check('lenient parser returns the phantom [0]', parseWpJson('[0]'), [0])
 
 console.log(`\n${pass} passed, ${fail} failed`)
 if (fail > 0) process.exit(1)

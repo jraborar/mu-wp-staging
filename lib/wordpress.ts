@@ -80,12 +80,23 @@ export function parseWpJson<T>(raw: string): T[] {
 // parseWpJson stays for the places where an empty fallback is genuinely fine.
 export function parseWpJsonStrict<T>(raw: string): T[] | null {
   if (raw.trim() === '') return null
+  let parsed: unknown
   try {
-    const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) ? (parsed as T[]) : null
+    parsed = JSON.parse(raw)
   } catch {
     return null
   }
+  if (!Array.isArray(parsed)) return null
+  // Every element must be a record. A WP-CLI list is an array of objects, so an array
+  // of scalars means we latched onto a fragment that merely happens to be valid JSON.
+  // Syntax alone was not enough: a bare "[0]" out of a PHP notice parsed fine and was
+  // read as a one-plugin list on claybuck's mu-260915 re-run, reported as "Found 1
+  // plugin(s)" against an actual 16 — and it took the two genuinely license-blocked
+  // plugins out of the skipped list with it. A broken read must fail closed here even
+  // when cleanJson hands back something parseable.
+  const isRecord = (x: unknown) => x !== null && typeof x === 'object' && !Array.isArray(x)
+  if (!parsed.every(isRecord)) return null
+  return parsed as T[]
 }
 
 export function buildUpdateSummary(
