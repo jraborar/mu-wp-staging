@@ -816,15 +816,22 @@ export async function executeJob(job: StagingJob): Promise<void> {
     // job.site is the registry key (UUID); the pantheonsite.io host needs the
     // machine name — resolve it (fallback to job.site covers pre-migration rows).
     let vrtMachineName = job.site
+    // How many paths this site captures. Carried to the compare phase because a
+    // RUNNING baseline reports no per-path rows to infer it from, so this registry
+    // count is the only thing that can size the wait (see lib/vrt.ts waitForStatus).
+    // vrt_paths is mu-vrt's own mirror of the vrt_targets it captures (it writes both
+    // in one update), so the length matches what the baseline will actually shoot.
+    let vrtPathCount = 0
     if (await getSiteVrtEnabled(job.site).catch(() => false)) {
       const vrec = await getSite(job.site).catch(() => null)
       vrtMachineName = vrec?.machine_name ?? job.site
+      vrtPathCount = vrec?.vrt_paths?.length ?? 0
       log('status', 'Capturing VRT baseline (pre-update)...')
       const vrt = await startBaseline(job.site, job.multidev, vrtMachineName)
       if (vrt) {
         job.vrtRunId = vrt.run_id
         job.vrtReportUrl = vrt.report_url
-        log('info', `VRT baseline started — report: ${vrt.report_url}`)
+        log('info', `VRT baseline started (${vrtPathCount} path(s)) — report: ${vrt.report_url}`)
       } else {
         log('warn', 'VRT baseline could not be started — skipping visual regression for this run')
       }
@@ -1116,7 +1123,7 @@ export async function executeJob(job: StagingJob): Promise<void> {
       // the final index rather than resetting the progress bar to 0/N.
       setStep(job, 'Running VRT comparison', STEPS.length, STEPS.length)
       log('status', 'Capturing VRT candidate (post-update) and diffing vs baseline...')
-      const result = await finishCompare(job.multidev, vrtMachineName, job.vrtRunId)
+      const result = await finishCompare(job.multidev, vrtMachineName, job.vrtRunId, vrtPathCount)
       if (!result) {
         job.vrtStatus = 'incomplete'
         log('warn', 'VRT comparison did not complete — see the report for status')

@@ -131,28 +131,47 @@ const COMPARE_MS_PER_PATH  = 60_000
 const MIN_WAIT_MS =  2 * 60_000
 const MAX_WAIT_MS = 20 * 60_000
 
-function budgetFor(paths: number, msPerPath: number): number {
+// Exported for scripts/vrt-check.ts — the budget is the whole mechanism here, and it
+// went unnoticed for weeks that nothing was feeding it a real path count.
+export function budgetFor(paths: number, msPerPath: number): number {
   if (paths <= 0) return MIN_WAIT_MS
   return Math.min(MAX_WAIT_MS, Math.max(MIN_WAIT_MS, paths * msPerPath))
 }
 
+export const VRT_WAIT_CONSTANTS = {
+  BASELINE_MS_PER_PATH, COMPARE_MS_PER_PATH, MIN_WAIT_MS, MAX_WAIT_MS,
+} as const
+
 async function waitForStatus(
   runId: string,
   want: VrtRun['status'] | VrtRun['status'][],
-  { msPerPath, everyMs = 5_000 }: { msPerPath: number; everyMs?: number },
+  { msPerPath, paths = 0, everyMs = 5_000 }: { msPerPath: number; paths?: number; everyMs?: number },
 ): Promise<VrtRun | null> {
   const wants = Array.isArray(want) ? want : [want]
-  // Start on the floor, then re-budget once the run tells us how many paths it
-  // has — the row exists from the moment phase 1 is created, so this is known on
-  // the first poll and costs no extra request.
-  let deadline = Date.now() + MIN_WAIT_MS
-  let sized = false
+
+  // Budget from the path count the CALLER passes in — the registry knows it before
+  // mu-vrt does.
+  //
+  // This used to be inferred from `run.results.length` on the first poll, on the
+  // stated assumption that "the row exists from the moment phase 1 is created, so
+  // this is known on the first poll". The row does exist, but mu-vrt inserts it with
+  // `results: []` and writes the results only in the same call that flips the status
+  // to 'awaiting_candidate' (its lib/runs.ts createRun + app/api/baseline executeBaseline).
+  // So while a baseline is running, results.length is ALWAYS 0: `sized` never became
+  // true, and the whole per-path budget was dead code for the baseline wait, which
+  // silently stayed on the 2-minute floor. claybuck (10 paths → 20 sequential captures)
+  // timed out at 121.9s, finishCompare returned null, and the run was left parked at
+  // 'awaiting_candidate' for good — report stuck on "Baseline captured — awaiting the
+  // post-update capture…", no comparison ever ran.
+  let deadline = Date.now() + budgetFor(paths, msPerPath)
+  // Only infer from the payload when the caller could not tell us (paths = 0).
+  let sized = paths > 0
   while (Date.now() < deadline) {
     const run = await getRun(runId)
     if (run && !sized) {
-      const paths = run.results?.length ?? 0
-      if (paths > 0) {
-        deadline = Date.now() + budgetFor(paths, msPerPath)
+      const seen = run.results?.length ?? 0
+      if (seen > 0) {
+        deadline = Date.now() + budgetFor(seen, msPerPath)
         sized = true
       }
     }
@@ -166,12 +185,23 @@ async function waitForStatus(
 // Phase 2 — capture the multidev AFTER updates and diff vs the stored baseline.
 // Waits for the baseline to be ready, kicks the compare, then polls to completion.
 // Returns the finalized run (with per-path results) or null.
-export async function finishCompare(multidev: string, machineName: string, runId: string): Promise<VrtRun | null> {
+//
+// `paths` is the site's configured VRT path count, from the registry. Pass it: it is
+// the only thing that sizes the baseline wait correctly, because a running baseline
+// reports no results to infer from (see waitForStatus).
+export async function finishCompare(
+  multidev: string,
+  machineName: string,
+  runId: string,
+  paths = 0,
+): Promise<VrtRun | null> {
   // The baseline capture almost always finished during the (multi-minute) update
   // cycle, but confirm it reached awaiting_candidate before comparing.
-  const ready = await waitForStatus(runId, 'awaiting_candidate', { msPerPath: BASELINE_MS_PER_PATH })
+  const ready = await waitForStatus(runId, 'awaiting_candidate', { msPerPath: BASELINE_MS_PER_PATH, paths })
   if (!ready) {
-    console.error('[vrt] baseline never reported a terminal status — skipping compare')
+    console.error(
+      `[vrt] baseline did not reach awaiting_candidate within ` +
+      `${Math.round(budgetFor(paths, BASELINE_MS_PER_PATH) / 1000)}s (${paths || 'unknown'} path(s)) — skipping compare`)
     return null
   }
   if (ready.status !== 'awaiting_candidate') {
@@ -199,5 +229,10 @@ export async function finishCompare(multidev: string, machineName: string, runId
     return null
   }
 
-  return waitForStatus(runId, ['completed', 'failed'], { msPerPath: COMPARE_MS_PER_PATH })
+  // The compare wait can also infer from results.length (by now the baseline has
+  // written them), but prefer the registry count for the same reason as above.
+  return waitForStatus(runId, ['completed', 'failed'], {
+    msPerPath: COMPARE_MS_PER_PATH,
+    paths: paths || ready.results?.length || 0,
+  })
 }
