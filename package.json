@@ -11,7 +11,8 @@
     "check:cadence": "node scripts/cadence-check.ts",
     "check:platform": "node scripts/platform-check.ts",
     "check:inventory": "node scripts/inventory-check.ts",
-    "check:terminus": "node scripts/terminus-check.ts"
+    "check:terminus": "node scripts/terminus-check.ts",
+    "check:vrt": "node scripts/vrt-check.ts"
   },
   "dependencies": {
     "@slack/socket-mode": "^3.0.0",
