@@ -13,7 +13,7 @@
 import { mkdtemp, mkdir, writeFile, stat, rm } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { parseInstallFailure, parsePatchFailure, repairMissingGitDir } from '../lib/composerErrors.ts'
+import { canReuseMultidev, parseInstallFailure, parsePatchFailure, repairMissingGitDir } from '../lib/composerErrors.ts'
 
 let pass = 0, fail = 0
 function check(name: string, actual: unknown, expected: unknown) {
@@ -111,6 +111,37 @@ check('unattributable failure → null rather than a guess',
 check('local .patch path is captured too',
   parsePatchFailure('- Applying patches for drush/drush\nCould not apply patch! Skipping. The error was: Cannot apply patch ./patches/foo.patch')?.patch,
   './patches/foo.patch')
+
+// canReuseMultidev gates a ~10 min shortcut, but a WRONG reuse stages on top of a previous
+// run's updates and feeds a deploy. So every ambiguous input must come back false: the cost
+// of a false negative is lost time, the cost of a false positive is a bad deploy.
+console.log('\ncanReuseMultidev')
+const SHA_A = 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678'
+const SHA_B = '9876543210fedcba9876543210fedcba98765432'
+const refs = (md: string, master: string) =>
+  `${md}\trefs/heads/mu-260916\n${master}\trefs/heads/master\n`
+
+check('tips identical → reuse (nothing was ever pushed)',
+  canReuseMultidev(refs(SHA_A, SHA_A), 'mu-260916'), true)
+check('multidev ahead of master → rebuild (a prior run pushed)',
+  canReuseMultidev(refs(SHA_B, SHA_A), 'mu-260916'), false)
+check('multidev ref missing → rebuild', canReuseMultidev(`${SHA_A}\trefs/heads/master\n`, 'mu-260916'), false)
+check('master ref missing → rebuild', canReuseMultidev(`${SHA_A}\trefs/heads/mu-260916\n`, 'mu-260916'), false)
+check('empty output (command produced nothing) → rebuild', canReuseMultidev('', 'mu-260916'), false)
+check('error text instead of refs → rebuild',
+  canReuseMultidev('fatal: could not read Username for https://...', 'mu-260916'), false)
+check('garbage that merely contains a sha → rebuild',
+  canReuseMultidev(`${SHA_A} some noise\n${SHA_A} more noise`, 'mu-260916'), false)
+// Prefix collisions must not be treated as the branch itself.
+check('refs/heads/mu-260916-t is not refs/heads/mu-260916',
+  canReuseMultidev(`${SHA_A}\trefs/heads/mu-260916-t\n${SHA_A}\trefs/heads/master\n`, 'mu-260916'), false)
+check('tags are not branches',
+  canReuseMultidev(`${SHA_A}\trefs/tags/mu-260916\n${SHA_A}\trefs/heads/master\n`, 'mu-260916'), false)
+check('uppercase shas compare equal',
+  canReuseMultidev(refs(SHA_A.toUpperCase(), SHA_A), 'mu-260916'), true)
+// A real ls-remote carries HEAD and other branches; they must not confuse the lookup.
+check('extra refs around the two we need are ignored',
+  canReuseMultidev(`${SHA_B}\tHEAD\n${SHA_A}\trefs/heads/mu-260916\n${SHA_B}\trefs/heads/mu-260909\n${SHA_A}\trefs/heads/master\n`, 'mu-260916'), true)
 
 console.log('\nrepairMissingGitDir')
 const workdir = await mkdtemp(join(tmpdir(), 'drupal-check-'))
