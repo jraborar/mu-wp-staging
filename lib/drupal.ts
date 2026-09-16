@@ -694,8 +694,30 @@ async function composerStrategy(
       // the version we are about to pin. inst is precisely this case: drupal/paragraphs
       // 1.20.0 carries SA-CONTRIB-2026-060 and -061 (access bypass, fixed in 1.21.0), so
       // the 1.23.0 upgrade its 2020 patch was blocking is the security fix.
-      const auditRaw = (await run(composer(`audit --locked --format=json 2>&1`))).stdout
-      const advisories = advisoriesFor(cleanJson(auditRaw), pkg)
+      // stderr is NOT merged here. This is the one place where polluting stdout with
+      // warnings could make a security check unreadable, and an unreadable check now blocks.
+      const audit = await run(composer(`audit --locked --format=json 2>/dev/null`))
+      const advisories = advisoriesFor(cleanJson(audit.stdout), pkg)
+
+      // Log the verdict every time, including the clean one. The previous version decided
+      // this silently, so when it got the decision wrong on inst run 78dc274c there was
+      // nothing in the log to show the check had even run.
+      log('info', `Advisory check before holding ${pkg} at ${lockedVer}: `
+        + (advisories === null ? 'UNREADABLE (composer audit gave no usable result)'
+          : advisories.length ? `AFFECTED — ${advisories.join(', ')}`
+          : 'clean'))
+
+      if (advisories === null) {
+        throw new Error(
+          `${pkg} cannot be updated: its pinned patch (${patchBlocked.title ?? patchBlocked.patch}) `
+          + `no longer applies to the newer release. Holding it at ${lockedVer} would normally be the `
+          + `answer, but the security audit that has to clear that version did not return a usable `
+          + `result, so we cannot show the held version is safe — and a safety check that could not `
+          + `complete has not passed. Re-run to retry the audit; if it keeps failing, refresh the `
+          + `patch against the new release or drop it if the issue has landed upstream. Nothing was `
+          + `committed.`,
+        )
+      }
       if (advisories.length) {
         throw new Error(
           `${pkg} cannot be updated: its pinned patch (${patchBlocked.title ?? patchBlocked.patch}) `

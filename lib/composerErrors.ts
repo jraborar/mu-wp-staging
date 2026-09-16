@@ -117,13 +117,36 @@ export function parsePatchFailure(output: string): PatchFailure | null {
   }
   if (!pkg) return null
 
-  // The URL may appear on the failure line, or on the preceding line that announced the
-  // patch (composer wraps long lines, so prefer a whole URL wherever one survives).
-  const window = lines.slice(Math.max(0, failIdx - 3), failIdx + 3).join('\n')
-  const patch = window.match(/(https?:\/\/\S+?\.patch|\.?\/?[\w./-]+\.patch)/)?.[1] ?? 'the pinned patch'
-  const title = lines.slice(Math.max(0, failIdx - 3), failIdx + 3)
-    .map(l => l.match(/Cannot apply patch (.+?) \(https?:/)?.[1])
-    .find(Boolean) ?? null
+  // Take the patch from the FAILURE LINE ITSELF, never from a window around it.
+  //
+  // This used to scan lines failIdx-3..failIdx+3 for anything ending in .patch, and preferred
+  // an http URL over a local path. When composer applies patches for several packages in a
+  // row, the lines just above a failure belong to the PREVIOUS package — so on inst run
+  // 78dc274c, drush/drush was correctly identified as the failing package but reported
+  // against paragraphs' patch URL, which had been printed three lines earlier:
+  //
+  //     - Applying patches for drupal/paragraphs
+  //       https://www.drupal.org/files/issues/...-3090200-22.patch   <- picked this
+  //     - Applying patches for drush/drush
+  //       ./patches/drush-batch-service-method-callbacks.patch       <- meant this
+  //      Could not apply patch! Skipping. The error was: Cannot apply patch ./patches/...
+  //
+  // The consultant then reads a hold on drush justified by a Paragraphs patch. Composer names
+  // the patch on the failure line, so use that and nothing else.
+  const failLine = lines[failIdx]
+  const patch =
+    failLine.match(/(?:The error was:\s*)?Cannot apply patch\s+(\S+\.patch|\S+\.diff|https?:\/\/\S+)/i)?.[1]
+    // The "In Patches.php" form puts the human title first and the patch in parentheses.
+    ?? lines.slice(failIdx, failIdx + 4).join('\n').match(/Cannot apply patch .+? \((\S+?)\)!/)?.[1]
+    ?? 'the pinned patch'
+
+  // Same rule for the title: only from a line that actually names this failure. Composer
+  // wraps long lines, so allow the patch in parentheses to be any token, not just a URL —
+  // drush's is a local ./patches/... path, which the old URL-only pattern never matched,
+  // silently falling back to the (wrong) patch string.
+  const title = lines.slice(failIdx, failIdx + 4)
+    .map(l => l.match(/Cannot apply patch (.+?) \(\S/)?.[1])
+    .find(t => t && !/^\S+\.(patch|diff)$/i.test(t)) ?? null
 
   return { pkg, patch, title }
 }
@@ -166,30 +189,47 @@ export function explainBlocker(output: string, pkg: string, coreMajor: number): 
 /**
  * Advisory IDs affecting a package, from `composer audit --locked --format=json`.
  *
- * Used to answer one question before holding a package back: is the version we would hold
- * it at known-vulnerable? Holding is normally the right move when a pinned patch blocks an
- * update — but not when the held version carries a security advisory, because then the
- * update we are declining to make IS the security fix, and holding would commit and deploy
- * a vulnerable release.
+ * Answers one question before holding a package back: is the version we would hold it at
+ * known-vulnerable? Holding is right when a stale patch blocks an ordinary update, and wrong
+ * when the held version is vulnerable — then the update being declined IS the security fix.
  *
- * inst is exactly that case: drupal/paragraphs 1.20.0 is affected by SA-CONTRIB-2026-060
- * and SA-CONTRIB-2026-061 (access bypass, both fixed in 1.21.0), so the 1.23.0 upgrade the
- * stale 2020 patch was blocking is a security update.
+ * TRI-STATE, and the `null` case is the whole point:
  *
- * Returns [] when the package is clean, when the JSON is unparseable, or when audit failed
- * — a missing audit must not be read as "vulnerable", or every run would stop. The caller
- * treats a NON-EMPTY result as the blocking signal, so an unreadable audit degrades to
- * today's hold behaviour rather than to a spurious failure.
+ *   string[] (non-empty) — vulnerable. Refuse to hold.
+ *   []                   — audit read successfully, package is clean. Safe to hold.
+ *   null                 — the audit could not be read. NOT a synonym for clean.
+ *
+ * The first version of this returned [] for both "clean" and "unreadable", reasoning that an
+ * unknown result should not halt every run. That is fail-OPEN, and it defeated the guard on
+ * the very case it was written for: inst run 78dc274c held drupal/paragraphs at 1.20.0 and
+ * completed, even though the end-of-run audit in the same run reported SA-CONTRIB-2026-060
+ * and -061 against that exact version. The check was silent and the vulnerable version was
+ * staged for deploy.
+ *
+ * A security gate that cannot complete its check has not passed it. Callers must treat null
+ * as blocking, the same as a hit — this repo's rule is that safety checks fail closed.
+ *
+ * "Readable" means the payload actually looks like a composer audit result: a parsed object
+ * carrying an `advisories` key. Anything else — a warning that happens to parse, an error
+ * blob, an empty string — is null, not []. Shape, not just syntax.
  */
-export function advisoriesFor(auditJson: string, pkg: string): string[] {
+export function advisoriesFor(auditJson: string, pkg: string): string[] | null {
   let parsed: unknown
-  try { parsed = JSON.parse(auditJson.slice(auditJson.indexOf('{'))) } catch { return [] }
-  const advisories = (parsed as { advisories?: Record<string, unknown> })?.advisories
-  const items = advisories?.[pkg]
-  if (!Array.isArray(items)) return []
+  try { parsed = JSON.parse(auditJson) } catch { return null }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+
+  const advisories = (parsed as { advisories?: unknown }).advisories
+  // A composer audit result always carries `advisories`, even when empty. Its absence means
+  // we are looking at something else, and "something else" is not evidence of safety.
+  if (!advisories || typeof advisories !== 'object' || Array.isArray(advisories)) return null
+
+  const items = (advisories as Record<string, unknown>)[pkg]
+  if (items === undefined) return []          // audit read, package not listed → clean
+  if (!Array.isArray(items)) return null      // listed but in a shape we do not understand
+
   return items
     .map(it => {
-      const o = it as Record<string, string>
+      const o = it as Record<string, string> | null
       return o?.advisoryId || o?.cve || null
     })
     .filter((id): id is string => Boolean(id))
