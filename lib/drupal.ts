@@ -1,5 +1,5 @@
 import { readFile, writeFile } from 'fs/promises'
-import { canReuseMultidev, parseInstallFailure, parsePatchFailure, repairMissingGitDir } from '@/lib/composerErrors'
+import { canReuseMultidev, parseInstallFailure, parsePatchFailure, pinPackage, repairMissingGitDir } from '@/lib/composerErrors'
 import {
   type StagingJob,
   type SecurityAdvisory,
@@ -645,15 +645,52 @@ async function composerStrategy(
       if (installFailure) throw new Error(`Staging failed during Composer install: ${installFailure}`)
     }
 
-    const blockers = patchBlocked
-      ? [patchBlocked.pkg]
-      : parseConflictingPackages(phaseOutput).filter(p => !autoSkipped.includes(p))
+    const cjson = JSON.parse(await readFile(`${workdir}/composer.json`, 'utf8'))
+    let stripped = 0
+
+    if (patchBlocked) {
+      // PIN the package, do not delete it.
+      //
+      // Deleting only drops the ROOT CONSTRAINT — it does not hold a version. The package
+      // stays in the graph via whatever else requires it, Composer re-resolves it to the
+      // same new release, cweagans patches it again (extra.patches still names it) and we
+      // fail identically. That is precisely what happened on inst run f3be3b27: paragraphs
+      // was dropped from require, but drupal/paragraphs_browser 1.4.0 requires
+      // "drupal/paragraphs": "*", so Composer installed 1.23.0 again and the same patch
+      // failed a second time — one retry round wasted, then the generic throw.
+      //
+      // An exact version constraint is what actually holds it at the release whose patch
+      // applies. If the package was only ever transitive, this ADDS a root requirement,
+      // which is the normal Composer way to hold a dependency down.
+      const pkg = patchBlocked.pkg
+      const lockedVer = origLock.get(pkg)?.version
+      if (!lockedVer) {
+        throw new Error(`Composer could not apply the pinned patch for ${pkg} (${patchBlocked.patch}), and ${pkg} is not in composer.lock, so it cannot be held at a known-good version. Refresh or remove the patch.`)
+      }
+      const section = pinPackage(cjson, pkg, lockedVer)
+      autoSkipped.push(pkg)
+
+      const bucket = origLock.get(pkg)?.type === 'drupal-theme' ? 'themes' : 'plugins'
+      job[bucket].skipped.push({
+        name: pkg, title: pkg,
+        reason: `held at ${lockedVer} — pinned patch no longer applies to the newer release `
+          + `(${patchBlocked.title ?? patchBlocked.patch}). Refresh the patch against the new `
+          + `version (a drupal.org issue-fork MR diff tracks the branch; a dated static .patch `
+          + `does not) or drop it if the fix has landed upstream, then re-run.`,
+      })
+      log('warn', `⚠ Holding ${pkg} at ${lockedVer} (pinned in ${section}): its pinned patch no longer applies`)
+      log('warn', `   patch: ${patchBlocked.patch}`)
+      log('warn', `   Everything else still updates. To unblock ${pkg}, refresh that patch against the newer release or remove it if upstream has fixed the issue.`)
+      stripped++
+      await writeFile(`${workdir}/composer.json`, JSON.stringify(cjson, null, 4))
+      continue
+    }
+
+    const blockers = parseConflictingPackages(phaseOutput).filter(p => !autoSkipped.includes(p))
     if (!blockers.length) {
       throw new Error('Composer could not resolve module/theme/dependency updates — see the log above. A failed solve must not be reported as "no updates".')
     }
 
-    const cjson = JSON.parse(await readFile(`${workdir}/composer.json`, 'utf8'))
-    let stripped = 0
     for (const pkg of blockers) {
       for (const section of ['require', 'require-dev'] as const) {
         if (cjson[section]?.[pkg]) {
@@ -661,29 +698,19 @@ async function composerStrategy(
           delete cjson[section][pkg]
           autoSkipped.push(pkg)
           const bucket = origLock.get(pkg)?.type === 'drupal-theme' ? 'themes' : 'plugins'
-          const reason = patchBlocked
-            ? `held at ${lockedVer} — pinned patch no longer applies to the newer release `
-              + `(${patchBlocked.title ?? patchBlocked.patch}). Refresh the patch against the new `
-              + `version (a drupal.org issue-fork MR diff tracks the branch; a dated static .patch `
-              + `does not) or drop it if the fix has landed upstream, then re-run.`
-            : `no Drupal ${profile.coreMajor} compatible release — held at ${lockedVer}`
-          job[bucket].skipped.push({ name: pkg, title: pkg, reason })
-          if (patchBlocked) {
-            log('warn', `⚠ Holding ${pkg} at ${lockedVer}: its pinned patch no longer applies`)
-            log('warn', `   patch: ${patchBlocked.patch}`)
-            log('warn', `   Everything else still updates. To unblock ${pkg}, refresh that patch against the newer release or remove it if upstream has fixed the issue.`)
-          } else {
-            log('warn', `⚠ Skipping ${pkg} (held at ${lockedVer}): no Drupal ${profile.coreMajor} compatible release`)
-          }
+          job[bucket].skipped.push({
+            name: pkg, title: pkg,
+            reason: `no Drupal ${profile.coreMajor} compatible release — held at ${lockedVer}`,
+          })
+          log('warn', `⚠ Skipping ${pkg} (held at ${lockedVer}): no Drupal ${profile.coreMajor} compatible release`)
           stripped++
           break
         }
       }
     }
+    // Patch failures never reach here — that branch pins and continues above.
     if (!stripped) {
-      throw new Error(patchBlocked
-        ? `Composer could not apply the pinned patch for ${patchBlocked.pkg} (${patchBlocked.patch}), and that package is not a root requirement in composer.json, so it cannot be held back automatically. Refresh or remove the patch.`
-        : 'Composer could not resolve module/theme/dependency updates — blocking packages could not be identified in composer.json.')
+      throw new Error('Composer could not resolve module/theme/dependency updates — blocking packages could not be identified in composer.json.')
     }
     await writeFile(`${workdir}/composer.json`, JSON.stringify(cjson, null, 4))
   }

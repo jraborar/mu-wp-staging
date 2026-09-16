@@ -13,7 +13,7 @@
 import { mkdtemp, mkdir, writeFile, stat, rm } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { canReuseMultidev, parseInstallFailure, parsePatchFailure, repairMissingGitDir } from '../lib/composerErrors.ts'
+import { canReuseMultidev, parseInstallFailure, parsePatchFailure, pinPackage, repairMissingGitDir } from '../lib/composerErrors.ts'
 
 let pass = 0, fail = 0
 function check(name: string, actual: unknown, expected: unknown) {
@@ -142,6 +142,47 @@ check('uppercase shas compare equal',
 // A real ls-remote carries HEAD and other branches; they must not confuse the lookup.
 check('extra refs around the two we need are ignored',
   canReuseMultidev(`${SHA_B}\tHEAD\n${SHA_A}\trefs/heads/mu-260916\n${SHA_B}\trefs/heads/mu-260909\n${SHA_A}\trefs/heads/master\n`, 'mu-260916'), true)
+
+// The regression guard for inst run f3be3b27. The first version of the hold-back DELETED
+// the package from require, which only drops the root constraint — paragraphs_browser 1.4.0
+// requires "drupal/paragraphs": "*", so Composer resolved 1.23.0 again and the same patch
+// failed a second time. The package must come out PRESENT and PINNED, never absent.
+console.log('\npinPackage')
+{
+  const cjson: Record<string, unknown> = {
+    require: { 'drupal/core-recommended': '^11', 'drupal/paragraphs': '^1.20' },
+    'require-dev': { 'drupal/devel': '^5' },
+  }
+  check('pins in require, replacing the loose constraint',
+    pinPackage(cjson, 'drupal/paragraphs', '1.20.0'), 'require')
+  check('the package is still PRESENT (not deleted)',
+    (cjson.require as Record<string, string>)['drupal/paragraphs'], '1.20.0')
+  check('siblings in require untouched',
+    (cjson.require as Record<string, string>)['drupal/core-recommended'], '^11')
+
+  check('a require-dev package pins in require-dev, not require',
+    pinPackage(cjson, 'drupal/devel', '5.1.2'), 'require-dev')
+  check('require-dev entry pinned',
+    (cjson['require-dev'] as Record<string, string>)['drupal/devel'], '5.1.2')
+  check('pinning require-dev did not leak into require',
+    (cjson.require as Record<string, string>)['drupal/devel'], 'undefined')
+
+  // Purely transitive package: must gain a root requirement, which is how you hold one down.
+  check('a transitive-only package is ADDED to require',
+    pinPackage(cjson, 'drupal/paragraphs_browser', '1.3.0'), 'require')
+  check('transitive package now pinned at the locked version',
+    (cjson.require as Record<string, string>)['drupal/paragraphs_browser'], '1.3.0')
+
+  // composer.json with no require block at all must not throw.
+  const bare: Record<string, unknown> = {}
+  check('missing require block is created', pinPackage(bare, 'drupal/x', '1.0.0'), 'require')
+  check('pin landed in the created block',
+    (bare.require as Record<string, string>)['drupal/x'], '1.0.0')
+  // dev constraints are valid pins too
+  check('dev version pins verbatim',
+    (() => { const c: Record<string, unknown> = { require: {} }; pinPackage(c, 'drupal/field_tools', 'dev-1.x'); return (c.require as Record<string, string>)['drupal/field_tools'] })(),
+    'dev-1.x')
+}
 
 console.log('\nrepairMissingGitDir')
 const workdir = await mkdtemp(join(tmpdir(), 'drupal-check-'))
