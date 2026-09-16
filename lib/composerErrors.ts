@@ -35,6 +35,46 @@ export function parseInstallFailure(output: string): string | null {
   return null
 }
 
+/**
+ * Decide whether an existing multidev can be reused instead of deleted and rebuilt.
+ *
+ * Rebuilding a multidev costs ~10-11 minutes (measured on inst: 9m47s and 10m55s on two
+ * consecutive runs, roughly 60% of each run's total). The whole Composer update it exists
+ * to serve takes under 4. On a retry that rebuild is usually pure waste, because the only
+ * `git push` in the pipeline happens AFTER both Composer phases — so a run that fails
+ * while resolving never wrote a byte to the multidev, and the environment still holds
+ * exactly what it held when it was created.
+ *
+ * The safe test is whether the multidev branch tip is still identical to master's tip.
+ * Our push always lands our commits at the tip, so equality proves nothing of ours was
+ * pushed. Inherited history does not fool it: once a staging run reaches live, master's
+ * own history contains "MU Staging" commits too, which is exactly why this compares SHAs
+ * rather than looking for our author.
+ *
+ * FAILS CLOSED, deliberately. Reuse requires positive proof of two resolvable, equal
+ * SHAs. Anything else — a failed command, an unparseable ref list, a missing ref, or a
+ * multidev that Pantheon branched from live's deployed commit rather than master's tip —
+ * returns false and the caller rebuilds exactly as it does today. The worst case is
+ * losing the optimization; it can never be reusing a dirty environment. That matters
+ * because a wrongly-reused multidev would stage on top of a previous run's updates and
+ * feed a deploy.
+ *
+ * @param refs output of `git ls-remote <url> refs/heads/<multidev> refs/heads/master`
+ */
+export function canReuseMultidev(refs: string, multidev: string): boolean {
+  const sha = (ref: string): string | null => {
+    for (const line of refs.split('\n')) {
+      const m = line.trim().match(/^([0-9a-f]{40})\s+(\S+)$/i)
+      if (m && m[2] === ref) return m[1].toLowerCase()
+    }
+    return null
+  }
+  const mdSha = sha(`refs/heads/${multidev}`)
+  const masterSha = sha('refs/heads/master')
+  if (!mdSha || !masterSha) return false
+  return mdSha === masterSha
+}
+
 export interface PatchFailure {
   /** The package whose patch could not be applied, e.g. "drupal/paragraphs". */
   pkg: string

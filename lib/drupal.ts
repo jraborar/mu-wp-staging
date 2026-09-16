@@ -1,5 +1,5 @@
 import { readFile, writeFile } from 'fs/promises'
-import { parseInstallFailure, parsePatchFailure, repairMissingGitDir } from '@/lib/composerErrors'
+import { canReuseMultidev, parseInstallFailure, parsePatchFailure, repairMissingGitDir } from '@/lib/composerErrors'
 import {
   type StagingJob,
   type SecurityAdvisory,
@@ -994,26 +994,54 @@ export async function runDrupalStaging(job: StagingJob, registrySite: Site | nul
     const currentMultidevs = multidevList.split('\n').map(l => l.trim()).filter(l => /^[a-z0-9][a-z0-9-]{0,10}$/.test(l))
     const isStandardName = /^mu-\d{6}$/.test(job.multidev)
     const targetExists = currentMultidevs.includes(job.multidev)
-    const existingMu = targetExists ? job.multidev : isStandardName ? findByPrefix(multidevList, 'mu') : null
+
+    // Rebuilding the multidev is ~60% of a run's wall-clock (measured on inst: 9m47s and
+    // 10m55s, against under 4 minutes for the Composer work it exists to serve). When the
+    // target already exists and is still untouched, that rebuild is pure waste — the only
+    // push in this pipeline happens after both Composer phases, so a run that failed while
+    // resolving never wrote to it. Reuse only on positive proof; see canReuseMultidev.
+    let reuseTarget = false
+    if (targetExists) {
+      try {
+        const gitUrl = (await run(`terminus connection:info ${env(job)} --field=git_url 2>&1`)).stdout.trim()
+        if (/^ssh:\/\/|^https:\/\//.test(gitUrl)) {
+          const refs = await run(`git ls-remote ${shellEscape(gitUrl)} refs/heads/${shellEscape(job.multidev)} refs/heads/master 2>&1`)
+          reuseTarget = refs.code === 0 && canReuseMultidev(refs.stdout, job.multidev)
+        }
+      } catch {
+        reuseTarget = false   // any uncertainty → rebuild, i.e. today's behaviour
+      }
+      log('info', reuseTarget
+        ? `${job.multidev} already exists and its branch still matches master — nothing was ever pushed to it, so it will be reused`
+        : `${job.multidev} already exists but could not be proven untouched — rebuilding it from live`)
+    }
+
+    // A reused multidev occupies the slot it already held, so it adds nothing to the count.
+    const existingMu = reuseTarget ? null : (targetExists ? job.multidev : isStandardName ? findByPrefix(multidevList, 'mu') : null)
     const countAfterDelete = existingMu ? currentMultidevs.length - 1 : currentMultidevs.length
-    if (countAfterDelete >= profile.maxMultidevs) {
+    if (!reuseTarget && countAfterDelete >= profile.maxMultidevs) {
       throw new Error(`All ${profile.maxMultidevs} multidev slots are in use — free a slot and re-run`)
     }
 
-    // ── 4. Create fresh multidev from live ───────────────────────────────────────
+    // ── 4. Create fresh multidev from live (or reuse an untouched one) ───────────
     step('Creating multidev', 4)
-    if (existingMu) {
-      log('delete', `Removing existing multidev ${existingMu}...`)
-      postStep(`🗑 Removing old multidev \`${existingMu}\`...`)
-      await run(`terminus multidev:delete --yes --delete-branch ${job.site}.${existingMu} 2>&1`)
-      log('deleted', `Removed ${existingMu}`)
-    }
-    log('create', `Creating multidev ${job.multidev} from live...`)
-    postStep(`◈ Creating multidev \`${job.multidev}\` from live... _(a few minutes)_`)
-    const create = await runStream(`terminus multidev:create ${job.site}.live ${job.multidev} 2>&1`, (line) => log('info', line))
-    if (create.code !== 0) {
-      const verify = await run(`terminus multidev:list ${job.site} --fields=Name --format=list 2>&1`)
-      if (!verify.stdout.split('\n').map(l => l.trim()).includes(job.multidev)) throw new Error('Multidev creation failed')
+    if (reuseTarget) {
+      log('create', `Reusing existing multidev ${job.multidev} (skipping ~10 min rebuild)`)
+      postStep(`♻️ Reusing untouched multidev \`${job.multidev}\` — skipping the rebuild`)
+    } else {
+      if (existingMu) {
+        log('delete', `Removing existing multidev ${existingMu}...`)
+        postStep(`🗑 Removing old multidev \`${existingMu}\`...`)
+        await run(`terminus multidev:delete --yes --delete-branch ${job.site}.${existingMu} 2>&1`)
+        log('deleted', `Removed ${existingMu}`)
+      }
+      log('create', `Creating multidev ${job.multidev} from live...`)
+      postStep(`◈ Creating multidev \`${job.multidev}\` from live... _(a few minutes)_`)
+      const create = await runStream(`terminus multidev:create ${job.site}.live ${job.multidev} 2>&1`, (line) => log('info', line))
+      if (create.code !== 0) {
+        const verify = await run(`terminus multidev:list ${job.site} --fields=Name --format=list 2>&1`)
+        if (!verify.stdout.split('\n').map(l => l.trim()).includes(job.multidev)) throw new Error('Multidev creation failed')
+      }
     }
     let initialized = false
     for (let attempt = 1; attempt <= 20; attempt++) {
