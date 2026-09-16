@@ -129,6 +129,73 @@ export function parsePatchFailure(output: string): PatchFailure | null {
 }
 
 /**
+ * Say WHY the solver rejected a package, instead of asserting a cause we never checked.
+ *
+ * The auto-skip loop hard-coded "no Drupal <N> compatible release" for every package it
+ * stripped. That is one possible cause, not the only one, and on inst run 063b77c6 it was
+ * wrong three times over: paragraphs_asymmetric_translation_widgets, dismissible_message_bar
+ * and paragraphs_browser were all reported as lacking a Drupal 11 release when in fact they
+ * depend on drupal/paragraphs, which the solver had refused because of a security advisory.
+ * A consultant reading that summary would go looking for D11 ports that were never the
+ * problem.
+ *
+ * Returns a short clause for the skip reason. Falls back to a neutral statement rather than
+ * a guess when the output does not say — an unexplained skip is honest; a wrong explanation
+ * is worse than none.
+ */
+export function explainBlocker(output: string, pkg: string, coreMajor: number): string {
+  // Composer groups each rejection under "Problem N"; find the block naming this package.
+  const block = output
+    .split(/Problem \d+/)
+    .find(b => b.includes(pkg)) ?? output
+
+  if (/affected by security advisor/i.test(block)) {
+    const ids = [...block.matchAll(/(SA-(?:CONTRIB|CORE)-\d{4}-\d+|CVE-\d{4}-\d+)/g)]
+      .map(m => m[1])
+    const uniq = [...new Set(ids)]
+    return uniq.length
+      ? `a dependency is blocked by security advisories (${uniq.join(', ')})`
+      : 'a dependency is blocked by a security advisory'
+  }
+  if (new RegExp(`drupal/core[^\\n]*but it does not match|requires drupal/core`, 'i').test(block)) {
+    return `no Drupal ${coreMajor} compatible release`
+  }
+  return 'it could not be resolved alongside the rest of this update'
+}
+
+/**
+ * Advisory IDs affecting a package, from `composer audit --locked --format=json`.
+ *
+ * Used to answer one question before holding a package back: is the version we would hold
+ * it at known-vulnerable? Holding is normally the right move when a pinned patch blocks an
+ * update — but not when the held version carries a security advisory, because then the
+ * update we are declining to make IS the security fix, and holding would commit and deploy
+ * a vulnerable release.
+ *
+ * inst is exactly that case: drupal/paragraphs 1.20.0 is affected by SA-CONTRIB-2026-060
+ * and SA-CONTRIB-2026-061 (access bypass, both fixed in 1.21.0), so the 1.23.0 upgrade the
+ * stale 2020 patch was blocking is a security update.
+ *
+ * Returns [] when the package is clean, when the JSON is unparseable, or when audit failed
+ * — a missing audit must not be read as "vulnerable", or every run would stop. The caller
+ * treats a NON-EMPTY result as the blocking signal, so an unreadable audit degrades to
+ * today's hold behaviour rather than to a spurious failure.
+ */
+export function advisoriesFor(auditJson: string, pkg: string): string[] {
+  let parsed: unknown
+  try { parsed = JSON.parse(auditJson.slice(auditJson.indexOf('{'))) } catch { return [] }
+  const advisories = (parsed as { advisories?: Record<string, unknown> })?.advisories
+  const items = advisories?.[pkg]
+  if (!Array.isArray(items)) return []
+  return items
+    .map(it => {
+      const o = it as Record<string, string>
+      return o?.advisoryId || o?.cve || null
+    })
+    .filter((id): id is string => Boolean(id))
+}
+
+/**
  * Hold a package at an exact version in a working composer.json.
  *
  * Deleting a package from `require` drops the ROOT CONSTRAINT; it does not hold a version.
