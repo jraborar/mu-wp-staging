@@ -128,6 +128,34 @@ export function parsePatchFailure(output: string): PatchFailure | null {
   return { pkg, patch, title }
 }
 
+/**
+ * Hold a package at an exact version in a working composer.json.
+ *
+ * Deleting a package from `require` drops the ROOT CONSTRAINT; it does not hold a version.
+ * Anything else in the graph that requires the package still pulls it, Composer re-resolves
+ * it to the same new release, and a cweagans patch keyed on it fails all over again —
+ * `extra.patches` is independent of `require`. inst run f3be3b27 proved it: paragraphs was
+ * dropped from require, `drupal/paragraphs_browser` 1.4.0 requires `"drupal/paragraphs": "*"`,
+ * so Composer installed 1.23.0 a second time and the same patch failed a second time.
+ *
+ * An exact constraint is what actually holds it. When the package was only ever transitive
+ * this ADDS a root requirement, which is the normal Composer way to pin a dependency.
+ *
+ * Mutates `cjson` and returns the section written, so callers can log it.
+ */
+export function pinPackage(
+  cjson: Record<string, Record<string, string> | unknown>,
+  pkg: string,
+  version: string,
+): 'require' | 'require-dev' {
+  const dev = cjson['require-dev'] as Record<string, string> | undefined
+  const section: 'require' | 'require-dev' = dev?.[pkg] ? 'require-dev' : 'require'
+  const bucket = (cjson[section] ?? {}) as Record<string, string>
+  bucket[pkg] = version
+  cjson[section] = bucket
+  return section
+}
+
 // Repair the "missing .git" install failure by deleting the stale directory.
 //
 // --prefer-dist does NOT save us here, and it is worth being precise about why: drupal.org
