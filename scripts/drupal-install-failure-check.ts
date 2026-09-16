@@ -115,6 +115,29 @@ check('local .patch path is captured too',
 // canReuseMultidev gates a ~10 min shortcut, but a WRONG reuse stages on top of a previous
 // run's updates and feeds a deploy. So every ambiguous input must come back false: the cost
 // of a false negative is lost time, the cost of a false positive is a bad deploy.
+// Verbatim from inst run 78dc274c, round 2. Paragraphs' patch lines are printed immediately
+// above drush's failure — the old ±3-line window grabbed the Paragraphs URL and reported a
+// drush hold justified by a Paragraphs patch. The patch must come from the failure line.
+const DRUSH_AFTER_PARAGRAPHS = `
+  - Applying patches for drupal/paragraphs
+    https://www.drupal.org/files/issues/2020-07-08/access-controll-issue-3090200-22.patch (Paragraphs do not render: access check for view)
+  - Applying patches for drush/drush
+    ./patches/drush-batch-service-method-callbacks.patch (Resolve Drupal 11.4+ service:method batch callbacks)
+   Could not apply patch! Skipping. The error was: Cannot apply patch ./patches/drush-batch-service-method-callbacks.patch
+In Patches.php line 331:
+Cannot apply patch Resolve Drupal 11.4+ service:method batch callbacks (./patches/drush-batch-service-method-callbacks.patch)!
+`.trim()
+
+check('drush failure names DRUSH, not the paragraphs block above it',
+  parsePatchFailure(DRUSH_AFTER_PARAGRAPHS)?.pkg, 'drush/drush')
+check('and names DRUSH’s patch, not the paragraphs URL printed 3 lines earlier',
+  parsePatchFailure(DRUSH_AFTER_PARAGRAPHS)?.patch, './patches/drush-batch-service-method-callbacks.patch')
+check('and drush’s own title, not a fallback to the patch string',
+  parsePatchFailure(DRUSH_AFTER_PARAGRAPHS)?.title, 'Resolve Drupal 11.4+ service:method batch callbacks')
+check('the paragraphs case still resolves to its own https patch',
+  parsePatchFailure(INST_PATCH_FAILURE)?.patch,
+  'https://www.drupal.org/files/issues/2020-07-08/access-controll-issue-3090200-22.patch')
+
 console.log('\ncanReuseMultidev')
 const SHA_A = 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678'
 const SHA_B = '9876543210fedcba9876543210fedcba98765432'
@@ -229,20 +252,31 @@ const AUDIT = JSON.stringify({
     ],
   },
 })
-check('finds both advisories for the package', advisoriesFor(AUDIT, 'drupal/paragraphs').join(','),
+// TRI-STATE. The null cases are the point: inst run 78dc274c held paragraphs at an
+// advisory-affected version because "unreadable" and "clean" both returned [], so the guard
+// passed silently. Unreadable must be distinguishable, and the caller blocks on it.
+check('finds both advisories for the package', advisoriesFor(AUDIT, 'drupal/paragraphs')?.join(','),
   'SA-CONTRIB-2026-060,SA-CONTRIB-2026-061')
-check('a clean package returns none', advisoriesFor(AUDIT, 'drupal/webform').length, 0)
-check('empty advisories object → none', advisoriesFor('{"advisories":{}}', 'drupal/paragraphs').length, 0)
-check('unparseable audit → none (unknown is not vulnerable)',
-  advisoriesFor('PHP Warning: something\nnot json at all', 'drupal/paragraphs').length, 0)
-check('empty output → none', advisoriesFor('', 'drupal/paragraphs').length, 0)
-check('leading junk before the JSON is tolerated',
-  advisoriesFor(`PHP Deprecated: x\n${AUDIT}`, 'drupal/paragraphs').length, 2)
+check('package absent from a readable audit → [] (genuinely clean)',
+  JSON.stringify(advisoriesFor(AUDIT, 'drupal/webform')), '[]')
+check('empty advisories object → [] (clean, not unknown)',
+  JSON.stringify(advisoriesFor('{"advisories":{}}', 'drupal/paragraphs')), '[]')
+check('unparseable audit → null, NOT [] (unknown is not clean)',
+  advisoriesFor('PHP Warning: something\nnot json at all', 'drupal/paragraphs'), 'null')
+check('empty output → null', advisoriesFor('', 'drupal/paragraphs'), 'null')
+check('valid JSON with no advisories key → null (that is not an audit result)',
+  advisoriesFor('{"status":"ok"}', 'drupal/paragraphs'), 'null')
+check('a JSON array → null (shape, not just syntax)',
+  advisoriesFor('[]', 'drupal/paragraphs'), 'null')
+check('a bare scalar that parses → null',
+  advisoriesFor('0', 'drupal/paragraphs'), 'null')
+check('advisories present but in an unexpected shape → null',
+  advisoriesFor('{"advisories":{"drupal/paragraphs":"oops"}}', 'drupal/paragraphs'), 'null')
 check('falls back to cve when advisoryId is absent',
-  advisoriesFor(JSON.stringify({ advisories: { 'drupal/x': [{ cve: 'CVE-2026-1234' }] } }), 'drupal/x').join(','),
+  advisoriesFor(JSON.stringify({ advisories: { 'drupal/x': [{ cve: 'CVE-2026-1234' }] } }), 'drupal/x')?.join(','),
   'CVE-2026-1234')
 check('entries with no usable id are dropped, not rendered as null',
-  advisoriesFor(JSON.stringify({ advisories: { 'drupal/x': [{ title: 'no id here' }] } }), 'drupal/x').length, 0)
+  advisoriesFor(JSON.stringify({ advisories: { 'drupal/x': [{ title: 'no id here' }] } }), 'drupal/x')?.length, 0)
 
 console.log('\nrepairMissingGitDir')
 const workdir = await mkdtemp(join(tmpdir(), 'drupal-check-'))
