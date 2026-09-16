@@ -12,7 +12,8 @@
     "check:platform": "node scripts/platform-check.ts",
     "check:inventory": "node scripts/inventory-check.ts",
     "check:terminus": "node scripts/terminus-check.ts",
-    "check:vrt": "node scripts/vrt-check.ts"
+    "check:vrt": "node scripts/vrt-check.ts",
+    "check:drupal-install": "node scripts/drupal-install-failure-check.ts"
   },
   "dependencies": {
     "@slack/socket-mode": "^3.0.0",

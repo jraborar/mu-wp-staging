@@ -1,4 +1,5 @@
 import { readFile, writeFile } from 'fs/promises'
+import { parseInstallFailure, repairMissingGitDir } from '@/lib/composerErrors'
 import {
   type StagingJob,
   type SecurityAdvisory,
@@ -213,6 +214,20 @@ function parseConflictingPackages(output: string): string[] {
     if (m) pkgs.add(m[1])
   }
   return [...pkgs]
+}
+
+// Remove every nested .git directory from the built tree, leaving the clone's own at the root.
+//
+// Only the committed-vendor path needs this, and it needs it absolutely: `git add -A` on a
+// directory that contains a .git records a GITLINK (an embedded-repo pointer) instead of the
+// files. The module would vanish from the committed tree and Pantheon would deploy a site
+// missing that module's code. Composer installs from source whenever a package has no dist —
+// unavoidable for dev branches — so this is not a rare path, it just had never been reached
+// before, because the update died at GitDownloader first.
+async function stripNestedGitDirs(workdir: string): Promise<void> {
+  // -mindepth 2 keeps the clone's own .git (depth 1); -prune stops find descending into the
+  // directories it is about to hand to rm.
+  await run(`find ${shellEscape(workdir)} -mindepth 2 -name .git -prune -print0 | xargs -0 -r rm -rf`)
 }
 
 // Parse `composer outdated --locked --direct --format=json` output.
@@ -445,13 +460,27 @@ async function composerStrategy(
   // plugins on. --no-scripts stays throughout, so no package/root script hooks ever run.
   let usesMergePlugin = false
   try { usesMergePlugin = !!(JSON.parse(composerJson)?.extra?.['merge-plugin']) } catch {}
+
+  // --prefer-dist: take the archive whenever one exists, so we install as few packages from
+  // git source as possible. On a committed-vendor site a source install is actively harmful —
+  // it produces a nested .git that cannot be committed (see stripNestedGitDirs) and that
+  // GitDownloader then demands on the next run (see repairMissingGitDir).
+  //
+  // Note what this flag does NOT do, because it is easy to over-trust: it is a preference,
+  // not a constraint. drupal.org publishes dist archives for TAGGED releases only, so a
+  // dev-branch package (dev-1.x, dev-main) has no `dist` at all and Composer falls back to
+  // source regardless. The repair-and-retry path, not this flag, is what makes those sites
+  // work. --prefer-dist shrinks the problem; it does not eliminate it.
+  //
+  // Harmless on the IC path: --no-install downloads nothing at all, and the merge-plugin
+  // IC branch builds its tree fresh in the workdir.
   const resolveFlags = integrated
     ? (usesMergePlugin
-        ? '--no-audit --no-scripts --ignore-platform-req=ext-*'
-        : '--no-install --no-audit --no-scripts --no-plugins --ignore-platform-req=ext-*')
+        ? '--prefer-dist --no-audit --no-scripts --ignore-platform-req=ext-*'
+        : '--prefer-dist --no-install --no-audit --no-scripts --no-plugins --ignore-platform-req=ext-*')
     : (usesMergePlugin
-        ? '--no-audit --no-scripts --ignore-platform-reqs'
-        : '--no-audit --no-scripts --no-plugins --ignore-platform-reqs')
+        ? '--prefer-dist --no-audit --no-scripts --ignore-platform-reqs'
+        : '--prefer-dist --no-audit --no-scripts --no-plugins --ignore-platform-reqs')
 
   const origLock = await readLock(`${workdir}/composer.lock`)
   const coreBefore = origLock.get('drupal/core')?.version ?? '?'
@@ -466,10 +495,11 @@ async function composerStrategy(
   // (e.g. Webform's composer.libraries.json) exist before we resolve — otherwise the merged
   // requires are invisible and get pruned from the lock (see resolveFlags note above).
   // Installs from the committed lock only; --no-scripts blocks script hooks; `composer
-  // install` rejects --no-audit so it is omitted here.
+  // install` rejects --no-audit so it is omitted here. --prefer-dist for the same reason
+  // the resolve uses it: never materialize a dev package as a git clone.
   if (usesMergePlugin) {
     log('status', 'Installing the current module tree so merged Composer requires stay in the lock...')
-    const installFlags = integrated ? '--ignore-platform-req=ext-*' : '--ignore-platform-reqs'
+    const installFlags = integrated ? '--prefer-dist --ignore-platform-req=ext-*' : '--prefer-dist --ignore-platform-reqs'
     const install = await runStream(composer(`install --no-scripts ${installFlags} 2>&1`), (line) => log('info', line))
     if (install.code !== 0) {
       throw new Error('Composer could not install the current module tree — resolving now would drop merged (composer-merge-plugin) requires from the lock and break Pantheon\'s build. Refusing to resolve against an incomplete require set.')
@@ -486,6 +516,7 @@ async function composerStrategy(
       await run(gitc(`add composer.lock 2>&1`))
     } else {
       await run(gitc(`checkout -- composer.json 2>&1`))   // discard the advisory-block edit
+      await stripNestedGitDirs(workdir)                    // else source-installed pkgs commit as gitlinks
       await run(gitc(`add -A 2>&1`))                       // vendor/, core/, modules/contrib/, lock
     }
     await run(gitc(`${commitOpts} commit -m ${shellEscape(message)} 2>&1`))
@@ -494,14 +525,30 @@ async function composerStrategy(
 
   // Phase A — Drupal core as the "upstream" update. -W pulls core's own deps.
   log('status', 'Checking for an in-constraint Drupal core update...')
-  const coreUpdate = await runStream(
-    composer(`update ${CORE_UPDATE_TARGETS.join(' ')} -W ${resolveFlags} 2>&1`),
-    (line) => log('info', line),
-  )
-  // A failed solve (unresolvable deps, missing platform ext) leaves the lock untouched,
-  // which downstream reads as "coreChanged=false" — i.e. a hard error masquerading as
-  // "up to date". Fail loudly instead of shipping an inconclusive run as a success.
-  if (coreUpdate.code !== 0) {
+  // -W drags core's own dependencies along, so this phase can hit the same stale-source-dir
+  // install failure Phase B can. Repair and retry a bounded number of times — each round
+  // clears exactly one directory, and a tree needing more than a handful is not something to
+  // paper over.
+  let coreUpdate = { code: 1 }
+  for (let repair = 0; repair <= 5; repair++) {
+    let coreOutput = ''
+    coreUpdate = await runStream(
+      composer(`update ${CORE_UPDATE_TARGETS.join(' ')} -W ${resolveFlags} 2>&1`),
+      (line) => { coreOutput += line + '\n'; log('info', line) },
+    )
+    if (coreUpdate.code === 0) break
+
+    const repaired = repair < 5 ? await repairMissingGitDir(coreOutput, workdir) : null
+    if (repaired) {
+      log('warn', `${repaired} was installed from git source but has no .git (committed-vendor tree) — removed it so Composer reinstalls cleanly, retrying`)
+      continue
+    }
+
+    // A failed solve (unresolvable deps, missing platform ext) leaves the lock untouched,
+    // which downstream reads as "coreChanged=false" — i.e. a hard error masquerading as
+    // "up to date". Fail loudly instead of shipping an inconclusive run as a success.
+    const installFailure = parseInstallFailure(coreOutput)
+    if (installFailure) throw new Error(`Drupal core update failed during Composer install: ${installFailure}`)
     throw new Error('Composer could not resolve a Drupal core update — see the log above. A failed solve must not be reported as "up to date".')
   }
   const afterCore = await readLock(`${workdir}/composer.lock`)
@@ -533,6 +580,7 @@ async function composerStrategy(
   const origComposerJsonRaw = await readFile(`${workdir}/composer.json`, 'utf8')
   const autoSkipped: string[] = []
   let composerCmd = `update ${resolveFlags} 2>&1`
+  let repairsUsed = 0
 
   for (let skipRound = 0; skipRound <= 10; skipRound++) {
     if (skipRound === 10) {
@@ -563,6 +611,26 @@ async function composerStrategy(
       }
       break
     }
+
+    // A stale source directory with no .git is repairable: drop it and let Composer
+    // reinstall from scratch. Repairs draw on their own budget and deliberately do not
+    // consume a skip round — they are not solver blockers, and burning the skip budget on
+    // them would starve the auto-skip logic that follows.
+    if (repairsUsed < 5) {
+      const repaired = await repairMissingGitDir(phaseOutput, workdir)
+      if (repaired) {
+        repairsUsed++
+        skipRound--
+        log('warn', `${repaired} was installed from git source but has no .git (committed-vendor tree) — removed it so Composer reinstalls cleanly, retrying`)
+        continue
+      }
+    }
+
+    // Any other install/download failure is terminal here and unrelated to the solve, so say
+    // so plainly rather than falling through to the blocker-stripping retry, which has
+    // nothing to strip and would only burn rounds before failing with the wrong reason.
+    const installFailure = parseInstallFailure(phaseOutput)
+    if (installFailure) throw new Error(`Staging failed during Composer install: ${installFailure}`)
 
     const blockers = parseConflictingPackages(phaseOutput).filter(p => !autoSkipped.includes(p))
     if (!blockers.length) {
