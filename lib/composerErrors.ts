@@ -35,6 +35,59 @@ export function parseInstallFailure(output: string): string | null {
   return null
 }
 
+export interface PatchFailure {
+  /** The package whose patch could not be applied, e.g. "drupal/paragraphs". */
+  pkg: string
+  /** The patch URL or local path composer was told to apply. */
+  patch: string
+  /** The human label from composer.json's patches block, when it printed one. */
+  title: string | null
+}
+
+// Detect a cweagans/composer-patches failure and name the package it belongs to.
+//
+// A pinned patch is written against one release. When the package moves, the patch
+// stops applying — and with `composer-exit-on-patch-failure` set (as Pantheon's Drupal
+// templates ship it) composer exits non-zero even though it printed "Skipping":
+//
+//     - Applying patches for drupal/paragraphs
+//       https://www.drupal.org/files/issues/2020-07-08/access-controll-issue-3090200-22.patch
+//       Could not apply patch! Skipping. The error was: Cannot apply patch <url>
+//     In Patches.php line 331:
+//     Cannot apply patch Paragraphs do not render: access check for view (<url>)!
+//
+// This is neither a solve failure nor a download failure: the solve was fine and the
+// archive arrived. The package simply cannot move while carrying that patch. So the
+// caller holds it at its locked version and updates everything else, rather than losing
+// the whole run to one stale patch — which is what happened to inst, where a 2020 patch
+// against paragraphs 1.20.0 blocked the 1.23.0 upgrade and ~40 unrelated updates with it.
+//
+// Composer prints the owning package in an earlier "Applying patches for X" line, so we
+// take the LAST such line before the failure rather than guessing from the patch URL
+// (the URL names a drupal.org issue, not reliably the package).
+export function parsePatchFailure(output: string): PatchFailure | null {
+  const lines = output.split('\n')
+  const failIdx = lines.findIndex(l => /Cannot apply patch|Could not apply patch/i.test(l))
+  if (failIdx === -1) return null
+
+  let pkg: string | null = null
+  for (let i = failIdx; i >= 0; i--) {
+    const m = lines[i].match(/Applying patches for (\S+)/i)
+    if (m) { pkg = m[1]; break }
+  }
+  if (!pkg) return null
+
+  // The URL may appear on the failure line, or on the preceding line that announced the
+  // patch (composer wraps long lines, so prefer a whole URL wherever one survives).
+  const window = lines.slice(Math.max(0, failIdx - 3), failIdx + 3).join('\n')
+  const patch = window.match(/(https?:\/\/\S+?\.patch|\.?\/?[\w./-]+\.patch)/)?.[1] ?? 'the pinned patch'
+  const title = lines.slice(Math.max(0, failIdx - 3), failIdx + 3)
+    .map(l => l.match(/Cannot apply patch (.+?) \(https?:/)?.[1])
+    .find(Boolean) ?? null
+
+  return { pkg, patch, title }
+}
+
 // Repair the "missing .git" install failure by deleting the stale directory.
 //
 // --prefer-dist does NOT save us here, and it is worth being precise about why: drupal.org
