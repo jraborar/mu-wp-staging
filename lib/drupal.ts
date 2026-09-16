@@ -1,5 +1,5 @@
 import { readFile, writeFile } from 'fs/promises'
-import { parseInstallFailure, repairMissingGitDir } from '@/lib/composerErrors'
+import { parseInstallFailure, parsePatchFailure, repairMissingGitDir } from '@/lib/composerErrors'
 import {
   type StagingJob,
   type SecurityAdvisory,
@@ -626,13 +626,28 @@ async function composerStrategy(
       }
     }
 
+    // A stale patch is its own category. The solve was fine and the archive arrived; the
+    // package simply cannot move while carrying a patch written for an older release. Hold
+    // that ONE package at its locked version and let the rest of the run proceed, rather
+    // than losing ~40 good updates to it — which is exactly what inst did, twice.
+    //
+    // Held, never silently: the skipped entry names the patch and says what has to happen
+    // for the package to move again, so this surfaces in the run summary and in Slack as
+    // work to do rather than disappearing into the log.
+    const patchFailure = parsePatchFailure(phaseOutput)
+    const patchBlocked = patchFailure && !autoSkipped.includes(patchFailure.pkg) ? patchFailure : null
+
     // Any other install/download failure is terminal here and unrelated to the solve, so say
     // so plainly rather than falling through to the blocker-stripping retry, which has
     // nothing to strip and would only burn rounds before failing with the wrong reason.
-    const installFailure = parseInstallFailure(phaseOutput)
-    if (installFailure) throw new Error(`Staging failed during Composer install: ${installFailure}`)
+    if (!patchBlocked) {
+      const installFailure = parseInstallFailure(phaseOutput)
+      if (installFailure) throw new Error(`Staging failed during Composer install: ${installFailure}`)
+    }
 
-    const blockers = parseConflictingPackages(phaseOutput).filter(p => !autoSkipped.includes(p))
+    const blockers = patchBlocked
+      ? [patchBlocked.pkg]
+      : parseConflictingPackages(phaseOutput).filter(p => !autoSkipped.includes(p))
     if (!blockers.length) {
       throw new Error('Composer could not resolve module/theme/dependency updates — see the log above. A failed solve must not be reported as "no updates".')
     }
@@ -646,18 +661,29 @@ async function composerStrategy(
           delete cjson[section][pkg]
           autoSkipped.push(pkg)
           const bucket = origLock.get(pkg)?.type === 'drupal-theme' ? 'themes' : 'plugins'
-          job[bucket].skipped.push({
-            name: pkg, title: pkg,
-            reason: `no Drupal ${profile.coreMajor} compatible release — held at ${lockedVer}`,
-          })
-          log('warn', `⚠ Skipping ${pkg} (held at ${lockedVer}): no Drupal ${profile.coreMajor} compatible release`)
+          const reason = patchBlocked
+            ? `held at ${lockedVer} — pinned patch no longer applies to the newer release `
+              + `(${patchBlocked.title ?? patchBlocked.patch}). Refresh the patch against the new `
+              + `version (a drupal.org issue-fork MR diff tracks the branch; a dated static .patch `
+              + `does not) or drop it if the fix has landed upstream, then re-run.`
+            : `no Drupal ${profile.coreMajor} compatible release — held at ${lockedVer}`
+          job[bucket].skipped.push({ name: pkg, title: pkg, reason })
+          if (patchBlocked) {
+            log('warn', `⚠ Holding ${pkg} at ${lockedVer}: its pinned patch no longer applies`)
+            log('warn', `   patch: ${patchBlocked.patch}`)
+            log('warn', `   Everything else still updates. To unblock ${pkg}, refresh that patch against the newer release or remove it if upstream has fixed the issue.`)
+          } else {
+            log('warn', `⚠ Skipping ${pkg} (held at ${lockedVer}): no Drupal ${profile.coreMajor} compatible release`)
+          }
           stripped++
           break
         }
       }
     }
     if (!stripped) {
-      throw new Error('Composer could not resolve module/theme/dependency updates — blocking packages could not be identified in composer.json.')
+      throw new Error(patchBlocked
+        ? `Composer could not apply the pinned patch for ${patchBlocked.pkg} (${patchBlocked.patch}), and that package is not a root requirement in composer.json, so it cannot be held back automatically. Refresh or remove the patch.`
+        : 'Composer could not resolve module/theme/dependency updates — blocking packages could not be identified in composer.json.')
     }
     await writeFile(`${workdir}/composer.json`, JSON.stringify(cjson, null, 4))
   }
