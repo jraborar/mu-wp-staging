@@ -13,7 +13,7 @@
 import { mkdtemp, mkdir, writeFile, stat, rm } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { canReuseMultidev, parseInstallFailure, parsePatchFailure, pinPackage, repairMissingGitDir } from '../lib/composerErrors.ts'
+import { advisoriesFor, canReuseMultidev, explainBlocker, parseInstallFailure, parsePatchFailure, pinPackage, repairMissingGitDir } from '../lib/composerErrors.ts'
 
 let pass = 0, fail = 0
 function check(name: string, actual: unknown, expected: unknown) {
@@ -183,6 +183,66 @@ console.log('\npinPackage')
     (() => { const c: Record<string, unknown> = { require: {} }; pinPackage(c, 'drupal/field_tools', 'dev-1.x'); return (c.require as Record<string, string>)['drupal/field_tools'] })(),
     'dev-1.x')
 }
+
+// Verbatim solver output from inst run 063b77c6, where pinning paragraphs at 1.20.0 was
+// refused because that version carries two access-bypass advisories. The three cascade
+// skips in this run were all reported as "no Drupal 11 compatible release" — wrong; they
+// depend on paragraphs, which the solver would not load.
+const ADVISORY_SOLVE = `
+Your requirements could not be resolved to an installable set of packages.
+  Problem 1
+    - Root composer.json requires drupal/paragraphs 1.20.0 (exact version match: 1.20.0 or 1.20.0.0), found drupal/paragraphs[1.20.0] but these were not loaded, because they are affected by security advisories ("SA-CONTRIB-2026-061", "SA-CONTRIB-2026-060").
+  Problem 2
+    - Root composer.json requires drupal/paragraphs_browser ^1.3.0 -> satisfiable by drupal/paragraphs_browser[1.3.0, 1.4.0, 1.x-dev].
+    - drupal/paragraphs_browser[1.3.0, ..., 1.x-dev] require drupal/paragraphs * -> found drupal/paragraphs[dev-1.x, 1.0.0-alpha1, ..., 1.x-dev] but these were not loaded, because they are affected by security advisories ("SA-CONTRIB-2018-073", "SA-CONTRIB-2026-061").
+`.trim()
+
+const CORE_INCOMPAT_SOLVE = `
+Your requirements could not be resolved to an installable set of packages.
+  Problem 1
+    - Root composer.json requires drupal/micro_site ^2.0 -> satisfiable by drupal/micro_site[2.0.0].
+    - drupal/micro_site 2.0.0 requires drupal/core ^10 -> found drupal/core[11.4.6] but it does not match.
+`.trim()
+
+console.log('\nexplainBlocker')
+check('advisory-blocked dependency is named as such, not as a D11 gap',
+  explainBlocker(ADVISORY_SOLVE, 'drupal/paragraphs_browser', 11),
+  'a dependency is blocked by security advisories (SA-CONTRIB-2018-073, SA-CONTRIB-2026-061)')
+check('a genuine core-version mismatch still reads as one',
+  explainBlocker(CORE_INCOMPAT_SOLVE, 'drupal/micro_site', 11), 'no Drupal 11 compatible release')
+check('unexplained output falls back to a neutral statement, never a guess',
+  explainBlocker('Updating dependencies\nsomething opaque happened', 'drupal/x', 11),
+  'it could not be resolved alongside the rest of this update')
+check('advisory ids are de-duplicated',
+  explainBlocker(ADVISORY_SOLVE, 'drupal/paragraphs', 11),
+  'a dependency is blocked by security advisories (SA-CONTRIB-2026-061, SA-CONTRIB-2026-060)')
+
+// advisoriesFor decides whether a hold would keep a vulnerable version in place. It must
+// return [] on anything it cannot read: a missing audit means "unknown", and treating that
+// as "vulnerable" would halt every run.
+console.log('\nadvisoriesFor')
+const AUDIT = JSON.stringify({
+  advisories: {
+    'drupal/paragraphs': [
+      { advisoryId: 'SA-CONTRIB-2026-060', title: 'Access bypass' },
+      { advisoryId: 'SA-CONTRIB-2026-061', title: 'Access bypass' },
+    ],
+  },
+})
+check('finds both advisories for the package', advisoriesFor(AUDIT, 'drupal/paragraphs').join(','),
+  'SA-CONTRIB-2026-060,SA-CONTRIB-2026-061')
+check('a clean package returns none', advisoriesFor(AUDIT, 'drupal/webform').length, 0)
+check('empty advisories object → none', advisoriesFor('{"advisories":{}}', 'drupal/paragraphs').length, 0)
+check('unparseable audit → none (unknown is not vulnerable)',
+  advisoriesFor('PHP Warning: something\nnot json at all', 'drupal/paragraphs').length, 0)
+check('empty output → none', advisoriesFor('', 'drupal/paragraphs').length, 0)
+check('leading junk before the JSON is tolerated',
+  advisoriesFor(`PHP Deprecated: x\n${AUDIT}`, 'drupal/paragraphs').length, 2)
+check('falls back to cve when advisoryId is absent',
+  advisoriesFor(JSON.stringify({ advisories: { 'drupal/x': [{ cve: 'CVE-2026-1234' }] } }), 'drupal/x').join(','),
+  'CVE-2026-1234')
+check('entries with no usable id are dropped, not rendered as null',
+  advisoriesFor(JSON.stringify({ advisories: { 'drupal/x': [{ title: 'no id here' }] } }), 'drupal/x').length, 0)
 
 console.log('\nrepairMissingGitDir')
 const workdir = await mkdtemp(join(tmpdir(), 'drupal-check-'))

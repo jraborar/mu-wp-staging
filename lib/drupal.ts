@@ -1,5 +1,5 @@
 import { readFile, writeFile } from 'fs/promises'
-import { canReuseMultidev, parseInstallFailure, parsePatchFailure, pinPackage, repairMissingGitDir } from '@/lib/composerErrors'
+import { advisoriesFor, canReuseMultidev, explainBlocker, parseInstallFailure, parsePatchFailure, pinPackage, repairMissingGitDir } from '@/lib/composerErrors'
 import {
   type StagingJob,
   type SecurityAdvisory,
@@ -521,6 +521,19 @@ async function composerStrategy(
     }
     await run(gitc(`${commitOpts} commit -m ${shellEscape(message)} 2>&1`))
     commits++
+
+    // Re-apply the advisory-block disable that the checkout above just reverted.
+    //
+    // It is set once before Phase A so an advisory-affected package cannot block the whole
+    // solve (we report advisories separately via `composer audit`). But on the vendor path
+    // `git checkout -- composer.json` throws that edit away to keep the commit byte-clean —
+    // so from Phase A's first commit onward, Phase B was silently running with advisory
+    // blocking back ON. Latent until something needed to stay at an advisory-affected
+    // version; then it surfaces as an unresolvable solve whose real cause is buried in
+    // composer's output. Restore it AFTER the commit, so the committed tree is unaffected.
+    if (!integrated) {
+      await run(composer(`config --no-plugins policy.advisories.block false 2>&1`))
+    }
   }
 
   // Phase A — Drupal core as the "upstream" update. -W pulls core's own deps.
@@ -667,6 +680,34 @@ async function composerStrategy(
       if (!lockedVer) {
         throw new Error(`Composer could not apply the pinned patch for ${pkg} (${patchBlocked.patch}), and ${pkg} is not in composer.lock, so it cannot be held at a known-good version. Refresh or remove the patch.`)
       }
+
+      // NEVER hold a package at a version with a known security advisory.
+      //
+      // Holding is the right move when a stale patch blocks an ordinary update. It is the
+      // wrong move when the held version is vulnerable, because then the update we are
+      // declining to make IS the security fix — we would commit and deploy a known-
+      // vulnerable release, and the loud warning would sit in a summary nobody must miss.
+      // A blocked run is the safer failure: it stops, names both advisories and the patch,
+      // and asks for a human.
+      //
+      // The lock is untouched after a failed solve, so auditing it here describes exactly
+      // the version we are about to pin. inst is precisely this case: drupal/paragraphs
+      // 1.20.0 carries SA-CONTRIB-2026-060 and -061 (access bypass, fixed in 1.21.0), so
+      // the 1.23.0 upgrade its 2020 patch was blocking is the security fix.
+      const auditRaw = (await run(composer(`audit --locked --format=json 2>&1`))).stdout
+      const advisories = advisoriesFor(cleanJson(auditRaw), pkg)
+      if (advisories.length) {
+        throw new Error(
+          `${pkg} cannot be updated: its pinned patch (${patchBlocked.title ?? patchBlocked.patch}) `
+          + `no longer applies to the newer release. It also cannot be held at ${lockedVer}, because `
+          + `that version is affected by ${advisories.join(', ')} — holding it would keep a known `
+          + `vulnerability in place, and the update being blocked is the fix. This needs a person: `
+          + `refresh the patch against the new release (a drupal.org issue-fork MR diff tracks the `
+          + `branch; a dated static .patch does not), or drop the patch if the issue has landed `
+          + `upstream. Nothing was committed.`,
+        )
+      }
+
       const section = pinPackage(cjson, pkg, lockedVer)
       autoSkipped.push(pkg)
 
@@ -698,11 +739,12 @@ async function composerStrategy(
           delete cjson[section][pkg]
           autoSkipped.push(pkg)
           const bucket = origLock.get(pkg)?.type === 'drupal-theme' ? 'themes' : 'plugins'
+          const why = explainBlocker(phaseOutput, pkg, profile.coreMajor)
           job[bucket].skipped.push({
             name: pkg, title: pkg,
-            reason: `no Drupal ${profile.coreMajor} compatible release — held at ${lockedVer}`,
+            reason: `${why} — held at ${lockedVer}`,
           })
-          log('warn', `⚠ Skipping ${pkg} (held at ${lockedVer}): no Drupal ${profile.coreMajor} compatible release`)
+          log('warn', `⚠ Skipping ${pkg} (held at ${lockedVer}): ${why}`)
           stripped++
           break
         }
