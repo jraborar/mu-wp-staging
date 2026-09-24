@@ -154,10 +154,17 @@ async function rewriteMultisiteDomain(job: StagingJob, log: LogFn): Promise<void
     ...blogIds.map((id) => (id === '1' ? 'wp_options' : `wp_${id}_options`)),
   ]
 
+  // Counts rows that STILL hold the OLD domain — not rows that merely aren't the new
+  // one. A `<> newDomain` check looked equivalent but isn't: a domain-mapped sub-site
+  // (e.g. a blog whose `wp_blogs.domain` is its own custom domain, never `oldDomain`
+  // to begin with) is neither old nor new and would read as permanently "stale" no
+  // matter how many attempts run — failing every rewrite on a network that has one.
+  // Observed on tstc-multisite: blog_id=2 mapped to a separate domain, "1 row(s)
+  // still stale" after 3 attempts even though the boot-critical rows had converged.
   const countResidual = async (): Promise<number | null> => {
     const r = await run(wp(job,
       `db query "SELECT count(*) FROM (SELECT domain FROM wp_site UNION ALL SELECT domain FROM wp_blogs) d`
-      + ` WHERE domain <> '${newDomain}';" --skip-column-names`))
+      + ` WHERE domain = '${oldDomain}';" --skip-column-names`))
     const m = (r.stdout.match(/^\s*(\d+)\s*$/m) ?? [])[1]
     return m === undefined ? null : Number(m)
   }
