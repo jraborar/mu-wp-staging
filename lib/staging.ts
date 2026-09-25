@@ -501,7 +501,54 @@ function buildStepList(job: StagingJob): string[] {
   })
 }
 
+/**
+ * Guarantees every job reaches a terminal state, no matter where it dies.
+ *
+ * `runStagingPipeline` opens its own try/catch only once the pipeline proper starts —
+ * everything before that (the registry lookup, the PHP bind, and critically the
+ * `createStagingRecord` insert) runs unprotected. Every caller invokes this as a
+ * floating `void executeJob(job)`, so a rejection from that preamble was nobody's:
+ * `finishJob` never ran, the job sat in the in-memory store as 'running' forever, and
+ * `/api/jobs` kept feeding it to the History tab as a Live card that never resolved and
+ * could not be cancelled. Worse, the one call most likely to fail there is the
+ * staging_history insert itself — so the run left no DB row either and never showed up
+ * under Past. Observed on bowside-capital: a permanent Live card with zero `running`
+ * rows in the database.
+ *
+ * The catch is deliberately broad and idempotent: if the pipeline already settled the
+ * job, this leaves it alone.
+ */
 export async function executeJob(job: StagingJob): Promise<void> {
+  try {
+    await runStagingPipeline(job)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+
+    // Already settled by the pipeline's own handler — leave its verdict and its record
+    // alone. Only a job still in flight was actually stranded by this throw.
+    if (!['running', 'awaiting-approval'].includes(job.status)) return
+
+    appendLog(job, 'error', `Staging aborted before the pipeline could start: ${message}`)
+    finishJob(job, 'failed')
+
+    // The record may never have been inserted (that insert is the likeliest thing to
+    // have thrown). Insert-then-update so the failure is visible under Past either way;
+    // a duplicate-key insert is swallowed by createStagingRecord and the update lands.
+    await createStagingRecord(job.id, {
+      site: job.site,
+      multidev: job.multidev,
+      status: 'failed',
+      started_at: new Date(job.startedAt).toISOString(),
+    }).catch(() => {})
+    await finalizeStagingRecord(job.id, {
+      status: 'failed',
+      completed_at: new Date().toISOString(),
+      logs: job.logs,
+    }).catch(() => {})
+  }
+}
+
+async function runStagingPipeline(job: StagingJob): Promise<void> {
   // Bind this job's PHP context so every terminus command picks the matching php + terminus
   // binary (per-command, no global switch). Seed from the registry; refined after env:info.
   const registrySite = await getSite(job.site).catch(() => null)
@@ -606,6 +653,10 @@ export async function executeJob(job: StagingJob): Promise<void> {
   }
 
   try {
+    // From here on a pipeline is running that checks `cancelRequested` at each step,
+    // so the cancel route can signal instead of force-terminating.
+    job.pipelineStarted = true
+
     // ── 1. Auth ──────────────────────────────────────────────────────────────
     step('Authenticating')
     log('status', 'Verifying Terminus authentication...')

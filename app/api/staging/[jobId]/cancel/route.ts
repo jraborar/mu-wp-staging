@@ -19,8 +19,16 @@ export async function POST(
     return Response.json({ error: 'Job is not cancellable' }, { status: 409 })
   }
 
-  // Force-cancel paused jobs immediately (no pipeline to signal)
-  if (job.status === 'paused') {
+  // Force-cancel immediately when there is no pipeline to signal:
+  //   - paused jobs, which have already unwound; and
+  //   - jobs whose pipeline never entered its try/catch, so nothing will ever read
+  //     `cancelRequested`. Setting the flag on one of those was a silent no-op — the
+  //     Live card stayed stuck at 'running' and Cancel did nothing, every time.
+  if (job.status === 'paused' || !job.pipelineStarted) {
+    // Also raise the flag: a job cancelled in the narrow window between createJob and
+    // the pipeline's try must still unwind at its first checkCancelled rather than run
+    // on behind a UI that says cancelled.
+    job.cancelRequested = true
     job.status = 'cancelled'
     job.emitter.emit('event', { type: 'complete', status: 'cancelled' })
     job.emitter.emit('done')

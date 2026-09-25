@@ -1047,6 +1047,10 @@ export async function runDrupalStaging(job: StagingJob, registrySite: Site | nul
   const workdir = `/tmp/mu_drupal_${job.id}`
 
   try {
+    // From here on a pipeline is running that checks `cancelRequested` at each step,
+    // so the cancel route can signal instead of force-terminating.
+    job.pipelineStarted = true
+
     // ── 1. Auth ────────────────────────────────────────────────────────────────
     step('Authenticating', 1)
     log('status', 'Verifying Terminus authentication...')
