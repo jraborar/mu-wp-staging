@@ -1,4 +1,4 @@
-import { readFile, writeFile } from 'fs/promises'
+import { readFile, writeFile, lstat } from 'fs/promises'
 import { advisoriesFor, canReuseMultidev, explainBlocker, parseInstallFailure, parsePatchFailure, pinPackage, repairMissingGitDir } from '@/lib/composerErrors'
 import {
   type StagingJob,
@@ -405,6 +405,43 @@ interface UpdateOutcome {
   pushed: boolean
 }
 
+// Vendor-mechanism sites commit the whole built tree, so a site-specific post-install
+// script (e.g. wiring a package's config directory to a `private/` path via a symlink)
+// is baked into what we ship. We run Composer with --no-scripts throughout (see
+// composerStrategy's resolveFlags comment), so that script never re-runs here — and
+// Composer re-extracts a package's dist archive wholesale on install/update, which
+// silently replaces the tracked symlink with the package's own on-disk .dist directory.
+// Nothing in a normal `composer update` surfaces that: the solve succeeds, the lock is
+// fine, and the swapped-in directory commits as if it were meant to be there. This is
+// exactly how inst's SAML config broke live in Sept 2026 (simplesamlphp) — caught only
+// because Okta login failed in production, days after the run reported success.
+async function trackedVendorSymlinks(workdir: string, gitc: (args: string) => string): Promise<string[]> {
+  const r = await run(gitc(`ls-tree -r HEAD -- vendor 2>&1`))
+  return r.stdout.split('\n')
+    .map((l) => l.match(/^120000 \S+ \S+\t(.+)$/)?.[1])
+    .filter((p): p is string => !!p)
+}
+
+// Called right before every vendor-path commit. Fails the run rather than shipping a
+// tree where a previously-symlinked path is now a real file/directory — that state is
+// indistinguishable from a successful update by anything composer itself reports.
+async function assertSymlinksIntact(workdir: string, paths: string[]): Promise<void> {
+  for (const p of paths) {
+    let isLink = false
+    try { isLink = (await lstat(`${workdir}/${p}`)).isSymbolicLink() } catch {}
+    if (!isLink) {
+      throw new Error(
+        `Composer replaced the tracked symlink at ${p} with a real file/directory. This is ` +
+        `almost always a package whose post-install script normally recreates this symlink — ` +
+        `a script that never ran here (we run Composer with --no-scripts). Refusing to commit: ` +
+        `this exact failure mode broke inst's SAML/Okta login live in Sept 2026. The fix belongs ` +
+        `in this site's own composer.json/post-install setup, or the symlink needs restoring ` +
+        `before this run can proceed.`
+      )
+    }
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Composer strategy — serves both IC and committed-vendor. `integrated` is the only
 // behavioural switch: IC rewrites the lock and commits it (Pantheon builds); vendor
@@ -437,6 +474,10 @@ async function composerStrategy(
     (line) => log('info', line),
   )
   if (clone.code !== 0) throw new Error(`git clone failed for branch ${job.multidev}`)
+
+  // Snapshot BEFORE Composer touches anything — see trackedVendorSymlinks/
+  // assertSymlinksIntact above. IC never builds vendor/ locally, so this is a no-op there.
+  const preSymlinks = integrated ? [] : await trackedVendorSymlinks(workdir, gitc)
 
   let composerJson = ''
   try { composerJson = await readFile(`${workdir}/composer.json`, 'utf8') } catch {}
@@ -516,6 +557,7 @@ async function composerStrategy(
       await run(gitc(`add composer.lock 2>&1`))
     } else {
       await run(gitc(`checkout -- composer.json 2>&1`))   // discard the advisory-block edit
+      await assertSymlinksIntact(workdir, preSymlinks)     // fail loudly before a broken swap ships
       await stripNestedGitDirs(workdir)                    // else source-installed pkgs commit as gitlinks
       await run(gitc(`add -A 2>&1`))                       // vendor/, core/, modules/contrib/, lock
     }
