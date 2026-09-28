@@ -206,3 +206,33 @@ export async function getScheduledDeploymentTimes(manilaDateStr: string): Promis
   if (error) console.error('[supabase] getScheduledDeploymentTimes:', error.message)
   return (data ?? []).map((r) => r.scheduled_for as string)
 }
+
+// True if `site` already has an unresolved (pending or triggered) scheduled_deployments
+// row for `destination` — regardless of which source multidev name it carries. This is
+// the "have I already handled this" signal for the fast-track upstream/security scan
+// lanes in scheduler.ts, replacing their old terminus `<site>.dev` probe + same-day key:
+// staging always builds fresh from LIVE, so `.dev` only reflects a change once the
+// deploy actually lands there, which per bug_upstream_scan_wipes_scheduled_multidev can
+// sit pending for days — long enough that a same-day key resets and the scan re-fires
+// on a site it already staged. A stacked pending/triggered row IS proof of that,
+// independent of the multidev name or how long ago it was created.
+export async function hasUnresolvedDeployment(site: string, destination: string): Promise<boolean> {
+  const db = getClient()
+  // Fail closed: unlike the reads above, this signal gates whether a fast-track lane is
+  // allowed to fire at all. An unconfigured client or a failed query must not be read as
+  // "nothing pending" — that is exactly the mistake that let the scan re-stage sites it
+  // had already handled. The regular scheduled lane (runDueJobs) is unaffected either way.
+  if (!db) return true
+  const { data, error } = await db
+    .from('scheduled_deployments')
+    .select('id')
+    .eq('site', site)
+    .eq('destination', destination)
+    .in('status', ['pending', 'triggered'])
+    .limit(1)
+  if (error) {
+    console.error('[supabase] hasUnresolvedDeployment:', error.message)
+    return true
+  }
+  return (data?.length ?? 0) > 0
+}
