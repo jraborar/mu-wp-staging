@@ -9,7 +9,8 @@ import {
 } from '@/lib/jobStore'
 import { run, runStream, shellEscape, cleanJson, terminusPhp } from '@/lib/terminus'
 import { updateSite, type Site } from '@/lib/sites'
-import { prebookDeployment, reconcileDeployment } from '@/lib/schedule'
+import { prebookDeployment, reconcileDeployment, cancelStaleBooking } from '@/lib/schedule'
+import { selectStaleMultidevs } from '@/lib/multidevCleanup'
 import {
   createStagingRecord,
   finalizeStagingRecord,
@@ -140,16 +141,6 @@ function env(job: StagingJob): string {
 
 function checkCancelled(job: StagingJob): void {
   if (job.cancelRequested) throw new CancelledError()
-}
-
-// Find a multidev whose name exactly matches prefix-YYMMDD (mirrors staging.ts).
-function findByPrefix(list: string, prefix: string): string | null {
-  const re = new RegExp(`^${prefix}-\\d{6}$`)
-  for (const line of list.split('\n')) {
-    const trimmed = line.trim()
-    if (re.test(trimmed)) return trimmed
-  }
-  return null
 }
 
 // Map a php_version ("8.1.34") to the container's matching CLI binary.
@@ -1125,7 +1116,6 @@ export async function runDrupalStaging(job: StagingJob, registrySite: Site | nul
     log('status', 'Checking multidev availability...')
     const multidevList = (await run(`terminus multidev:list ${job.site} --field=id 2>&1`)).stdout
     const currentMultidevs = multidevList.split('\n').map(l => l.trim()).filter(l => /^[a-z0-9][a-z0-9-]{0,10}$/.test(l))
-    const isStandardName = /^mu-\d{6}$/.test(job.multidev)
     const targetExists = currentMultidevs.includes(job.multidev)
 
     // Rebuilding the multidev is ~60% of a run's wall-clock (measured on inst: 9m47s and
@@ -1149,9 +1139,15 @@ export async function runDrupalStaging(job: StagingJob, registrySite: Site | nul
         : `${job.multidev} already exists but could not be proven untouched — rebuilding it from live`)
     }
 
-    // A reused multidev occupies the slot it already held, so it adds nothing to the count.
-    const existingMu = reuseTarget ? null : (targetExists ? job.multidev : isStandardName ? findByPrefix(multidevList, 'mu') : null)
-    const countAfterDelete = existingMu ? currentMultidevs.length - 1 : currentMultidevs.length
+    // A reused multidev occupies the slot it already held, so it adds nothing to the count
+    // and nothing gets deleted below. Otherwise: always delete the job's OWN target if it
+    // already exists (clean slate), and reap EVERY OTHER mu-YYMMDD env too — not just the
+    // first match (that used to be findByPrefix(), which returned an arbitrary single env;
+    // once two or more piled up, whichever one "lost" survived — see
+    // bug_upstream_scan_wipes_scheduled_multidev). Never sweeps non-standard names.
+    const staleMultidevs = selectStaleMultidevs(currentMultidevs, job.multidev)
+    const multidevsToDelete = reuseTarget ? [] : (targetExists ? [job.multidev, ...staleMultidevs] : staleMultidevs)
+    const countAfterDelete = currentMultidevs.length - multidevsToDelete.length
     if (!reuseTarget && countAfterDelete >= profile.maxMultidevs) {
       throw new Error(`All ${profile.maxMultidevs} multidev slots are in use — free a slot and re-run`)
     }
@@ -1162,11 +1158,15 @@ export async function runDrupalStaging(job: StagingJob, registrySite: Site | nul
       log('create', `Reusing existing multidev ${job.multidev} (skipping ~10 min rebuild)`)
       postStep(`♻️ Reusing untouched multidev \`${job.multidev}\` — skipping the rebuild`)
     } else {
-      if (existingMu) {
-        log('delete', `Removing existing multidev ${existingMu}...`)
-        postStep(`🗑 Removing old multidev \`${existingMu}\`...`)
-        await run(`terminus multidev:delete --yes --delete-branch ${job.site}.${existingMu} 2>&1`)
-        log('deleted', `Removed ${existingMu}`)
+      for (const staleMu of multidevsToDelete) {
+        // Cancel any pending deploy booking sourced from this env FIRST — otherwise a
+        // scheduled_deployments row is left pointing at a multidev that no longer exists,
+        // and the deploy fails when it fires ("Multidev does not exist on site X").
+        await cancelStaleBooking(job, staleMu)
+        log('delete', `Removing existing multidev ${staleMu}...`)
+        postStep(`🗑 Removing old multidev \`${staleMu}\`...`)
+        await run(`terminus multidev:delete --yes --delete-branch ${job.site}.${staleMu} 2>&1`)
+        log('deleted', `Removed ${staleMu}`)
       }
       log('create', `Creating multidev ${job.multidev} from live...`)
       postStep(`◈ Creating multidev \`${job.multidev}\` from live... _(a few minutes)_`)
