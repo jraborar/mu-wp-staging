@@ -707,13 +707,10 @@ async function runStagingPipeline(job: StagingJob): Promise<void> {
       const diff = await run(`terminus env:diffstat ${job.site}.${envName} --format=json 2>&1`)
       let hasChanges = false
       try {
-        const cleaned = diff.stdout.split('\n')
-          .filter(l => !/^\s*(Deprecated|Warning|Notice|PHP):/i.test(l))
-          .join('\n').trim()
-        const data = JSON.parse(cleaned)
+        const data = parseWpJson(cleanJson(diff.stdout))
         hasChanges = Array.isArray(data) && data.length > 0
       } catch {
-        hasChanges = diff.stdout.includes('files changed') || diff.stdout.includes('ahead')
+        hasChanges = diff.stdout.includes('files changed')
       }
       if (hasChanges) {
         log('warn', `Uncommitted changes detected in ${envName} — prompting`)
