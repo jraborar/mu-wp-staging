@@ -1,7 +1,8 @@
 import { type StagingJob, appendLog, finishJob, setStep, waitForApproval } from '@/lib/jobStore'
 import { run, runStream, shellEscape, cleanJson, terminusPhp } from '@/lib/terminus'
 import { getSite, updateSite } from '@/lib/sites'
-import { prebookDeployment, reconcileDeployment } from '@/lib/schedule'
+import { prebookDeployment, reconcileDeployment, cancelStaleBooking } from '@/lib/schedule'
+import { selectStaleMultidevs } from '@/lib/multidevCleanup'
 import {
   buildUpdateSummary,
   buildCommitMessage,
@@ -276,16 +277,6 @@ async function rewriteMultisiteDomain(job: StagingJob, log: LogFn): Promise<void
   }
 
   log('success', `Multisite network domain rewritten to ${newDomain}`)
-}
-
-// Find a multidev whose name exactly matches prefix-YYMMDD
-function findByPrefix(list: string, prefix: string): string | null {
-  const re = new RegExp(`^${prefix}-\\d{6}$`)
-  for (const line of list.split('\n')) {
-    const trimmed = line.trim()
-    if (re.test(trimmed)) return trimmed
-  }
-  return null
 }
 
 async function revertUpstreamConflict(job: StagingJob, preApplyHash: string): Promise<boolean> {
@@ -716,14 +707,16 @@ export async function executeJob(job: StagingJob): Promise<void> {
     const currentCount = currentMultidevs.length
 
     // Always delete the job's OWN target multidev if it already exists (ensures clean slate,
-    // especially for test mode re-runs). Only skip cleanup of OTHER mu-YYMMDD envs when using
-    // a non-standard name — that protects manually-staged production envs from accidental deletion.
-    const isStandardName = /^mu-\d{6}$/.test(job.multidev)
+    // especially for test mode re-runs). Every OTHER mu-YYMMDD env is stale from a previous
+    // run and gets reaped too — ALL of them, not just the first match (that used to be
+    // findByPrefix(), which returned an arbitrary single env; once two or more piled up,
+    // whichever one "lost" survived — see bug_upstream_scan_wipes_scheduled_multidev). Only
+    // ever touches the strict mu-YYMMDD shape — non-standard names are never swept, which
+    // protects manually-staged production envs from accidental deletion.
     const targetAlreadyExists = currentMultidevs.includes(job.multidev)
-    const existingMu = targetAlreadyExists
-      ? job.multidev
-      : isStandardName ? findByPrefix(multidevList, 'mu') : null
-    const countAfterDelete = existingMu ? currentCount - 1 : currentCount
+    const staleMultidevs = selectStaleMultidevs(currentMultidevs, job.multidev)
+    const multidevsToDelete = targetAlreadyExists ? [job.multidev, ...staleMultidevs] : staleMultidevs
+    const countAfterDelete = currentCount - multidevsToDelete.length
 
     if (countAfterDelete >= maxMultidevs) {
       log('warn', `Multidev slots full (${currentCount}/${maxMultidevs}) — prompting`)
@@ -740,17 +733,21 @@ export async function executeJob(job: StagingJob): Promise<void> {
       }
     }
 
-    // ── 5. Delete old mu-YYMMDD and create new one ───────────────────────────
+    // ── 5. Delete old mu-YYMMDD envs and create new one ──────────────────────
     step('Creating multidev')
-    if (existingMu) {
-      log('delete', `Removing existing multidev ${existingMu}...`)
-      postStep(`🗑 Removing old multidev \`${existingMu}\`...`)
+    for (const staleMu of multidevsToDelete) {
+      // Cancel any pending deploy booking sourced from this env FIRST — otherwise a
+      // scheduled_deployments row is left pointing at a multidev that no longer exists,
+      // and the deploy fails when it fires ("Multidev does not exist on site X").
+      await cancelStaleBooking(job, staleMu)
+      log('delete', `Removing existing multidev ${staleMu}...`)
+      postStep(`🗑 Removing old multidev \`${staleMu}\`...`)
       // --delete-branch is essential: without it Pantheon keeps the git branch, and the next
       // multidev:create reuses that stale branch (carrying prior runs' plugin commits) instead
       // of branching fresh from live — causing the multidev to drift ahead of live.
-      await run(`terminus multidev:delete --yes --delete-branch ${job.site}.${existingMu} 2>&1`)
-      log('deleted', `Removed ${existingMu}`)
-      postStep(`✓ Removed \`${existingMu}\``)
+      await run(`terminus multidev:delete --yes --delete-branch ${job.site}.${staleMu} 2>&1`)
+      log('deleted', `Removed ${staleMu}`)
+      postStep(`✓ Removed \`${staleMu}\``)
     }
 
     log('create', `Creating multidev ${job.multidev} from live...`)
