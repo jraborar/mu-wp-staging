@@ -66,7 +66,7 @@ export async function POST(request: NextRequest) {
   if (!body) return Response.json({ error: 'Invalid JSON' }, { status: 400 })
 
   const { site, multidev: multidevOverride, testMode, skipUpstream, skipPluginsThemes,
-          securityFastTrack, deployDays, deployDestination } = body as Record<string, unknown>
+          acceptUpstream, securityFastTrack, deployDays, deployDestination } = body as Record<string, unknown>
 
   if (!site || typeof site !== 'string' || !SITE_RE.test(site)) {
     return Response.json({ error: 'Invalid or missing site ID' }, { status: 400 })
@@ -92,6 +92,7 @@ export async function POST(request: NextRequest) {
   const job = createJob(site, multidev, {
     skipUpstream: Boolean(skipUpstream),
     skipPluginsThemes: fastTrack ? true : Boolean(skipPluginsThemes),
+    acceptUpstream: Boolean(acceptUpstream),
     securityFastTrack: fastTrack,
     deployDays: typeof deployDays === 'number' ? deployDays : undefined,
     deployDestination: typeof deployDestination === 'string' ? deployDestination : undefined,
