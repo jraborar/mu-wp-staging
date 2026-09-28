@@ -208,3 +208,28 @@ export async function reconcileDeployment(job: StagingJob, keep: boolean): Promi
 export async function scheduleDeployment(job: StagingJob): Promise<void> {
   await prebookDeployment(job)
 }
+
+// Cancel any pending mu-deployment booking whose `source` is a multidev that's about to
+// be deleted (the fast-track/scheduled cleanup in staging.ts / drupal.ts can reap more
+// than one stale mu-YYMMDD env in one run — see bug_upstream_scan_wipes_scheduled_multidev).
+// Without this, scheduled_deployments keeps a row pointing at an env that no longer
+// exists, and the deploy fails when it fires ("Multidev does not exist on site X").
+// Must be called BEFORE the `terminus multidev:delete` for `source`.
+export async function cancelStaleBooking(job: StagingJob, source: string): Promise<void> {
+  const deployUrl = process.env.MU_DEPLOY_URL
+  if (!deployUrl) return
+
+  const id = await findPendingDeployment(deployUrl, job.site, source)
+  if (!id) return
+
+  try {
+    await fetch(`${deployUrl}/api/schedule`, {
+      method: 'DELETE',
+      headers: mutateHeaders(),
+      body: JSON.stringify({ id }),
+    })
+    appendLog(job, 'warn', `Cancelled pending deploy booking for ${source} — its multidev is being removed`)
+  } catch (err) {
+    appendLog(job, 'warn', `Failed to cancel pending deploy booking for ${source}: ${err instanceof Error ? err.message : String(err)}`)
+  }
+}
