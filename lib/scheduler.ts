@@ -1,5 +1,5 @@
 import { getPacificYYMMDD, getManilaToday, addBusinessDays } from '@/lib/timezone'
-import { listSites, getSite, updateSite, isPaused } from '@/lib/sites'
+import { listSites, getSite, updateSite, isPaused, type Site } from '@/lib/sites'
 import {
   getActiveSchedules,
   updateSchedule,
@@ -15,7 +15,7 @@ import { createJob, getAllJobs } from '@/lib/jobStore'
 import { executeJob } from '@/lib/staging'
 import { run, cleanJson } from '@/lib/terminus'
 import { parseWpJson } from '@/lib/wordpress'
-import { hasRunForMultidev, listStagingWithVrt, clearStagingVrt } from '@/lib/supabase'
+import { hasRunForMultidev, hasUnresolvedDeployment, listStagingWithVrt, clearStagingVrt } from '@/lib/supabase'
 import { deleteVrtRun, runIdFromReportUrl } from '@/lib/vrt'
 import { computeNextOccurrence, isDueNow, isScheduledThisWeek } from '@/lib/cadence'
 import type { StagingSchedule } from '@/lib/scheduleStore'
@@ -55,6 +55,14 @@ function coveredByScheduledUpstream(
   return (schedulesBySite.get(siteName) ?? []).some(
     sc => isScheduledThisWeek(sc, lastDeployment) && !(siteSkipUpstream ?? sc.skip_upstream),
   )
+}
+
+// The destination prebookDeployment will actually book this site's deploy against —
+// same fallback order (site setting, then env default, then 'live') — so the
+// hasUnresolvedDeployment check below asks about the same row prebookDeployment would
+// create or find. Used by both fast-track lanes ahead of createJob.
+function effectiveDestination(site: Pick<Site, 'deploy_destination'>): string {
+  return site.deploy_destination || process.env.MU_DEPLOY_DESTINATION || 'live'
 }
 
 async function runDueJobs(): Promise<void> {
@@ -143,7 +151,7 @@ async function runSecurityCheck(): Promise<void> {
   }
 }
 
-async function runPendingSecurityChecks(): Promise<void> {
+export async function runPendingSecurityChecks(): Promise<void> {
   try {
     const pending = await getPendingSecuritySites()
     if (pending.length === 0) return
@@ -168,6 +176,22 @@ async function runPendingSecurityChecks(): Promise<void> {
       if (coveredByScheduledUpstream(sched.site, schedulesBySite, site.skip_upstream, site.last_deployment)) {
         console.log(`[scheduler] Skipping security staging for ${sched.site} — a scheduled run covers this ISO week`)
         await clearSecurityCheckPending(sched.id)
+        continue
+      }
+
+      // This lane had NO dedupe at all — its only guard cleared the pending flag
+      // AFTER firing, which does nothing against a different lane (or this same
+      // lane, next tick) re-firing on a site already staged minutes earlier. Mirror
+      // runUpstreamCheck's guards: an in-flight job first (cheap, in-memory)...
+      if (getAllJobs().some(j => j.site === sched.site && ACTIVE_JOB_STATUSES.has(j.status))) {
+        console.log(`[scheduler] Skipping security staging for ${sched.site} — a run is already in flight`)
+        continue
+      }
+      // ...then "already handled": an unresolved deploy booking for this destination,
+      // regardless of source multidev name. See hasUnresolvedDeployment for why
+      // terminus `.dev` state can't serve as this signal on its own.
+      if (await hasUnresolvedDeployment(sched.site, effectiveDestination(site))) {
+        console.log(`[scheduler] Skipping security staging for ${sched.site} — an unresolved deploy booking already covers it`)
         continue
       }
       // Check if Pantheon has propagated the upstream update yet
@@ -200,9 +224,8 @@ async function runPendingSecurityChecks(): Promise<void> {
   }
 }
 
-async function runUpstreamCheck(): Promise<void> {
+export async function runUpstreamCheck(): Promise<void> {
   try {
-    const today = getPacificYYMMDD()
     const sites = await listSites()
     // Guardrail: auto_stage gates enrollment — a merely-registered site is never
     // auto-staged by the scan until explicitly opted in. skip_upstream still means
@@ -211,14 +234,9 @@ async function runUpstreamCheck(): Promise<void> {
     if (eligible.length === 0) return
 
     const schedulesBySite = groupSchedulesBySite(await getActiveSchedules())
-    const multidev = `mu-${today}`
+    const multidev = `mu-${getPacificYYMMDD()}`
 
     for (const site of eligible) {
-      // Skip if we already staged upstream for this site today
-      const stateKey = `upstream_staged_${site.site}`
-      const lastStaged = await getSchedulerState(stateKey)
-      if (lastStaged === today) continue
-
       // Off-week only (see coveredByScheduledUpstream): if a regular scheduled run
       // covers this ISO week, let it carry the upstream — don't wipe its multidev.
       if (coveredByScheduledUpstream(site.site, schedulesBySite, site.skip_upstream, site.last_deployment)) {
@@ -234,8 +252,19 @@ async function runUpstreamCheck(): Promise<void> {
         continue
       }
       if (await hasRunForMultidev(site.site, multidev)) {
-        await setSchedulerState(stateKey, today)
         console.log(`[scheduler] Skipping upstream scan for ${site.site} — already staged today (${multidev})`)
+        continue
+      }
+      // "Already handled" signal: an unresolved deploy booking for this destination,
+      // regardless of source multidev name or how many days ago it was created. This
+      // replaces the old terminus `.dev` probe + same-day state key — staging always
+      // builds fresh from LIVE, so `.dev` only reflects the change once the deploy
+      // actually lands there, which can sit pending for days (see
+      // bug_upstream_scan_wipes_scheduled_multidev), guaranteeing the same-day key
+      // reset and re-fire well before that. Terminus `.dev` state below stays as
+      // "is there an update to apply at all" — it just can't also answer this.
+      if (await hasUnresolvedDeployment(site.site, effectiveDestination(site))) {
+        console.log(`[scheduler] Skipping upstream scan for ${site.site} — an unresolved deploy booking already covers it`)
         continue
       }
 
@@ -257,7 +286,6 @@ async function runUpstreamCheck(): Promise<void> {
         securityFastTrack: true,
       })
       void executeJob(job)
-      await setSchedulerState(stateKey, today)
       void broadcastText(`🔐 Auto-staging *${site.machine_name ?? site.site}* — upstream/security update detected (\`${multidev}\`, upstream-only fast-track).`)
       console.log(`[scheduler] Upstream updates found for ${site.site} — staging upstream only (${multidev})`)
     }
