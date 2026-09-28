@@ -72,6 +72,10 @@ export interface StagingJob {
   // flow control
   cancelRequested: boolean
   pendingApproval: PendingApproval | null
+  // True once the staging pipeline has entered its own try/catch and is therefore
+  // watching `cancelRequested`. While false, nothing is running that could observe
+  // a cancel — the cancel route force-terminates instead of signalling into a void.
+  pipelineStarted: boolean
   // metadata
   scheduleId?: string
   multidevCreated: boolean
@@ -129,6 +133,7 @@ export function createJob(site: string, multidev: string, opts: CreateJobOptions
     skipPluginsThemes: opts.skipPluginsThemes ?? false,
     cancelRequested: false,
     pendingApproval: null,
+    pipelineStarted: false,
     scheduleId: opts.scheduleId,
     multidevCreated: false,
     deployDays: opts.deployDays,
