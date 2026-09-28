@@ -333,6 +333,96 @@ async function run() {
     check('the pending flag was cleared', globalThis.__SCHED_T__.clearedPending.includes('sched-1'))
   }
 
+  // ── Gap: every fixture above uses the default deploy_destination: 'live', so a
+  // regression that hardcoded 'live' into the booking check (instead of routing through
+  // effectiveDestination(site)) would pass every test above unnoticed. These two prove
+  // each fast-track lane asks hasUnresolvedDeployment about the SITE's actual destination.
+  console.log('\nrunUpstreamCheck — site has a non-default deploy_destination (\'test\') → booking check asks about THAT destination, not \'live\'')
+  {
+    resetTestState()
+    globalThis.__SCHED_T__.sites = [site({ deploy_destination: 'test' })]
+    globalThis.__SCHED_T__.hasUnresolvedDeploymentResult = false
+    globalThis.__SCHED_T__.terminusHasUpdates = true
+
+    await runUpstreamCheck()
+
+    check('the booking check ran for (site-a, test)',
+      globalThis.__SCHED_T__.hasUnresolvedDeploymentCalls.some(c => c.site === 'site-a' && c.destination === 'test'),
+      JSON.stringify(globalThis.__SCHED_T__.hasUnresolvedDeploymentCalls))
+    check('never asked about \'live\' for this site',
+      !globalThis.__SCHED_T__.hasUnresolvedDeploymentCalls.some(c => c.destination === 'live'),
+      JSON.stringify(globalThis.__SCHED_T__.hasUnresolvedDeploymentCalls))
+    check('the created job carries the same non-default destination',
+      globalThis.__SCHED_T__.createdJobs[0]?.deployDestination === 'test',
+      JSON.stringify(globalThis.__SCHED_T__.createdJobs[0]))
+  }
+
+  console.log('\nrunPendingSecurityChecks — site has a non-default deploy_destination (\'test\') → booking check asks about THAT destination, not \'live\'')
+  {
+    resetTestState()
+    globalThis.__SCHED_T__.sites = [site({ deploy_destination: 'test' })]
+    globalThis.__SCHED_T__.pendingSecuritySites = [pendingSecuritySite()]
+    globalThis.__SCHED_T__.hasUnresolvedDeploymentResult = false
+    globalThis.__SCHED_T__.terminusHasUpdates = true
+
+    await runPendingSecurityChecks()
+
+    check('the booking check ran for (site-a, test)',
+      globalThis.__SCHED_T__.hasUnresolvedDeploymentCalls.some(c => c.site === 'site-a' && c.destination === 'test'),
+      JSON.stringify(globalThis.__SCHED_T__.hasUnresolvedDeploymentCalls))
+    check('never asked about \'live\' for this site',
+      !globalThis.__SCHED_T__.hasUnresolvedDeploymentCalls.some(c => c.destination === 'live'),
+      JSON.stringify(globalThis.__SCHED_T__.hasUnresolvedDeploymentCalls))
+  }
+
+  // ── Gap: every test above exercises runUpstreamCheck and runPendingSecurityChecks in
+  // isolation, each with a FIXED mocked hasUnresolvedDeployment result for the whole call —
+  // so none of them prove the two lanes actually interact through that shared signal the
+  // way production does (lane A stages a site → its pipeline books a deploy → lane B, on
+  // its own tick, must see that booking and stand down). This drives both lanes back to
+  // back against the SAME site and site.
+  //
+  // SEAM: this suite fakes @/lib/supabase entirely (see file header), so createJob/executeJob
+  // here are recorded, not run for real — runUpstreamCheck's simulated staging never actually
+  // writes a scheduled_deployments row, so hasUnresolvedDeployment can't organically flip.
+  // A fully-real version (stage → prebookDeployment → row written → next lane's SELECT sees
+  // it) would need an integration test against a real or fully-faithful-fake Supabase table,
+  // which this repo has neither of (dedupe-signal-check.ts's fake stubs the query-builder
+  // shape, not persisted rows). Standing in for that write: flip hasUnresolvedDeploymentResult
+  // to true between the two calls, representing "the booking runUpstreamCheck's job would
+  // eventually create now exists" — and prove the second lane's call reacts to it.
+  console.log('\nCross-lane: runUpstreamCheck stages a site, then runPendingSecurityChecks on the SAME site sees the resulting booking as unresolved and skips')
+  {
+    resetTestState()
+    globalThis.__SCHED_T__.sites = [site()]
+    globalThis.__SCHED_T__.pendingSecuritySites = [pendingSecuritySite()]
+    globalThis.__SCHED_T__.hasUnresolvedDeploymentResult = false
+    globalThis.__SCHED_T__.terminusHasUpdates = true
+
+    await runUpstreamCheck()
+    check('runUpstreamCheck staged the site (no booking existed yet)',
+      globalThis.__SCHED_T__.createdJobs.length === 1,
+      JSON.stringify(globalThis.__SCHED_T__.createdJobs))
+
+    // Simulate: staging's real pipeline (executeJob → prebookDeployment, not exercised by
+    // this fake) has since written a pending scheduled_deployments row for (site-a, live).
+    globalThis.__SCHED_T__.hasUnresolvedDeploymentResult = true
+
+    await runPendingSecurityChecks()
+
+    check('runPendingSecurityChecks did not re-stage the same site',
+      globalThis.__SCHED_T__.createdJobs.length === 1, // still just the one from runUpstreamCheck
+      JSON.stringify(globalThis.__SCHED_T__.createdJobs))
+    check('terminus was not queried a second time',
+      globalThis.__SCHED_T__.terminusCalls.length === 1,
+      JSON.stringify(globalThis.__SCHED_T__.terminusCalls))
+    check('the pending security flag was left set (deferred, not dropped)',
+      globalThis.__SCHED_T__.clearedPending.length === 0)
+    check('both lanes asked about the same (site, destination) the booking was made for',
+      globalThis.__SCHED_T__.hasUnresolvedDeploymentCalls.filter(c => c.site === 'site-a' && c.destination === 'live').length === 2,
+      JSON.stringify(globalThis.__SCHED_T__.hasUnresolvedDeploymentCalls))
+  }
+
   console.log(`\n${pass} passed, ${fail} failed`)
   if (fail > 0) process.exit(1)
 }
