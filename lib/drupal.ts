@@ -1,4 +1,4 @@
-import { readFile, writeFile } from 'fs/promises'
+import { readFile, writeFile, lstat } from 'fs/promises'
 import { advisoriesFor, canReuseMultidev, explainBlocker, parseInstallFailure, parsePatchFailure, pinPackage, repairMissingGitDir } from '@/lib/composerErrors'
 import {
   type StagingJob,
@@ -9,7 +9,8 @@ import {
 } from '@/lib/jobStore'
 import { run, runStream, shellEscape, cleanJson, terminusPhp } from '@/lib/terminus'
 import { updateSite, type Site } from '@/lib/sites'
-import { prebookDeployment, reconcileDeployment } from '@/lib/schedule'
+import { prebookDeployment, reconcileDeployment, cancelStaleBooking } from '@/lib/schedule'
+import { selectStaleMultidevs } from '@/lib/multidevCleanup'
 import {
   createStagingRecord,
   finalizeStagingRecord,
@@ -140,16 +141,6 @@ function env(job: StagingJob): string {
 
 function checkCancelled(job: StagingJob): void {
   if (job.cancelRequested) throw new CancelledError()
-}
-
-// Find a multidev whose name exactly matches prefix-YYMMDD (mirrors staging.ts).
-function findByPrefix(list: string, prefix: string): string | null {
-  const re = new RegExp(`^${prefix}-\\d{6}$`)
-  for (const line of list.split('\n')) {
-    const trimmed = line.trim()
-    if (re.test(trimmed)) return trimmed
-  }
-  return null
 }
 
 // Map a php_version ("8.1.34") to the container's matching CLI binary.
@@ -405,6 +396,43 @@ interface UpdateOutcome {
   pushed: boolean
 }
 
+// Vendor-mechanism sites commit the whole built tree, so a site-specific post-install
+// script (e.g. wiring a package's config directory to a `private/` path via a symlink)
+// is baked into what we ship. We run Composer with --no-scripts throughout (see
+// composerStrategy's resolveFlags comment), so that script never re-runs here — and
+// Composer re-extracts a package's dist archive wholesale on install/update, which
+// silently replaces the tracked symlink with the package's own on-disk .dist directory.
+// Nothing in a normal `composer update` surfaces that: the solve succeeds, the lock is
+// fine, and the swapped-in directory commits as if it were meant to be there. This is
+// exactly how inst's SAML config broke live in Sept 2026 (simplesamlphp) — caught only
+// because Okta login failed in production, days after the run reported success.
+async function trackedVendorSymlinks(workdir: string, gitc: (args: string) => string): Promise<string[]> {
+  const r = await run(gitc(`ls-tree -r HEAD -- vendor 2>&1`))
+  return r.stdout.split('\n')
+    .map((l) => l.match(/^120000 \S+ \S+\t(.+)$/)?.[1])
+    .filter((p): p is string => !!p)
+}
+
+// Called right before every vendor-path commit. Fails the run rather than shipping a
+// tree where a previously-symlinked path is now a real file/directory — that state is
+// indistinguishable from a successful update by anything composer itself reports.
+async function assertSymlinksIntact(workdir: string, paths: string[]): Promise<void> {
+  for (const p of paths) {
+    let isLink = false
+    try { isLink = (await lstat(`${workdir}/${p}`)).isSymbolicLink() } catch {}
+    if (!isLink) {
+      throw new Error(
+        `Composer replaced the tracked symlink at ${p} with a real file/directory. This is ` +
+        `almost always a package whose post-install script normally recreates this symlink — ` +
+        `a script that never ran here (we run Composer with --no-scripts). Refusing to commit: ` +
+        `this exact failure mode broke inst's SAML/Okta login live in Sept 2026. The fix belongs ` +
+        `in this site's own composer.json/post-install setup, or the symlink needs restoring ` +
+        `before this run can proceed.`
+      )
+    }
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Composer strategy — serves both IC and committed-vendor. `integrated` is the only
 // behavioural switch: IC rewrites the lock and commits it (Pantheon builds); vendor
@@ -437,6 +465,10 @@ async function composerStrategy(
     (line) => log('info', line),
   )
   if (clone.code !== 0) throw new Error(`git clone failed for branch ${job.multidev}`)
+
+  // Snapshot BEFORE Composer touches anything — see trackedVendorSymlinks/
+  // assertSymlinksIntact above. IC never builds vendor/ locally, so this is a no-op there.
+  const preSymlinks = integrated ? [] : await trackedVendorSymlinks(workdir, gitc)
 
   let composerJson = ''
   try { composerJson = await readFile(`${workdir}/composer.json`, 'utf8') } catch {}
@@ -516,6 +548,7 @@ async function composerStrategy(
       await run(gitc(`add composer.lock 2>&1`))
     } else {
       await run(gitc(`checkout -- composer.json 2>&1`))   // discard the advisory-block edit
+      await assertSymlinksIntact(workdir, preSymlinks)     // fail loudly before a broken swap ships
       await stripNestedGitDirs(workdir)                    // else source-installed pkgs commit as gitlinks
       await run(gitc(`add -A 2>&1`))                       // vendor/, core/, modules/contrib/, lock
     }
@@ -1087,7 +1120,6 @@ export async function runDrupalStaging(job: StagingJob, registrySite: Site | nul
     log('status', 'Checking multidev availability...')
     const multidevList = (await run(`terminus multidev:list ${job.site} --field=id 2>&1`)).stdout
     const currentMultidevs = multidevList.split('\n').map(l => l.trim()).filter(l => /^[a-z0-9][a-z0-9-]{0,10}$/.test(l))
-    const isStandardName = /^mu-\d{6}$/.test(job.multidev)
     const targetExists = currentMultidevs.includes(job.multidev)
 
     // Rebuilding the multidev is ~60% of a run's wall-clock (measured on inst: 9m47s and
@@ -1111,9 +1143,15 @@ export async function runDrupalStaging(job: StagingJob, registrySite: Site | nul
         : `${job.multidev} already exists but could not be proven untouched — rebuilding it from live`)
     }
 
-    // A reused multidev occupies the slot it already held, so it adds nothing to the count.
-    const existingMu = reuseTarget ? null : (targetExists ? job.multidev : isStandardName ? findByPrefix(multidevList, 'mu') : null)
-    const countAfterDelete = existingMu ? currentMultidevs.length - 1 : currentMultidevs.length
+    // A reused multidev occupies the slot it already held, so it adds nothing to the count
+    // and nothing gets deleted below. Otherwise: always delete the job's OWN target if it
+    // already exists (clean slate), and reap EVERY OTHER mu-YYMMDD env too — not just the
+    // first match (that used to be findByPrefix(), which returned an arbitrary single env;
+    // once two or more piled up, whichever one "lost" survived — see
+    // bug_upstream_scan_wipes_scheduled_multidev). Never sweeps non-standard names.
+    const staleMultidevs = selectStaleMultidevs(currentMultidevs, job.multidev)
+    const multidevsToDelete = reuseTarget ? [] : (targetExists ? [job.multidev, ...staleMultidevs] : staleMultidevs)
+    const countAfterDelete = currentMultidevs.length - multidevsToDelete.length
     if (!reuseTarget && countAfterDelete >= profile.maxMultidevs) {
       throw new Error(`All ${profile.maxMultidevs} multidev slots are in use — free a slot and re-run`)
     }
@@ -1124,11 +1162,15 @@ export async function runDrupalStaging(job: StagingJob, registrySite: Site | nul
       log('create', `Reusing existing multidev ${job.multidev} (skipping ~10 min rebuild)`)
       postStep(`♻️ Reusing untouched multidev \`${job.multidev}\` — skipping the rebuild`)
     } else {
-      if (existingMu) {
-        log('delete', `Removing existing multidev ${existingMu}...`)
-        postStep(`🗑 Removing old multidev \`${existingMu}\`...`)
-        await run(`terminus multidev:delete --yes --delete-branch ${job.site}.${existingMu} 2>&1`)
-        log('deleted', `Removed ${existingMu}`)
+      for (const staleMu of multidevsToDelete) {
+        // Cancel any pending deploy booking sourced from this env FIRST — otherwise a
+        // scheduled_deployments row is left pointing at a multidev that no longer exists,
+        // and the deploy fails when it fires ("Multidev does not exist on site X").
+        await cancelStaleBooking(job, staleMu)
+        log('delete', `Removing existing multidev ${staleMu}...`)
+        postStep(`🗑 Removing old multidev \`${staleMu}\`...`)
+        await run(`terminus multidev:delete --yes --delete-branch ${job.site}.${staleMu} 2>&1`)
+        log('deleted', `Removed ${staleMu}`)
       }
       log('create', `Creating multidev ${job.multidev} from live...`)
       postStep(`◈ Creating multidev \`${job.multidev}\` from live... _(a few minutes)_`)
