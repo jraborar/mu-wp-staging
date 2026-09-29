@@ -974,17 +974,19 @@ async function runStagingPipeline(job: StagingJob): Promise<void> {
         // runStream hands lines to the callback and returns only an exit code, so
         // keep the output if we need to pick the conflicting paths out of it.
         const applyLines: string[] = []
+        const acceptFlag = job.acceptUpstream ? ' --accept-upstream' : ''
+        if (job.acceptUpstream) log('info', 'Running upstream apply with --accept-upstream (customer-approved)')
         const applyResult = await runStream(
-          `terminus upstream:updates:apply --updatedb ${env(job)} 2>&1`,
+          `terminus upstream:updates:apply --updatedb${acceptFlag} ${env(job)} 2>&1`,
           (line) => { applyLines.push(line); log('info', line) },
         )
 
         if (applyResult.code !== 0) {
           job.upstreamConflict = true
-          // Keep the conflicting paths. We deliberately never pass
-          // --accept-upstream (it would overwrite the customer's customizations
-          // with no way back short of a snapshot), so the resolution is theirs to
-          // make — and they can only make it if we hand them the file list.
+          // Keep the conflicting paths. By default we never pass --accept-upstream
+          // (it would overwrite the customer's customizations with no way back short
+          // of a snapshot); the resolution is theirs to make. Set acceptUpstream on
+          // the job only after explicit customer sign-off.
           job.upstreamConflictFiles = Array.from(new Set(
             applyLines
               .map(l => l.match(/CONFLICT \([^)]*\): Merge conflict in (.+?)\s*$/))

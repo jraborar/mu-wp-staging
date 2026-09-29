@@ -69,6 +69,10 @@ export interface StagingJob {
   // options
   skipUpstream: boolean
   skipPluginsThemes: boolean
+  // When true, passes --accept-upstream to terminus so upstream file conflicts
+  // are resolved in favour of the Pantheon upstream rather than the site's copy.
+  // Only set after explicit customer sign-off — it overwrites their customizations.
+  acceptUpstream: boolean
   // flow control
   cancelRequested: boolean
   pendingApproval: PendingApproval | null
@@ -94,6 +98,7 @@ export interface StagingJob {
 export interface CreateJobOptions {
   skipUpstream?: boolean
   skipPluginsThemes?: boolean
+  acceptUpstream?: boolean
   scheduleId?: string
   deployDays?: number
   deployDestination?: string
@@ -131,6 +136,7 @@ export function createJob(site: string, multidev: string, opts: CreateJobOptions
     stepTotal: 16,
     skipUpstream: opts.skipUpstream ?? false,
     skipPluginsThemes: opts.skipPluginsThemes ?? false,
+    acceptUpstream: opts.acceptUpstream ?? false,
     cancelRequested: false,
     pendingApproval: null,
     pipelineStarted: false,
