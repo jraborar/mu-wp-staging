@@ -99,28 +99,6 @@ export function parseWpJsonStrict<T>(raw: string): T[] | null {
   return parsed as T[]
 }
 
-export function buildUpdateSummary(
-  available: WpListEntry[],
-  results: WpUpdateResult[],
-): UpdateSummary {
-  const resultMap = new Map(results.map((r) => [r.name, r]))
-  const updated: UpdatedItem[] = []
-  const skipped: SkippedItem[] = []
-
-  for (const item of available) {
-    const slug = item.name
-    const title = item.title ?? slug
-    const result = resultMap.get(slug)
-
-    if (result && result.status === 'Updated') {
-      updated.push({ name: slug, title, from: result.old_version, to: result.new_version })
-    } else {
-      skipped.push({ name: slug, title, reason: getSkipReason(slug, result?.status) })
-    }
-  }
-
-  return { updated, skipped }
-}
 
 function formatItem(item: UpdatedItem): string {
   return `- ${item.title} (${item.from} → ${item.to})`
