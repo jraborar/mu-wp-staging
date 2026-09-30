@@ -2422,8 +2422,7 @@ export default function Page() {
       const body: Record<string, unknown> = {
         site: site.trim(),
         skipUpstream,
-        // Fast-track implies upstream-only; the route enforces it too.
-        skipPluginsThemes: securityFastTrack ? true : skipPluginsThemes,
+        skipPluginsThemes,
         securityFastTrack,
         deployDays: stageDeployDays,
         deployDestination: stageDestination,
@@ -2539,12 +2538,12 @@ export default function Page() {
                     onChange={(e) => setSecurityFastTrack(e.target.checked)}
                     className="rounded border-pantheon-border-hi bg-pantheon-bg-elevated accent-pantheon-yellow"
                   />
-                  Security / core update only
+                  Security fast-track
                 </label>
                 {securityFastTrack && (
                   <p className="text-[0.7rem] text-pantheon-text-dim font-mono pl-6">
-                    Upstream only. Deploys on the 24-hour security window instead of the usual wait,
-                    and does not move the site&apos;s staging cadence.
+                    Deploys on the 24-hour security window and does not advance the staging cadence.
+                    Check &ldquo;Skip plugins &amp; themes&rdquo; above for a core-only patch; leave it unchecked to include plugin/theme CVEs.
                   </p>
                 )}
               </div>
