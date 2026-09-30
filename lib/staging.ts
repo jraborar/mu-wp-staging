@@ -4,7 +4,6 @@ import { getSite, updateSite } from '@/lib/sites'
 import { prebookDeployment, reconcileDeployment, cancelStaleBooking } from '@/lib/schedule'
 import { selectStaleMultidevs } from '@/lib/multidevCleanup'
 import {
-  buildUpdateSummary,
   buildCommitMessage,
   parseWpJson,
   parseWpJsonStrict,
@@ -328,7 +327,10 @@ async function runPluginOrThemeUpdates(
   const log = (logType: Parameters<typeof appendLog>[1], m: string) => appendLog(job, logType, m)
 
   log('status', `Checking for ${label.toLowerCase()} updates...`)
-  await run(wp(job, `${type} check-update 2>&1`))
+  const checkUpdateResult = await run(wp(job, `${type} check-update 2>&1`))
+  if (checkUpdateResult.code !== 0) {
+    log('warn', `${label} check-update exited ${checkUpdateResult.code} — update transient may be stale. Raw: ${checkUpdateResult.stdout.slice(0, 300).replace(/\n/g, ' ')}`)
+  }
 
   let listResult = await run(wp(job, `${type} list --update=available --format=json --context=admin`))
   let adminContext = true
@@ -360,9 +362,13 @@ async function runPluginOrThemeUpdates(
   // `${type} update --all` — not just entries in the pre-update "available" list, which can be
   // incomplete right after a multidev is created (update transient not yet refreshed). Without
   // this, plugins that update but weren't in that stale list get silently under-reported.
-  const beforeAll = parseWpJson<{ name: string; title?: string; version?: string }>(
+  const beforeAll = parseWpJsonStrict<{ name: string; title?: string; version?: string }>(
     cleanJson((await run(wp(job, `${type} list --fields=name,title,version --format=json`))).stdout),
   )
+  if (beforeAll === null) {
+    log('error', `${label} list (before-snapshot) did not return valid JSON — cannot compare versions. Run will be marked failed.`)
+    return { updated: [], skipped: [], checkFailed: true }
+  }
   const beforeVersionMap = new Map(beforeAll.map(p => [p.name, p.version]))
   const titleMap = new Map(beforeAll.map(p => [p.name, p.title ?? p.name]))
 
@@ -793,7 +799,10 @@ async function runStagingPipeline(job: StagingJob): Promise<void> {
       // --delete-branch is essential: without it Pantheon keeps the git branch, and the next
       // multidev:create reuses that stale branch (carrying prior runs' plugin commits) instead
       // of branching fresh from live — causing the multidev to drift ahead of live.
-      await run(`terminus multidev:delete --yes --delete-branch ${job.site}.${staleMu} 2>&1`)
+      const deleteResult = await run(`terminus multidev:delete --yes --delete-branch ${job.site}.${staleMu} 2>&1`)
+      if (deleteResult.code !== 0) {
+        throw new Error(`Failed to delete multidev ${staleMu} (exit ${deleteResult.code}): ${deleteResult.stdout.trim()}`)
+      }
       log('deleted', `Removed ${staleMu}`)
       postStep(`✓ Removed \`${staleMu}\``)
     }
@@ -806,13 +815,7 @@ async function runStagingPipeline(job: StagingJob): Promise<void> {
       (line) => log('info', line),
     )
     if (createResult.code !== 0) {
-      // terminus-3 can exit non-zero when Pantheon queues async tasks to stderr
-      // (e.g. "Successfully queued endpoint_wp_search_replace task").
-      // Verify existence before treating as a real failure.
-      const verify = await run(`terminus multidev:list ${job.site} --fields=Name --format=list 2>&1`)
-      const exists  = verify.stdout.split('\n').map(l => l.trim()).includes(job.multidev)
-      if (!exists) throw new Error(`Multidev creation failed`)
-      log('warn', `terminus exited non-zero but ${job.multidev} exists — confirming it is fully ready...`)
+      throw new Error(`Multidev creation failed (exit ${createResult.code}) — a fresh clone from live is required`)
     }
 
     // Guard: wait until the multidev is confirmed initialized before proceeding.
