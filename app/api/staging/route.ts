@@ -81,17 +81,20 @@ export async function POST(request: NextRequest) {
     : (typeof multidevOverride === 'string' && /^[a-z0-9-]{1,11}$/.test(multidevOverride))
       ? multidevOverride
       : `mu-${dateStr}`
-  // An out-of-band security/core patch is NOT a managed-cycle run: it deploys on
+  // An out-of-band security patch is NOT a managed-cycle run: it deploys on
   // the site's security_deploy_hours window (24h) instead of the relative one, and
   // it must NOT advance sites.last_deployment — otherwise a hand-run security patch
   // drags the whole staging cadence forward. Both behaviours hang off this flag
-  // (lib/schedule.ts isFastTrack, lib/staging.ts anchor advance), which until now
-  // only the automatic upstream scan could set. Upstream-only is implied: applying
-  // plugins/themes would make it a regular run wearing a fast-track badge.
+  // (lib/schedule.ts isFastTrack, lib/staging.ts anchor advance).
+  //
+  // When the caller omits skipPluginsThemes, fast-track defaults to upstream-only
+  // (the common case: a core CVE patch). When plugin or theme CVEs require fast-track
+  // treatment, pass skipPluginsThemes: false explicitly to include them while still
+  // getting the 24h deploy window and no cadence-anchor advance.
   const fastTrack = Boolean(securityFastTrack)
   const job = createJob(site, multidev, {
     skipUpstream: Boolean(skipUpstream),
-    skipPluginsThemes: fastTrack ? true : Boolean(skipPluginsThemes),
+    skipPluginsThemes: fastTrack && skipPluginsThemes == null ? true : Boolean(skipPluginsThemes),
     acceptUpstream: Boolean(acceptUpstream),
     securityFastTrack: fastTrack,
     deployDays: typeof deployDays === 'number' ? deployDays : undefined,
