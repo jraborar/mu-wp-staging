@@ -43,8 +43,8 @@ export async function POST(request: NextRequest) {
 
   const { site, cadence, day_of_week, week_of_month, biweekly_reference_date,
           bimonthly_ref_month, bimonthly_day_of_week, security_check_enabled,
-          skip_upstream, skip_plugins_themes, deploy_days, deploy_destination,
-          scheduled_for } = body
+          skip_upstream, skip_plugins_themes, security_fast_track,
+          deploy_days, deploy_destination, scheduled_for } = body
 
   if (!site || typeof site !== 'string') {
     return Response.json({ error: 'site is required' }, { status: 400 })
@@ -106,6 +106,7 @@ export async function POST(request: NextRequest) {
     deploy_destination: deploy_destination ?? undefined,
     skip_upstream: skip_upstream ?? false,
     skip_plugins_themes: skip_plugins_themes ?? false,
+    security_fast_track: security_fast_track ?? false,
     active: true,
     next_staging_at: nextStagingAt,
   })

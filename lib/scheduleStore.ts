@@ -29,6 +29,7 @@ export interface StagingSchedule {
   // options
   skip_upstream: boolean
   skip_plugins_themes: boolean
+  security_fast_track: boolean
   active: boolean
   created_at: string
   last_staged_at?: string

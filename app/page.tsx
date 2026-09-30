@@ -101,6 +101,7 @@ interface StagingSchedule {
   security_check_enabled: boolean
   skip_upstream: boolean
   skip_plugins_themes: boolean
+  security_fast_track: boolean
   deploy_days?: number
   deploy_destination?: string
   active: boolean
@@ -1565,6 +1566,7 @@ function ScheduleTab() {
   const [deployDays, setDeployDays]     = useState(2)
   const [skipUpstream, setSkipUpstream] = useState(false)
   const [skipPluginsThemes, setSkipPluginsThemes] = useState(false)
+  const [schedSecurityFastTrack, setSchedSecurityFastTrack] = useState(false)
 
   const inputCls = 'w-full rounded-lg border border-pantheon-border-hi bg-pantheon-bg-elevated px-3 py-2 font-mono text-sm text-pantheon-text placeholder-pantheon-text-dim focus:border-pantheon-yellow focus:outline-none'
   const labelCls = 'text-xs text-pantheon-text-muted font-mono'
@@ -1596,6 +1598,7 @@ function ScheduleTab() {
           site: site.trim(), cadence: 'once', scheduled_for: iso,
           deploy_destination: destination, deploy_days: deployDays,
           skip_upstream: skipUpstream, skip_plugins_themes: skipPluginsThemes,
+          security_fast_track: schedSecurityFastTrack,
         }),
       })
       if (!res.ok) { setError((await res.json().catch(() => ({}))).error ?? `Failed (HTTP ${res.status})`); return }
@@ -1617,6 +1620,7 @@ function ScheduleTab() {
         body: JSON.stringify({
           site: j.site, deployDestination: j.deploy_destination ?? 'live', deployDays: j.deploy_days ?? 2,
           skipUpstream: j.skip_upstream, skipPluginsThemes: j.skip_plugins_themes,
+          securityFastTrack: j.security_fast_track,
         }),
       })
       // Running now consumes the one-off — remove it from the queue.
@@ -1691,6 +1695,16 @@ function ScheduleTab() {
                 <input type="checkbox" checked={skipPluginsThemes} onChange={e => setSkipPluginsThemes(e.target.checked)} className="rounded border-pantheon-border-hi bg-pantheon-bg-elevated accent-pantheon-yellow" />
                 Skip plugins &amp; themes
               </label>
+              <label className="flex items-center gap-2 text-sm text-pantheon-text cursor-pointer">
+                <input type="checkbox" checked={schedSecurityFastTrack} onChange={e => setSchedSecurityFastTrack(e.target.checked)} className="rounded border-pantheon-border-hi bg-pantheon-bg-elevated accent-pantheon-yellow" />
+                Security fast-track
+              </label>
+              {schedSecurityFastTrack && (
+                <p className="text-[0.7rem] text-pantheon-text-dim font-mono pl-6">
+                  Deploys on the 24-hour security window and does not advance the staging cadence.
+                  Leave &ldquo;Skip plugins &amp; themes&rdquo; unchecked to include plugin/theme CVEs.
+                </p>
+              )}
             </div>
             {error && <div className="rounded-lg border border-pantheon-error/40 bg-pantheon-error/10 px-3 py-2 font-mono text-xs text-pantheon-error">{error}</div>}
             <div className="flex gap-2 pt-2">
