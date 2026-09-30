@@ -45,7 +45,7 @@ function buildNotes(job: StagingJob, planned = false): string {
   if (sCount > 0) parts.push(`${sCount} plugin${sCount !== 1 ? 's' : ''} skipped.`)
   const tCount = job.themes.updated.length
   if (tCount > 0) parts.push(`${tCount} theme${tCount !== 1 ? 's' : ''} updated.`)
-  if (isFastTrack(job)) parts.push('Security/upstream fast-track.')
+  if (isFastTrack(job)) parts.push('Security fast-track.')
   return parts.join(' ')
 }
 
