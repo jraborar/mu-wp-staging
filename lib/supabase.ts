@@ -207,15 +207,19 @@ export async function getScheduledDeploymentTimes(manilaDateStr: string): Promis
   return (data ?? []).map((r) => r.scheduled_for as string)
 }
 
-// True if `site` already has an unresolved (pending or triggered) scheduled_deployments
+// True if `site` already has an unresolved (pending) scheduled_deployments
 // row for `destination` — regardless of which source multidev name it carries. This is
 // the "have I already handled this" signal for the fast-track upstream/security scan
 // lanes in scheduler.ts, replacing their old terminus `<site>.dev` probe + same-day key:
 // staging always builds fresh from LIVE, so `.dev` only reflects a change once the
 // deploy actually lands there, which per bug_upstream_scan_wipes_scheduled_multidev can
 // sit pending for days — long enough that a same-day key resets and the scan re-fires
-// on a site it already staged. A stacked pending/triggered row IS proof of that,
-// independent of the multidev name or how long ago it was created.
+// on a site it already staged. A genuine pending row IS proof of that, independent of
+// the multidev name or how long ago it was created. A `triggered` row is NOT counted:
+// mu-deployment flips pending→triggered when the deploy fires and never clears it (the
+// outcome lands in deployment_history), so counting it would suppress the lane forever
+// on every site that has ever deployed. Once a deploy has fired, terminus
+// upstream:updates:list is the backstop for whether another stage is actually needed.
 export async function hasUnresolvedDeployment(site: string, destination: string): Promise<boolean> {
   const db = getClient()
   // Fail closed: unlike the reads above, this signal gates whether a fast-track lane is
@@ -228,7 +232,7 @@ export async function hasUnresolvedDeployment(site: string, destination: string)
     .select('id')
     .eq('site', site)
     .eq('destination', destination)
-    .in('status', ['pending', 'triggered'])
+    .eq('status', 'pending')
     .limit(1)
   if (error) {
     console.error('[supabase] hasUnresolvedDeployment:', error.message)
