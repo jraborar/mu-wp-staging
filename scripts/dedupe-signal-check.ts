@@ -9,8 +9,8 @@
 // reset every Pacific midnight regardless, guaranteeing a re-fire once enough days
 // passed without a deploy landing — confirmed live: the identical WP 7.1.2 commit was
 // staged fresh into a new multidev on 6 consecutive days across 6 sites. No date-scoped
-// key can fix that; the signal itself was asking the wrong environment. A stacked
-// pending/triggered scheduled_deployments row for the site+destination IS proof the
+// key can fix that; the signal itself was asking the wrong environment. A genuine
+// pending scheduled_deployments row for the site+destination IS proof the
 // site was already staged, independent of the source multidev name or how long ago.
 //
 // hasUnresolvedDeployment talks to Supabase via @supabase/supabase-js, not global fetch,
@@ -103,16 +103,21 @@ async function run() {
     check('queried scheduled_deployments', call.table === 'scheduled_deployments', `got ${call.table}`)
     check('filtered by site', call.eq.some(([k, v]) => k === 'site' && v === 'site-a'), JSON.stringify(call.eq))
     check('filtered by destination', call.eq.some(([k, v]) => k === 'destination' && v === 'live'), JSON.stringify(call.eq))
-    check('filtered by status in (pending, triggered)',
-      call.in?.[0] === 'status' && JSON.stringify(call.in?.[1]) === JSON.stringify(['pending', 'triggered']),
-      JSON.stringify(call.in))
+    check('filtered by status eq pending',
+      call.eq.some(([k, v]) => k === 'status' && v === 'pending') && call.in === undefined,
+      JSON.stringify({ eq: call.eq, in: call.in }))
   }
 
-  console.log('\nhasUnresolvedDeployment — a triggered row for this site+destination exists')
+  console.log('\nhasUnresolvedDeployment — only a stale triggered row exists → not a dedupe signal')
   {
-    globalThis.__DEDUPE_MOCK__ = { calls: [], next: { data: [{ id: 'row-2' }], error: null } }
+    // The function now filters .eq('status','pending'), so a site whose only
+    // scheduled_deployments row is `triggered` (deploy already fired; outcome lives in
+    // deployment_history and the row is never cleared) matches nothing server-side — the
+    // real query returns no rows. Modelled here as an empty result, which must read as
+    // "not already handled" so the fast-track lane is free to re-evaluate via terminus.
+    globalThis.__DEDUPE_MOCK__ = { calls: [], next: { data: [], error: null } }
     const result = await hasUnresolvedDeployment('site-a', 'live')
-    check('returns true', result === true)
+    check('returns false', result === false)
   }
 
   console.log('\nhasUnresolvedDeployment — no matching row (query returns empty)')
