@@ -9,7 +9,8 @@
 --     (a) flip the column DEFAULT to true  -> future schedules fast-track
 --         unless a human opts them out;
 --     (b) backfill the currently-eligible PRODUCTION rows to true;
---     (c) deliberately LEAVE the known opt-outs false.
+--     (c) deliberately LEAVE the known opt-outs false;
+--     (d) arm the dormant non-opt-out sites (decision 2026-10-13, Part 4).
 --
 -- ORDERING CONSTRAINT  (read before applying)
 --   Apply this migration BEFORE merging PR #322. mu-staging auto-deploys on
@@ -86,16 +87,12 @@ where active
 
 commit;
 
--- ============================================================================
--- OPTIONAL — NOT RUN BY DEFAULT.  (leave commented; the user's judgment call)
--- ----------------------------------------------------------------------------
--- Backfill the 19 currently-DORMANT, non-opt-out schedules (auto_stage=false
--- and/or paused) to true, so that if one is later reactivated it won't silently
--- skip CVE fast-track. These are all active=true SCHEDULE rows whose SITE is
--- dormant. WARNING: this touches PAUSED CUSTOMER sites' config for a behaviour
--- that only takes effect if/when they are resumed — it is additive but it is a
--- judgment call, so it is left commented. Uncomment to apply.
---
+-- ── Part 4: arm the 19 dormant non-opt-out sites ────────────────────────────
+-- INCLUDED per decision 2026-10-13 (user chose "arm them"). These are active=true
+-- SCHEDULE rows whose SITE is currently dormant (auto_stage=false and/or paused).
+-- Arming them is INERT until a site is reactivated; it prevents a silent CVE
+-- fast-track gap on later resume. NOTE: this touches PAUSED CUSTOMER sites'
+-- config for behaviour that only takes effect if/when they are resumed.
 -- Dormant set confirmed 2026-10-13 (31 total − 12 eligible = 19):
 --   baseball-hall-of-fame, bcbs-vermont, blue-cross(paused), cemsed9(dev),
 --   fia-tech(test), hcc-main(paused), hfu, inst,
@@ -103,35 +100,34 @@ commit;
 --   micheal-watson-secretary-of-state, niacc, policyed1, saddlebackd9,
 --   simplisafe-press-room(paused), tstc-multisite, tulsalib,
 --   umary-online(paused), umary-prime-matters(paused)
---
--- begin;
--- update public.staging_schedules
--- set security_fast_track = true
--- where active
---   and security_fast_track is distinct from true
---   and site in (
---     'baseball-hall-of-fame',
---     'bcbs-vermont',
---     'blue-cross',
---     'cemsed9',
---     'fia-tech',
---     'hcc-main',
---     'hfu',
---     'inst',
---     'marietta-college-v3',
---     'mercyhome-primary',
---     'micheal-watson-secretary-of-state',
---     'niacc',
---     'policyed1',
---     'saddlebackd9',
---     'simplisafe-press-room',
---     'tstc-multisite',
---     'tulsalib',
---     'umary-online',
---     'umary-prime-matters'
---   );
--- -- Expected: 19 rows updated on first apply.
--- commit;
+begin;
+update public.staging_schedules
+set security_fast_track = true
+where active
+  and security_fast_track is distinct from true
+  and site in (
+    'baseball-hall-of-fame',
+    'bcbs-vermont',
+    'blue-cross',
+    'cemsed9',
+    'fia-tech',
+    'hcc-main',
+    'hfu',
+    'inst',
+    'marietta-college-v3',
+    'mercyhome-primary',
+    'micheal-watson-secretary-of-state',
+    'niacc',
+    'policyed1',
+    'saddlebackd9',
+    'simplisafe-press-room',
+    'tstc-multisite',
+    'tulsalib',
+    'umary-online',
+    'umary-prime-matters'
+  );
+-- Expected: 19 rows updated on first apply.
+commit;
 -- ============================================================================
 
 -- ── VERIFICATION — run AFTER apply, BEFORE merging #322 ─────────────────────
@@ -155,9 +151,9 @@ commit;
 --   -- expect: the 8 prod sites true; riverbed-new, leadingage-wp, qa-cccu,
 --   --         lgla-merge false.
 --
--- 3) Full tally (without the optional block applied):
+-- 3) Full tally (dormant block IS included in this migration):
 --   select security_fast_track, count(*)
 --   from public.staging_schedules
 --   group by security_fast_track
 --   order by 1;
---   -- expect: true = 8, false = 23   (true = 27, false = 4 if optional ran)
+--   -- expect: true = 27, false = 4   (only the 4 opt-outs remain false)
