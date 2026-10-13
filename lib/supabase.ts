@@ -131,17 +131,22 @@ export async function hasRunForMultidev(site: string, multidev: string): Promise
 export async function hasRunForSiteSince(site: string, sinceIso: string): Promise<boolean> {
   const db = getClient()
   if (!db) return true
-  const { data, error } = await db
-    .from('staging_history')
-    .select('id')
-    .eq('site', site)
-    .gte('started_at', sinceIso)
-    .limit(1)
-  if (error) {
-    console.error('[supabase] hasRunForSiteSince:', error.message)
+  try {
+    const { data, error } = await db
+      .from('staging_history')
+      .select('id')
+      .eq('site', site)
+      .gte('started_at', sinceIso)
+      .limit(1)
+    if (error) {
+      console.error('[supabase] hasRunForSiteSince:', error.message)
+      return true
+    }
+    return (data?.length ?? 0) > 0
+  } catch (e) {
+    console.error('[supabase] hasRunForSiteSince:', e instanceof Error ? e.message : e)
     return true
   }
-  return (data?.length ?? 0) > 0
 }
 
 // ── VRT report link expiry ──────────────────────────────────────────────────
