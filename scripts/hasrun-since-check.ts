@@ -40,6 +40,11 @@ const fakeSupabaseJs = `
           then(resolve, reject) {
             globalThis.__SINCE_MOCK__.calls.push(calls)
             const next = globalThis.__SINCE_MOCK__.next
+            // Rejection sentinel: { reject: <Error> } models the awaited query PROMISE
+            // itself rejecting/throwing (e.g. a dropped socket) — distinct from a
+            // resolved { error } field — so the thenable rejects instead of resolving.
+            // Any other \`next\` (including null) keeps the original resolve path intact.
+            if (next && next.reject) { reject(next.reject); return }
             Promise.resolve(next ?? { data: [], error: null }).then(resolve, reject)
           },
         }
@@ -66,7 +71,7 @@ register('data:text/javascript,' + encodeURIComponent(loaderSrc), import.meta.ur
 
 declare global {
   // eslint-disable-next-line no-var
-  var __SINCE_MOCK__: { calls: Array<{ table: string; eq: [string, unknown][]; gte: [string, unknown][]; select?: string; limit?: number }>; next: { data?: unknown[] | null; error?: { message: string } | null } | null }
+  var __SINCE_MOCK__: { calls: Array<{ table: string; eq: [string, unknown][]; gte: [string, unknown][]; select?: string; limit?: number }>; next: { data?: unknown[] | null; error?: { message: string } | null; reject?: unknown } | null }
 }
 globalThis.__SINCE_MOCK__ = { calls: [], next: null }
 
@@ -115,6 +120,18 @@ async function run() {
     globalThis.__SINCE_MOCK__ = { calls: [], next: { data: null, error: { message: 'connection reset' } } }
     const result = await hasRunForSiteSince('site-a', WEEK_START)
     check('returns true — an unknown state must not read as "not yet staged"', result === true)
+  }
+
+  console.log('\nhasRunForSiteSince — the query promise REJECTS / throws (fail closed)')
+  {
+    // Sentinel { reject: <Error> } drives the fake builder's thenable down its reject
+    // path, modeling the awaited query PROMISE itself throwing (dropped socket, DNS
+    // failure, etc.) rather than resolving with an { error } field like the block above.
+    // This is the branch the try/catch in lib/supabase.ts guards — without it the
+    // rejection propagates out of hasRunForSiteSince and the caller never sees `true`.
+    globalThis.__SINCE_MOCK__ = { calls: [], next: { reject: new Error('socket hang up') } }
+    const result = await hasRunForSiteSince('site-a', WEEK_START)
+    check('returns true — a rejected query must not read as "not yet staged"', result === true)
   }
 
   console.log('\nhasRunForSiteSince — Supabase not configured, no client to ask (fail closed)')
