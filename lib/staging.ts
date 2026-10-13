@@ -43,6 +43,21 @@ function wp(job: StagingJob, args: string): string {
   return `terminus wp ${env(job)} -- ${args} 2>&1`
 }
 
+// Pull a WP schema version (a bare integer) out of terminus/WP-CLI output, skipping
+// deprecation/notice noise and taking the last pure-integer line (the value WP-CLI
+// prints after any leading PHP notices). Returns null when no integer is present so an
+// unreadable verify fails closed rather than passing on a mis-parse.
+// Exported solely as a test seam (scripts/db-update-verify-check.ts) — a pure helper
+// with no runtime callers outside this module.
+export function parseDbVersion(out: string): number | null {
+  const line = out
+    .split('\n')
+    .map((l) => l.trim())
+    .reverse()
+    .find((l) => /^\d+$/.test(l))
+  return line ? parseInt(line, 10) : null
+}
+
 function checkCancelled(job: StagingJob): void {
   if (job.cancelRequested) throw new CancelledError()
 }
@@ -1121,13 +1136,32 @@ async function runStagingPipeline(job: StagingJob): Promise<void> {
     }
 
     // DB update if upstream was applied
+    let dbUpdateFailed = false
     if (job.upstreamUpdated) {
       log('status', 'Running database update...')
       const dbResult = await runStream(wp(job, 'core update-db'), (line) => log('info', line))
-      if (dbResult.code !== 0) {
-        log('warn', 'Database update returned non-zero — check manually')
-      } else {
+      if (dbResult.code === 0) {
         log('success', 'Database updated')
+      } else {
+        // A non-zero exit here is not conclusive on its own: `wp core update-db` can be
+        // killed (Exit 137 / OOM) AFTER it has already written the schema, and it can
+        // also genuinely fail. The old soft-warning branch reported a killed-but-
+        // incomplete upgrade as green (riverbed-new, mu-261013). Re-verify by comparing
+        // the applied schema version (get_option('db_version')) against the code's
+        // required $wp_db_version: equal means the upgrade landed despite the kill;
+        // unequal — or a verify we cannot read — fails the run closed.
+        log('warn', `Database update exited ${dbResult.code} — verifying applied schema version...`)
+        const required = parseDbVersion((await run(wp(job, "eval 'global $wp_db_version; echo $wp_db_version;'"))).stdout)
+        const applied  = parseDbVersion((await run(wp(job, 'option get db_version'))).stdout)
+        if (required !== null && applied !== null && required === applied) {
+          log('success', `Database schema at target version (${applied}) despite non-zero exit — treating as updated`)
+        } else {
+          dbUpdateFailed = true
+          log(
+            'error',
+            `Database update did not reach the target schema (required ${required ?? 'unknown'}, applied ${applied ?? 'unknown'}) — needs manual attention`,
+          )
+        }
       }
     }
 
@@ -1254,7 +1288,18 @@ async function runStagingPipeline(job: StagingJob): Promise<void> {
     const updateCheckFailed = Boolean(job.plugins.checkFailed || job.themes.checkFailed)
     const failedCheckLabel = [job.plugins.checkFailed && 'plugin', job.themes.checkFailed && 'theme']
       .filter(Boolean).join(' and ')
-    if (updateCheckFailed) {
+    if (dbUpdateFailed) {
+      const detail = `Database update did not reach the target schema — the upstream code is in place ` +
+        `but the DB upgrade is incomplete. This multidev must NOT be promoted until the DB upgrade is ` +
+        `re-run and verified. Check the run log and re-stage.`
+      log('error', detail)
+      postStep(`❌ *Staging failed* — database update incomplete${vrtSummary}\n${detail}`)
+      void notifyInThread(
+        slackThreadTs,
+        buildFailedBlocks(siteLabel, job.multidev, detail, job.site !== siteLabel ? job.site : undefined),
+        `Staging failed on ${siteLabel} (${job.multidev}) — database update incomplete`,
+      )
+    } else if (updateCheckFailed) {
       const detail = `Could not read the ${failedCheckLabel} update list — nothing was applied, and ` +
         `this site may still have updates pending. Re-stage after checking the raw output in the run log.`
       log('error', detail)
@@ -1302,9 +1347,12 @@ async function runStagingPipeline(job: StagingJob): Promise<void> {
     // and someone takes it to the customer. A run that also updated plugins/themes
     // did real work, so it stays completed with the conflict called out.
     const upstreamOnlyNoOp = job.upstreamConflict && !anythingUpdated
-    finishJob(job, (upstreamOnlyNoOp || updateCheckFailed) ? 'failed' : 'completed')
+    const stagingFailed = upstreamOnlyNoOp || updateCheckFailed || dbUpdateFailed
+    finishJob(job, stagingFailed ? 'failed' : 'completed')
     if (job.deployDestination !== 'multidev') {
-      await reconcileDeployment(job, anythingUpdated)
+      // A failed DB upgrade must not leave a pre-booked deploy armed — cancel it like
+      // any other failed run, so a multidev with an incomplete schema is never promoted.
+      await reconcileDeployment(job, anythingUpdated && !dbUpdateFailed)
       if (!anythingUpdated) {
         log('info', 'Nothing was updated — pre-booked deploy cancelled')
         // Advance the cadence anchor even on a no-update run so the next scheduled
@@ -1338,7 +1386,7 @@ async function runStagingPipeline(job: StagingJob): Promise<void> {
       vrt_report_url: job.vrtReportUrl ?? undefined,
       vrt_flagged_count: job.vrtFlaggedCount ?? undefined,
       vrt_status: job.vrtStatus ?? undefined,
-      status: (upstreamOnlyNoOp || updateCheckFailed) ? 'failed' : 'completed',
+      status: stagingFailed ? 'failed' : 'completed',
       completed_at: new Date().toISOString(),
       logs: job.logs,
     })
