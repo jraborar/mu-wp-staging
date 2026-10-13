@@ -15,9 +15,9 @@ import { createJob, getAllJobs } from '@/lib/jobStore'
 import { executeJob } from '@/lib/staging'
 import { run, cleanJson } from '@/lib/terminus'
 import { parseWpJson } from '@/lib/wordpress'
-import { hasRunForMultidev, hasUnresolvedDeployment, listStagingWithVrt, clearStagingVrt } from '@/lib/supabase'
+import { hasRunForMultidev, hasRunForSiteSince, hasUnresolvedDeployment, listStagingWithVrt, clearStagingVrt } from '@/lib/supabase'
 import { deleteVrtRun, runIdFromReportUrl } from '@/lib/vrt'
-import { computeNextOccurrence, isDueNow, isScheduledThisWeek } from '@/lib/cadence'
+import { computeNextOccurrence, isDueNow, isScheduledThisWeek, isoWeekMondayStr } from '@/lib/cadence'
 import type { StagingSchedule } from '@/lib/scheduleStore'
 import { broadcastText } from '@/lib/slack'
 
@@ -169,6 +169,15 @@ export async function runPendingSecurityChecks(): Promise<void> {
         console.log(`[scheduler] Skipping security staging for ${sched.site} — auto_stage is off`)
         continue
       }
+      // Honor the per-schedule opt-out: this lane exists only to fast-track, so when the
+      // flag is off we skip the site entirely (never fall back to a non-fast-track job — an
+      // off-week run would advance the cadence anchor and delete the scheduled multidev).
+      // Clear the pending flag so the enrollment doesn't re-enter every tick.
+      if (!sched.security_fast_track) {
+        console.log(`[scheduler] Skipping security staging for ${sched.site} — security_fast_track is off for this schedule`)
+        await clearSecurityCheckPending(sched.id)
+        continue
+      }
 
       // Off-week only (see coveredByScheduledUpstream): a scheduled run this ISO week
       // will apply the security upstream itself. Stand down and clear the pending flag
@@ -235,6 +244,7 @@ export async function runUpstreamCheck(): Promise<void> {
 
     const schedulesBySite = groupSchedulesBySite(await getActiveSchedules())
     const multidev = `mu-${getPacificYYMMDD()}`
+    const now = new Date()
 
     for (const site of eligible) {
       // Off-week only (see coveredByScheduledUpstream): if a regular scheduled run
@@ -266,6 +276,25 @@ export async function runUpstreamCheck(): Promise<void> {
       if (await hasUnresolvedDeployment(site.site, effectiveDestination(site))) {
         console.log(`[scheduler] Skipping upstream scan for ${site.site} — an unresolved deploy booking already covers it`)
         continue
+      }
+      // Honor the per-schedule opt-out: this lane exists only to fast-track. Skip the site
+      // entirely when no active schedule opts in (never create a non-fast-track job — an
+      // off-week run would advance the cadence anchor and delete the scheduled multidev).
+      const fastTrackOptIn = (schedulesBySite.get(site.site) ?? []).some(sc => sc.security_fast_track === true)
+      if (!fastTrackOptIn) {
+        console.log(`[scheduler] Skipping upstream scan for ${site.site} — no schedule opts into security_fast_track`)
+        continue
+      }
+      // Durable cross-day dedupe for multidev-destination sites: they get no
+      // scheduled_deployments row, never update .dev, and the rolling mu-YYMMDD name
+      // defeats hasRunForMultidev across days — so key on a real history row for this
+      // Manila ISO week instead. Dev/live destinations keep hasUnresolvedDeployment above.
+      if (effectiveDestination(site) === 'multidev') {
+        const weekStartIso = new Date(`${isoWeekMondayStr(now)}T00:00:00+08:00`).toISOString()
+        if (await hasRunForSiteSince(site.site, weekStartIso)) {
+          console.log(`[scheduler] Skipping upstream scan for ${site.site} — already staged this ISO week (multidev destination)`)
+          continue
+        }
       }
 
       const result = await run(`terminus upstream:updates:list ${site.site}.dev --format=json 2>&1`)
