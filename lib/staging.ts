@@ -47,7 +47,9 @@ function wp(job: StagingJob, args: string): string {
 // deprecation/notice noise and taking the last pure-integer line (the value WP-CLI
 // prints after any leading PHP notices). Returns null when no integer is present so an
 // unreadable verify fails closed rather than passing on a mis-parse.
-function parseDbVersion(out: string): number | null {
+// Exported solely as a test seam (scripts/db-update-verify-check.ts) — a pure helper
+// with no runtime callers outside this module.
+export function parseDbVersion(out: string): number | null {
   const line = out
     .split('\n')
     .map((l) => l.trim())
