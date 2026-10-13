@@ -121,6 +121,34 @@ export async function hasRunForMultidev(site: string, multidev: string): Promise
   return (data?.length ?? 0) > 0
 }
 
+// True if `site` has any staging_history row started on/after `sinceIso`. Durable,
+// name-independent dedupe for the fast-track upstream scan's multidev-destination lane:
+// those sites never get a scheduled_deployments row, never update .dev, and the rolling
+// mu-YYMMDD name defeats hasRunForMultidev across days — so only a real history row,
+// keyed on the ISO-week start, proves "already staged this week". Fail closed: like
+// hasUnresolvedDeployment, an unconfigured client or a failed query returns true
+// ("already ran, skip") so a transient DB blip can't reopen the daily re-stage storm.
+export async function hasRunForSiteSince(site: string, sinceIso: string): Promise<boolean> {
+  const db = getClient()
+  if (!db) return true
+  try {
+    const { data, error } = await db
+      .from('staging_history')
+      .select('id')
+      .eq('site', site)
+      .gte('started_at', sinceIso)
+      .limit(1)
+    if (error) {
+      console.error('[supabase] hasRunForSiteSince:', error.message)
+      return true
+    }
+    return (data?.length ?? 0) > 0
+  } catch (e) {
+    console.error('[supabase] hasRunForSiteSince:', e instanceof Error ? e.message : e)
+    return true
+  }
+}
+
 // ── VRT report link expiry ──────────────────────────────────────────────────
 // Runs with a shareable VRT report, newest first, for the cleanup sweep.
 export async function listStagingWithVrt(): Promise<

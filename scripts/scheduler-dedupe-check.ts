@@ -37,6 +37,8 @@ declare global {
     hasRunForMultidevResult: boolean
     hasUnresolvedDeploymentResult: boolean
     hasUnresolvedDeploymentCalls: Array<{ site: string; destination: string }>
+    hasRunForSiteSinceResult: boolean
+    hasRunForSiteSinceCalls: Array<{ site: string; sinceIso: string }>
     clearedPending: string[]
     broadcasts: string[]
   }
@@ -55,6 +57,8 @@ function resetTestState(): void {
     hasRunForMultidevResult: false,
     hasUnresolvedDeploymentResult: false,
     hasUnresolvedDeploymentCalls: [],
+    hasRunForSiteSinceResult: false,
+    hasRunForSiteSinceCalls: [],
     clearedPending: [],
     broadcasts: [],
   }
@@ -110,6 +114,10 @@ const fakes: Record<string, string> = {
     export function hasUnresolvedDeployment(site, destination) {
       globalThis.__SCHED_T__.hasUnresolvedDeploymentCalls.push({ site, destination })
       return Promise.resolve(globalThis.__SCHED_T__.hasUnresolvedDeploymentResult)
+    }
+    export function hasRunForSiteSince(site, sinceIso) {
+      globalThis.__SCHED_T__.hasRunForSiteSinceCalls.push({ site, sinceIso })
+      return Promise.resolve(globalThis.__SCHED_T__.hasRunForSiteSinceResult)
     }
     export function listStagingWithVrt() { return Promise.resolve([]) }
     export function clearStagingVrt() { return Promise.resolve() }
@@ -176,6 +184,29 @@ function pendingSecuritySite(overrides: Record<string, unknown> = {}) {
     active: true,
     created_at: '2026-01-01T00:00:00Z',
     deploy_days: 1,
+    // The fast-track lanes are opt-in: both runPendingSecurityChecks (per-pending-schedule
+    // flag) and runUpstreamCheck (any active schedule for the site) now fire only when
+    // security_fast_track is true. Default the positive fixtures to opted-in so the
+    // existing "stages normally" scenarios keep testing staging; the opt-out scenarios
+    // below override it to false.
+    security_fast_track: true,
+    ...overrides,
+  }
+}
+
+// An active schedule that opts the site into the fast-track scan. cadence 'security-only'
+// so isScheduledThisWeek() (real, unmocked) returns false — it satisfies runUpstreamCheck's
+// opt-in guard (schedulesBySite.some(security_fast_track === true)) WITHOUT also tripping
+// coveredByScheduledUpstream (which would skip the site for a different reason and mask the
+// behavior under test).
+function optInSchedule(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'optin-sched-1',
+    site: 'site-a',
+    cadence: 'security-only',
+    active: true,
+    created_at: '2020-01-01T00:00:00Z',
+    security_fast_track: true,
     ...overrides,
   }
 }
@@ -209,6 +240,7 @@ async function run() {
   {
     resetTestState()
     globalThis.__SCHED_T__.sites = [site()]
+    globalThis.__SCHED_T__.schedules = [optInSchedule()] // opt into the fast-track scan
     globalThis.__SCHED_T__.hasUnresolvedDeploymentResult = false
     globalThis.__SCHED_T__.terminusHasUpdates = true
 
@@ -231,6 +263,7 @@ async function run() {
   {
     resetTestState()
     globalThis.__SCHED_T__.sites = [site()]
+    globalThis.__SCHED_T__.schedules = [optInSchedule()] // opt in so terminus is actually consulted
     globalThis.__SCHED_T__.hasUnresolvedDeploymentResult = false
     globalThis.__SCHED_T__.terminusHasUpdates = false
 
@@ -341,6 +374,7 @@ async function run() {
   {
     resetTestState()
     globalThis.__SCHED_T__.sites = [site({ deploy_destination: 'test' })]
+    globalThis.__SCHED_T__.schedules = [optInSchedule()] // opt into the fast-track scan
     globalThis.__SCHED_T__.hasUnresolvedDeploymentResult = false
     globalThis.__SCHED_T__.terminusHasUpdates = true
 
@@ -395,6 +429,7 @@ async function run() {
   {
     resetTestState()
     globalThis.__SCHED_T__.sites = [site()]
+    globalThis.__SCHED_T__.schedules = [optInSchedule()] // opt into the upstream fast-track scan
     globalThis.__SCHED_T__.pendingSecuritySites = [pendingSecuritySite()]
     globalThis.__SCHED_T__.hasUnresolvedDeploymentResult = false
     globalThis.__SCHED_T__.terminusHasUpdates = true
@@ -421,6 +456,177 @@ async function run() {
     check('both lanes asked about the same (site, destination) the booking was made for',
       globalThis.__SCHED_T__.hasUnresolvedDeploymentCalls.filter(c => c.site === 'site-a' && c.destination === 'live').length === 2,
       JSON.stringify(globalThis.__SCHED_T__.hasUnresolvedDeploymentCalls))
+  }
+
+  // ── Defect A: both fast-track lanes must honor the per-schedule security_fast_track flag.
+  // Pre-fix neither lane consulted it — runPendingSecurityChecks staged every pending
+  // enrollment and runUpstreamCheck staged every eligible site — so a consultant who
+  // deliberately opted a site OUT of fast-tracking still got off-week upstream multidevs
+  // that advance the cadence anchor and destroy the scheduled week's richer multidev.
+
+  console.log('\nA1 — runPendingSecurityChecks: security_fast_track:false → stands down and clears pending (no stage)')
+  {
+    resetTestState()
+    globalThis.__SCHED_T__.sites = [site()]
+    globalThis.__SCHED_T__.pendingSecuritySites = [pendingSecuritySite({ security_fast_track: false })]
+    globalThis.__SCHED_T__.hasUnresolvedDeploymentResult = false // irrelevant — must never be asked
+    globalThis.__SCHED_T__.terminusHasUpdates = true             // an update IS pending — must not matter
+
+    await runPendingSecurityChecks()
+
+    // RED pre-fix: with no opt-out guard the lane proceeds to stage — terminus queried,
+    // job created+executed, broadcast sent. GREEN post-fix: skipped at the opt-out guard.
+    check('terminus was never queried', globalThis.__SCHED_T__.terminusCalls.length === 0,
+      JSON.stringify(globalThis.__SCHED_T__.terminusCalls))
+    check('no job was created', globalThis.__SCHED_T__.createdJobs.length === 0,
+      JSON.stringify(globalThis.__SCHED_T__.createdJobs))
+    check('no job was executed', globalThis.__SCHED_T__.executedJobs.length === 0)
+    check('no broadcast was sent', globalThis.__SCHED_T__.broadcasts.length === 0,
+      JSON.stringify(globalThis.__SCHED_T__.broadcasts))
+    check('the booking check was never consulted (skipped before it)',
+      globalThis.__SCHED_T__.hasUnresolvedDeploymentCalls.length === 0,
+      JSON.stringify(globalThis.__SCHED_T__.hasUnresolvedDeploymentCalls))
+    check('the pending flag was cleared so the enrollment does not re-enter every tick',
+      globalThis.__SCHED_T__.clearedPending.includes('sched-1'),
+      JSON.stringify(globalThis.__SCHED_T__.clearedPending))
+  }
+
+  console.log('\nA1 twin — runPendingSecurityChecks: security_fast_track:true → stages (opt-out guard does not over-skip)')
+  {
+    resetTestState()
+    globalThis.__SCHED_T__.sites = [site()]
+    globalThis.__SCHED_T__.pendingSecuritySites = [pendingSecuritySite({ security_fast_track: true })]
+    globalThis.__SCHED_T__.hasUnresolvedDeploymentResult = false
+    globalThis.__SCHED_T__.terminusHasUpdates = true
+
+    await runPendingSecurityChecks()
+
+    check('terminus was queried', globalThis.__SCHED_T__.terminusCalls.length === 1)
+    check('exactly one job was created', globalThis.__SCHED_T__.createdJobs.length === 1,
+      JSON.stringify(globalThis.__SCHED_T__.createdJobs))
+    check('the job was executed', globalThis.__SCHED_T__.executedJobs.length === 1)
+    check('a broadcast was sent', globalThis.__SCHED_T__.broadcasts.length === 1)
+    check('the pending flag was cleared after firing', globalThis.__SCHED_T__.clearedPending.includes('sched-1'))
+  }
+
+  console.log('\nA2 — runUpstreamCheck: site whose only active schedule is security_fast_track:false → NOT staged')
+  {
+    resetTestState()
+    globalThis.__SCHED_T__.sites = [site()]
+    globalThis.__SCHED_T__.schedules = [optInSchedule({ security_fast_track: false })]
+    globalThis.__SCHED_T__.hasUnresolvedDeploymentResult = false
+    globalThis.__SCHED_T__.terminusHasUpdates = true
+
+    await runUpstreamCheck()
+
+    // RED pre-fix: no opt-in guard, so the scan queries terminus and stages. GREEN post-fix:
+    // skipped because no schedule opts in.
+    check('terminus was never queried', globalThis.__SCHED_T__.terminusCalls.length === 0,
+      JSON.stringify(globalThis.__SCHED_T__.terminusCalls))
+    check('no job was created', globalThis.__SCHED_T__.createdJobs.length === 0,
+      JSON.stringify(globalThis.__SCHED_T__.createdJobs))
+  }
+
+  console.log('\nA2 — runUpstreamCheck: site with NO schedule at all → NOT staged (opt-in defaults off)')
+  {
+    resetTestState()
+    globalThis.__SCHED_T__.sites = [site()]
+    globalThis.__SCHED_T__.schedules = [] // no schedule → nothing opts in
+    globalThis.__SCHED_T__.hasUnresolvedDeploymentResult = false
+    globalThis.__SCHED_T__.terminusHasUpdates = true
+
+    await runUpstreamCheck()
+
+    check('terminus was never queried', globalThis.__SCHED_T__.terminusCalls.length === 0,
+      JSON.stringify(globalThis.__SCHED_T__.terminusCalls))
+    check('no job was created', globalThis.__SCHED_T__.createdJobs.length === 0,
+      JSON.stringify(globalThis.__SCHED_T__.createdJobs))
+  }
+
+  console.log('\nA2 twin — runUpstreamCheck: an active schedule with security_fast_track:true → stages')
+  {
+    resetTestState()
+    globalThis.__SCHED_T__.sites = [site()]
+    globalThis.__SCHED_T__.schedules = [optInSchedule({ security_fast_track: true })]
+    globalThis.__SCHED_T__.hasUnresolvedDeploymentResult = false
+    globalThis.__SCHED_T__.terminusHasUpdates = true
+
+    await runUpstreamCheck()
+
+    check('terminus was queried', globalThis.__SCHED_T__.terminusCalls.length === 1)
+    check('exactly one job was created', globalThis.__SCHED_T__.createdJobs.length === 1,
+      JSON.stringify(globalThis.__SCHED_T__.createdJobs))
+  }
+
+  // ── Defect B: runUpstreamCheck gained a durable per-ISO-week dedupe for multidev-
+  // destination sites (no scheduled_deployments row, .dev never updates, rolling mu-YYMMDD
+  // defeats hasRunForMultidev across days), keyed on a real staging_history row via
+  // hasRunForSiteSince(site, mondayOfThisManilaWeekIso). It must be consulted ONLY for
+  // multidev destinations — dev/live keep the hasUnresolvedDeployment booking signal.
+
+  console.log('\nB — runUpstreamCheck: multidev site already staged this ISO week → NOT re-staged')
+  {
+    resetTestState()
+    globalThis.__SCHED_T__.sites = [site({ deploy_destination: 'multidev' })]
+    globalThis.__SCHED_T__.schedules = [optInSchedule()]
+    globalThis.__SCHED_T__.hasUnresolvedDeploymentResult = false
+    globalThis.__SCHED_T__.hasRunForSiteSinceResult = true // a history row already exists this week
+    globalThis.__SCHED_T__.terminusHasUpdates = true
+
+    await runUpstreamCheck()
+
+    // RED pre-fix: the week-guard block did not exist, so the scan queried terminus and
+    // staged a fresh multidev — the daily re-stage storm. GREEN post-fix: skipped.
+    check('terminus was never queried', globalThis.__SCHED_T__.terminusCalls.length === 0,
+      JSON.stringify(globalThis.__SCHED_T__.terminusCalls))
+    check('no job was created', globalThis.__SCHED_T__.createdJobs.length === 0,
+      JSON.stringify(globalThis.__SCHED_T__.createdJobs))
+    check('the week-dedupe check was consulted for site-a',
+      globalThis.__SCHED_T__.hasRunForSiteSinceCalls.some(c => c.site === 'site-a'),
+      JSON.stringify(globalThis.__SCHED_T__.hasRunForSiteSinceCalls))
+    check('it was asked about a real ISO-week-start ISO timestamp (cadence/timezone unmocked)',
+      globalThis.__SCHED_T__.hasRunForSiteSinceCalls.length > 0 &&
+      !Number.isNaN(Date.parse(globalThis.__SCHED_T__.hasRunForSiteSinceCalls[0].sinceIso)),
+      JSON.stringify(globalThis.__SCHED_T__.hasRunForSiteSinceCalls))
+  }
+
+  console.log('\nB twin — runUpstreamCheck: multidev site NOT yet staged this week → stages exactly one job')
+  {
+    resetTestState()
+    globalThis.__SCHED_T__.sites = [site({ deploy_destination: 'multidev' })]
+    globalThis.__SCHED_T__.schedules = [optInSchedule()]
+    globalThis.__SCHED_T__.hasUnresolvedDeploymentResult = false
+    globalThis.__SCHED_T__.hasRunForSiteSinceResult = false // nothing this week yet
+    globalThis.__SCHED_T__.terminusHasUpdates = true
+
+    await runUpstreamCheck()
+
+    check('the week-dedupe check was consulted for site-a',
+      globalThis.__SCHED_T__.hasRunForSiteSinceCalls.some(c => c.site === 'site-a'),
+      JSON.stringify(globalThis.__SCHED_T__.hasRunForSiteSinceCalls))
+    check('exactly one job was created', globalThis.__SCHED_T__.createdJobs.length === 1,
+      JSON.stringify(globalThis.__SCHED_T__.createdJobs))
+    check('the job carries the multidev destination',
+      globalThis.__SCHED_T__.createdJobs[0]?.deployDestination === 'multidev',
+      JSON.stringify(globalThis.__SCHED_T__.createdJobs[0]))
+  }
+
+  console.log('\nB regression-guard — runUpstreamCheck: a LIVE site is never gated by the week guard (dev/live path intact)')
+  {
+    resetTestState()
+    globalThis.__SCHED_T__.sites = [site({ deploy_destination: 'live' })]
+    globalThis.__SCHED_T__.schedules = [optInSchedule()]
+    globalThis.__SCHED_T__.hasUnresolvedDeploymentResult = false
+    globalThis.__SCHED_T__.hasRunForSiteSinceResult = true // would suppress IF (wrongly) consulted
+    globalThis.__SCHED_T__.terminusHasUpdates = true
+
+    await runUpstreamCheck()
+
+    check('the week-dedupe check was NOT consulted for a live-destination site',
+      !globalThis.__SCHED_T__.hasRunForSiteSinceCalls.some(c => c.site === 'site-a'),
+      JSON.stringify(globalThis.__SCHED_T__.hasRunForSiteSinceCalls))
+    check('the live site still staged exactly one job', globalThis.__SCHED_T__.createdJobs.length === 1,
+      JSON.stringify(globalThis.__SCHED_T__.createdJobs))
   }
 
   console.log(`\n${pass} passed, ${fail} failed`)
