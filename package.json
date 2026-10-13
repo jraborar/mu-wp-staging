@@ -14,6 +14,7 @@
     "check:dedupe-signal": "node scripts/dedupe-signal-check.ts",
     "check:fasttrack-dedupe": "node scripts/fasttrack-dedupe-status-check.ts",
     "check:scheduler-dedupe": "node scripts/scheduler-dedupe-check.ts",
+    "check:hasrun-since": "node scripts/hasrun-since-check.ts",
     "check:platform": "node scripts/platform-check.ts",
     "check:inventory": "node scripts/inventory-check.ts",
     "check:terminus": "node scripts/terminus-check.ts",
